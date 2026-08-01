@@ -107,6 +107,10 @@ function markdown(report) {
     `- Measured runs per query: ${report.configuration.iterations}`,
     `- Result limit: ${report.configuration.limit}`,
     '',
+    '## Index refresh',
+    '',
+    `- Initial load and index refresh: ${report.index.initialLoadMs} ms`,
+    '',
     '## Bundle',
     '',
     '| Files | Total body characters | Average body characters |',
@@ -118,6 +122,12 @@ function markdown(report) {
     '| Samples | p50 (ms) | p95 (ms) | Mean (ms) |',
     '| ---: | ---: | ---: |',
     `| ${report.aggregateLatency.count} | ${report.aggregateLatency.p50Ms} | ${report.aggregateLatency.p95Ms} | ${report.aggregateLatency.meanMs} |`,
+    '',
+    '## Uncached search latency',
+    '',
+    '| Samples | p50 (ms) | p95 (ms) | Mean (ms) |',
+    '| ---: | ---: | ---: |',
+    `| ${report.uncachedLatency.count} | ${report.uncachedLatency.p50Ms} | ${report.uncachedLatency.p95Ms} | ${report.uncachedLatency.meanMs} |`,
     '',
     '## Queries',
     '',
@@ -141,8 +151,22 @@ if (!existsSync(implementation)) {
 }
 if (!existsSync(options.knowledgeRoot)) usage(`Knowledge root not found: ${options.knowledgeRoot}`);
 
-const { loadKnowledgeBundle, searchKnowledge } = await import(implementation);
+const { closeKnowledgeIndexes, loadKnowledgeBundle, searchKnowledge } = await import(implementation);
+const configuredCacheTtl = process.env.PI_KNOWLEDGE_SEARCH_CACHE_TTL_MS;
+process.env.PI_KNOWLEDGE_SEARCH_CACHE_TTL_MS = '0';
+closeKnowledgeIndexes();
+const uncachedSamples = [];
+for (const query of queries) {
+  const startedAt = performance.now();
+  searchKnowledge(query, { limit: options.limit, root: options.knowledgeRoot });
+  uncachedSamples.push(performance.now() - startedAt);
+}
+if (configuredCacheTtl === undefined) delete process.env.PI_KNOWLEDGE_SEARCH_CACHE_TTL_MS;
+else process.env.PI_KNOWLEDGE_SEARCH_CACHE_TTL_MS = configuredCacheTtl;
+closeKnowledgeIndexes();
+const initialIndexStartedAt = performance.now();
 const concepts = loadKnowledgeBundle(options.knowledgeRoot);
+const initialLoadMs = performance.now() - initialIndexStartedAt;
 const bodyCharacters = concepts.map((concept) => concept.body.length);
 const measuredSamples = [];
 const queryResults = queries.map((query) => {
@@ -188,6 +212,8 @@ const report = {
     ),
   },
   aggregateLatency: timingStats(measuredSamples),
+  uncachedLatency: timingStats(uncachedSamples),
+  index: { initialLoadMs: round(initialLoadMs) },
   queries: queryResults,
 };
 
@@ -203,4 +229,8 @@ console.log(
 console.log(
   `Search latency: p50 ${report.aggregateLatency.p50Ms} ms, p95 ${report.aggregateLatency.p95Ms} ms, mean ${report.aggregateLatency.meanMs} ms across ${report.aggregateLatency.count} measured searches.`,
 );
+console.log(
+  `Uncached search latency: p50 ${report.uncachedLatency.p50Ms} ms, p95 ${report.uncachedLatency.p95Ms} ms, mean ${report.uncachedLatency.meanMs} ms across ${report.uncachedLatency.count} queries.`,
+);
+console.log(`Initial index load: ${report.index.initialLoadMs} ms.`);
 console.log(`Reports written: ${jsonPath}\n${markdownPath}`);

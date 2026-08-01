@@ -10,7 +10,8 @@
     }
   },
   "dependencies": {
-    "@pi-workbench/contracts": "workspace:*"
+    "@pi-workbench/contracts": "workspace:*",
+    "yaml": "^2.9.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

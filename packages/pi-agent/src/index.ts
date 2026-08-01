@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { dirname, resolve } from 'node:path';
 import { Type } from 'typebox';
 import {
@@ -57,7 +58,7 @@ export interface AgentTurnResult {
   toolCalls: string[];
 }
 
-const systemPrompt = `你是一个运行在 Pi Workbench 中的通用 Agent。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。`;
+const systemPrompt = `你是一个运行在 Pi Workbench 中的通用 Agent。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。对于普通知识问答，优先调用一次 search_knowledge 并直接使用返回的章节摘要；只有摘要不足以回答精确细节时才调用 read。`;
 
 export interface PiAgentSession {
   cwd: string;
@@ -91,7 +92,7 @@ export function getPiModelConfig(overrides: Pick<PiAgentSessionOptions, 'provide
 function getPiThinkingLevel(level?: PiThinkingLevel): PiThinkingLevel {
   if (level) return level;
   const configured = process.env.PI_THINKING_LEVEL;
-  return configured && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(configured) ? configured as PiThinkingLevel : 'low';
+  return configured && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(configured) ? configured as PiThinkingLevel : 'minimal';
 }
 
 export async function createPiAgentSession(options: PiAgentSessionOptions = {}): Promise<PiAgentSession> {
@@ -126,8 +127,27 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
   return { cwd, session, turnState, close: () => session.dispose() };
 }
 
+function buildResourceCatalog(resources: AgentResourceSummary[]): string {
+  const knowledge = resources.filter((resource) => resource.kind === 'knowledge');
+  const domains = knowledge.reduce<Record<string, number>>((counts, resource) => {
+    const parts = resource.path.split('/');
+    const domain = parts[2] === 'library' ? parts.slice(0, 4).join('/') : parts.slice(0, 3).join('/');
+    counts[domain] = (counts[domain] ?? 0) + 1;
+    return counts;
+  }, {});
+  const statuses = knowledge.reduce<Record<string, number>>((counts, resource) => {
+    counts[resource.status] = (counts[resource.status] ?? 0) + 1;
+    return counts;
+  }, {});
+  return JSON.stringify({
+    skills: resources.filter((resource) => resource.kind === 'skill').map(({ path, title }) => ({ path, title })),
+    prompts: resources.filter((resource) => resource.kind === 'prompt').map(({ path, title }) => ({ path, title })),
+    knowledge: { documents: knowledge.length, domains, statuses, lookup: 'Use search_knowledge; full document bodies are not injected into this prompt.' },
+  });
+}
+
 function buildWorkspacePrompt(prompt: string, context: PiWorkspaceContext): string {
-  return `${prompt}\n\n这是一个 Pi Agent 验证工作台。项目资源索引如下：${JSON.stringify(context.resources)}\n\n请先由你判断如何回答：如果需要知识内容，调用只读 search_knowledge 工具，再根据返回的文件来源决定是否调用 read 读取完整 Markdown；如果不需要知识库就直接回答。不要假设应用层已经替你选择了路由，也不要把工具能力当成已经执行的证据。回答中保留实际使用的文件来源。`;
+  return `${prompt}\n\n这是一个 Pi Agent 验证工作台。项目资源目录摘要如下（只包含元数据，不包含全部知识正文）：${buildResourceCatalog(context.resources)}\n\n请先由你判断如何回答：如果需要知识内容，调用只读 search_knowledge 工具，再根据返回的章节摘要决定是否调用 read 读取完整 Markdown；如果不需要知识库就直接回答。不要假设应用层已经替你选择了路由，也不要把工具能力当成已经执行的证据。回答中保留实际使用的文件来源。`;
 }
 
 function createKnowledgeSearchTool(searchKnowledge: KnowledgeSearch, state: PiTurnState) {
@@ -140,13 +160,14 @@ function createKnowledgeSearchTool(searchKnowledge: KnowledgeSearch, state: PiTu
     parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 2000 }) }),
     executionMode: 'sequential' as const,
     async execute(_toolCallId, params) {
+      const startedAt = performance.now();
       const sources = await searchKnowledge(params.query);
       for (const source of sources) {
         if (!state.sources.some((existing) => existing.ref === source.ref)) state.sources.push(source);
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ sources }, null, 2) }],
-        details: { count: sources.length, sources },
+        details: { count: sources.length, retrievalMs: Number((performance.now() - startedAt).toFixed(2)), sources },
       };
     },
   });
@@ -163,10 +184,17 @@ function diagnosticDetail(value: unknown, maxLength = 720): string | undefined {
   return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}…` : serialized;
 }
 
+function toolResultDetail(value: unknown): string | undefined {
+  if (value && typeof value === 'object' && 'details' in value) {
+    return diagnosticDetail((value as { details?: unknown }).details, 600);
+  }
+  return diagnosticDetail(value);
+}
+
 function eventSummary(event: AgentSessionEvent): AgentEventSummary | undefined {
   if (event.type === 'tool_execution_start') return { type: event.type, label: `调用 ${event.toolName}`, toolName: event.toolName, category: 'tool', detail: diagnosticDetail(event.args) };
   if (event.type === 'tool_execution_update') return { type: event.type, label: `工具输出 ${event.toolName}`, toolName: event.toolName, category: 'tool', detail: diagnosticDetail(event.partialResult) };
-  if (event.type === 'tool_execution_end') return { type: event.type, label: `${event.isError ? '工具失败' : '完成'} ${event.toolName}`, toolName: event.toolName, category: event.isError ? 'error' : 'tool', detail: diagnosticDetail(event.result) };
+  if (event.type === 'tool_execution_end') return { type: event.type, label: `${event.isError ? '工具失败' : '完成'} ${event.toolName}`, toolName: event.toolName, category: event.isError ? 'error' : 'tool', detail: toolResultDetail(event.result) };
   if (event.type === 'message_update') {
     const messageEvent = event.assistantMessageEvent;
     if (messageEvent.type === 'text_start') return { type: messageEvent.type, label: '开始生成回答', category: 'message' };

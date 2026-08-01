@@ -16,6 +16,7 @@ describe('Pi workspace tools', () => {
       assert.ok(tool);
       const result = await tool.execute('test-call', { query: 'session' }, undefined, undefined, undefined as never);
       assert.match(result.content[0]?.type === 'text' ? result.content[0].text : '', /session-lifecycle/);
+      assert.ok(typeof (result.details as { retrievalMs?: unknown }).retrievalMs === 'number');
     } finally {
       runtime.close();
     }

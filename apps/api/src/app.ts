@@ -97,7 +97,10 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
       }
     });
 
-    v1.get('/knowledge', async () => ({ items: loadKnowledgeBundle().map(({ body: _body, ...concept }) => concept), total: loadKnowledgeBundle().length }));
+    v1.get('/knowledge', async () => {
+      const concepts = loadKnowledgeBundle();
+      return { items: concepts.map(({ body: _body, ...concept }) => concept), total: concepts.length };
+    });
     v1.post<{ Body: { prompt: string } }>('/knowledge/search', { schema: { body: Type.Object({ prompt: Type.String({ minLength: 1, maxLength: 1000 }) }) } }, async (request) => {
       const items = searchKnowledge(request.body.prompt);
       return { items, total: items.length };
