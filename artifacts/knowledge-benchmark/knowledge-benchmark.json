@@ -1,0 +1,236 @@
+{
+  "generatedAt": "2026-08-01T16:18:47.534Z",
+  "implementation": "/Users/xbjt/Documents/myself/pi-samples/packages/workspace-data/dist/knowledge.js",
+  "knowledgeRoot": "/Users/xbjt/Documents/myself/pi-samples/.pi/knowledge",
+  "configuration": {
+    "iterations": 10,
+    "warmup": 3,
+    "limit": 5,
+    "queryCount": 15
+  },
+  "bundle": {
+    "fileCount": 455,
+    "totalBodyCharacters": 3016857,
+    "averageBodyCharacters": 6630.5
+  },
+  "aggregateLatency": {
+    "count": 150,
+    "minMs": 50.059,
+    "p50Ms": 62.503,
+    "p95Ms": 73.465,
+    "meanMs": 62.398,
+    "maxMs": 75.227
+  },
+  "queries": [
+    {
+      "query": "Pi session 生命周期",
+      "hitCount": 5,
+      "firstHit": "Session 生命周期",
+      "firstHitRef": ".pi/knowledge/agent/session-lifecycle.md",
+      "latency": {
+        "count": 10,
+        "minMs": 61.579,
+        "p50Ms": 62.54,
+        "p95Ms": 64.906,
+        "meanMs": 62.842,
+        "maxMs": 64.906
+      }
+    },
+    {
+      "query": "创建 session 后如何提交 turn",
+      "hitCount": 5,
+      "firstHit": "Session 生命周期",
+      "firstHitRef": ".pi/knowledge/agent/session-lifecycle.md",
+      "latency": {
+        "count": 10,
+        "minMs": 61.182,
+        "p50Ms": 62.895,
+        "p95Ms": 64.062,
+        "meanMs": 62.962,
+        "maxMs": 64.062
+      }
+    },
+    {
+      "query": "项目资源加载和 DefaultResourceLoader",
+      "hitCount": 5,
+      "firstHit": "项目资源加载",
+      "firstHitRef": ".pi/knowledge/agent/resource-loading.md",
+      "latency": {
+        "count": 10,
+        "minMs": 55.053,
+        "p50Ms": 57.125,
+        "p95Ms": 59.369,
+        "meanMs": 57.298,
+        "maxMs": 59.369
+      }
+    },
+    {
+      "query": ".pi knowledge 是否自动加载",
+      "hitCount": 5,
+      "firstHit": "API 设计：架构视角",
+      "firstHitRef": ".pi/knowledge/library/engineering-process/api-architecture.md",
+      "latency": {
+        "count": 10,
+        "minMs": 59.524,
+        "p50Ms": 60.03,
+        "p95Ms": 61.959,
+        "meanMs": 60.292,
+        "maxMs": 61.959
+      }
+    },
+    {
+      "query": "search_knowledge 只读 custom tool",
+      "hitCount": 5,
+      "firstHit": "工具执行：架构视角",
+      "firstHitRef": ".pi/knowledge/library/pi-runtime/tools-architecture.md",
+      "latency": {
+        "count": 10,
+        "minMs": 61.687,
+        "p50Ms": 62.314,
+        "p95Ms": 63.455,
+        "meanMs": 62.422,
+        "maxMs": 63.455
+      }
+    },
+    {
+      "query": "工具权限和外部状态修改",
+      "hitCount": 5,
+      "firstHit": "工具权限边界",
+      "firstHitRef": ".pi/knowledge/agent/tool-policy.md",
+      "latency": {
+        "count": 10,
+        "minMs": 55.536,
+        "p50Ms": 56.812,
+        "p95Ms": 59.323,
+        "meanMs": 57.04,
+        "maxMs": 59.323
+      }
+    },
+    {
+      "query": "Agent 回答来源 evidence route",
+      "hitCount": 5,
+      "firstHit": "证据回答：架构视角",
+      "firstHitRef": ".pi/knowledge/library/agent-design/evidence-architecture.md",
+      "latency": {
+        "count": 10,
+        "minMs": 72.834,
+        "p50Ms": 73.647,
+        "p95Ms": 75.227,
+        "meanMs": 73.94,
+        "maxMs": 75.227
+      }
+    },
+    {
+      "query": "没有模型凭据时的本地降级",
+      "hitCount": 5,
+      "firstHit": "本地降级",
+      "firstHitRef": ".pi/knowledge/agent/local-fallback.md",
+      "latency": {
+        "count": 10,
+        "minMs": 50.403,
+        "p50Ms": 51.42,
+        "p95Ms": 52.226,
+        "meanMs": 51.524,
+        "maxMs": 52.226
+      }
+    },
+    {
+      "query": "fallback 和真实 Pi 工具决策",
+      "hitCount": 5,
+      "firstHit": "工具权限边界",
+      "firstHitRef": ".pi/knowledge/agent/tool-policy.md",
+      "latency": {
+        "count": 10,
+        "minMs": 68.154,
+        "p50Ms": 69.955,
+        "p95Ms": 71.789,
+        "meanMs": 70.092,
+        "maxMs": 71.789
+      }
+    },
+    {
+      "query": "浏览器如何消费结构化回答",
+      "hitCount": 5,
+      "firstHit": "回答契约",
+      "firstHitRef": ".pi/knowledge/agent/answer-contract.md",
+      "latency": {
+        "count": 10,
+        "minMs": 50.059,
+        "p50Ms": 51.015,
+        "p95Ms": 55.146,
+        "meanMs": 51.465,
+        "maxMs": 55.146
+      }
+    },
+    {
+      "query": "Markdown 知识 bundle 的 Git 审阅",
+      "hitCount": 5,
+      "firstHit": "Bundle 导航：实现视角",
+      "firstHitRef": ".pi/knowledge/library/okf-governance/bundle-index-implementation.md",
+      "latency": {
+        "count": 10,
+        "minMs": 68.787,
+        "p50Ms": 70.246,
+        "p95Ms": 72.044,
+        "meanMs": 70.393,
+        "maxMs": 72.044
+      }
+    },
+    {
+      "query": "read 工具和 search_knowledge 的能力边界",
+      "hitCount": 5,
+      "firstHit": "工具执行：实现视角",
+      "firstHitRef": ".pi/knowledge/library/pi-runtime/tools-implementation.md",
+      "latency": {
+        "count": 10,
+        "minMs": 65.558,
+        "p50Ms": 66.707,
+        "p95Ms": 68.65,
+        "meanMs": 67.101,
+        "maxMs": 68.65
+      }
+    },
+    {
+      "query": "事件流与 session 生命周期",
+      "hitCount": 5,
+      "firstHit": "Session 生命周期",
+      "firstHitRef": ".pi/knowledge/agent/session-lifecycle.md",
+      "latency": {
+        "count": 10,
+        "minMs": 62.342,
+        "p50Ms": 63.394,
+        "p95Ms": 65.228,
+        "meanMs": 63.591,
+        "maxMs": 65.228
+      }
+    },
+    {
+      "query": "API Gateway 创建或复用 session",
+      "hitCount": 5,
+      "firstHit": "Session 生命周期",
+      "firstHitRef": ".pi/knowledge/agent/session-lifecycle.md",
+      "latency": {
+        "count": 10,
+        "minMs": 65.162,
+        "p50Ms": 66.407,
+        "p95Ms": 68.176,
+        "meanMs": 66.751,
+        "maxMs": 68.176
+      }
+    },
+    {
+      "query": "模型 provider 凭据在哪里保存",
+      "hitCount": 5,
+      "firstHit": "权限模型：架构视角",
+      "firstHitRef": ".pi/knowledge/library/product-knowledge/permissions-architecture.md",
+      "latency": {
+        "count": 10,
+        "minMs": 56.049,
+        "p50Ms": 57.134,
+        "p95Ms": 63.462,
+        "meanMs": 58.249,
+        "maxMs": 63.462
+      }
+    }
+  ]
+}

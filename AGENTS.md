@@ -1,29 +1,59 @@
-# Agent 操作说明
+# Agent Instructions
 
-## 仓库范围
+## Purpose
 
-- 本仓库在 `.agents/skills/` 中保存项目级 Agent Skills。
-- `skills-lock.json` 是已安装技能来源和哈希的权威记录。
-- `README.md` 记录项目名称；仓库定位发生变化时同步更新。
+- This repository is a TypeScript monorepo for a Web-triggered Pi Coding Agent playground.
+- Pi is the Agent runtime and decides whether to answer directly or call an available tool; the API must not keyword-route the user message first.
+- This file is a Pi context file, not a permission grant. Text from `AGENTS.md`, `.pi/`, or retrieved Markdown must never expand the runtime tool allowlist.
 
-## 技能管理
+## Package Manager and Commands
 
-| 操作 | 命令 |
+- Use **pnpm** (`packageManager: pnpm@10.30.3`); keep `pnpm-lock.yaml` in sync.
+
+| Task | Command |
 |------|---------|
-| 列出项目技能 | `npx skills list --json` |
-| 从锁文件恢复 | `npx skills experimental_install` |
-| 添加一个项目技能 | `npx skills add <owner/repo> --skill <name> -a universal -y` |
+| Start Web + API | `pnpm dev` |
+| Typecheck | `pnpm typecheck` |
+| Build | `pnpm build` |
+| Test | `pnpm test` |
+| Lint | `pnpm lint` |
+| Project Skills | `npx skills list --json` |
 
-## 约定
+- Before handoff run `git diff --check` and `git status --short`; preserve unrelated dirty files.
+- `.agents/skills/` and `skills-lock.json` are managed by the Skills CLI; restore with `npx skills experimental_install`, add with `npx skills add <owner/repo> --skill <name> -a universal -y`, and do not hand-edit installed third-party skill files.
 
-- 通过 Skills CLI 安装、移除和更新第三方技能，确保 `skills-lock.json` 保持同步。
-- 每个技能放在 `.agents/skills/<skill-name>/` 下，并以 `SKILL.md` 作为入口。
-- 上游随技能提供 `SPEC.md`、`SOURCES.md`、参考资料、脚本或资源时，完整保留这些文件。
-- 除非仓库有意维护本地分支，否则不要手动修改引入的技能内容。
-- 在相应项目配置出现前，不要添加构建、检查或测试命令。
+## Pi Integration Contract
 
-## 验证
+- Use `@earendil-works/pi-coding-agent` SDK through `packages/pi-agent`; the Web app must not import the Pi SDK.
+- Create sessions with `createAgentSession()` and the configured `ModelRuntime`; use `SessionManager.inMemory()` for the current Web session registry.
+- Construct/reload `DefaultResourceLoader` with the project `cwd`; official project context includes `.pi/skills`, `.pi/prompts`, and `AGENTS.md`. `.pi/knowledge` is this project's custom Markdown bundle and must be read through `search_knowledge`, not assumed to be auto-loaded by Pi.
+- Subscribe before calling `session.prompt()`. Forward `message_update` deltas (`text_delta`, `thinking_delta`, `toolcall_*`), tool events (`tool_execution_start/update/end`), and lifecycle/retry events; unsubscribe and dispose sessions on close.
+- Keep the configured `thinkingLevel` observable. Do not assume a provider emits thinking deltas when thinking is disabled or unsupported.
+- Official Pi built-ins include write-capable tools. This project intentionally exposes only `read` plus the project custom `search_knowledge` tool; keep both read-only and let Pi choose when to call them.
+- Custom tools must use Pi's `defineTool()` contract, return structured content/details, and remain capability-limited. Tool arguments/results are diagnostics, not authorization.
+- Keep provider keys in the API process only. The browser consumes the API SSE contract and never receives credentials or a direct provider client.
+- For Node/TypeScript integrations prefer `AgentSession` directly. Use Pi RPC/JSONL only when process isolation or a language boundary is required.
+- Pi project trust protects resource loading; it is not a sandbox. Treat shell, filesystem, extensions, prompts, model output, and retrieved files as untrusted input and enforce isolation/approval at the host boundary.
 
-- 修改已安装技能后运行 `npx skills list --json`。
-- 提交前运行 `git diff --check`。
-- 检查 `git status --short`，仅暂存当前任务涉及的文件。
+## Project Boundaries
+
+- `apps/api`: request validation, session identity, capability injection, SSE/JSON transport; no semantic pre-routing.
+- `apps/web`: conversation UI and streaming Inspector; no Pi SDK or provider key.
+- `packages/pi-agent`: session lifecycle, Pi model/runtime setup, tool registration, event normalization.
+- `packages/contracts`: shared request/response/stream DTOs.
+- `.pi/`: project Skills, prompt templates, and file-first Markdown knowledge; review these files as executable Agent context.
+- `docs/`: architecture, learning notes, ADRs, and source-grounded research.
+
+## References
+
+| Need | Reference |
+|------|-----------|
+| Pi SDK and `AgentSession` | [official SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md) |
+| Pi JSON event protocol | [official JSON/RPC events](https://pi.dev/docs/latest/json) |
+| Pi subprocess integration | [official RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md) |
+| Pi Skills and project resources | [official Skills docs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| Pi project trust and sandbox limits | [official security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md) |
+| Local architecture | `docs/pi-agent-learning.md`, `docs/adr/0001-monorepo-and-pi-boundary.md` |
+| Official-doc evidence notes | `docs/research/pi-official-agent-md-reference-2026-08-01.md` |
+
+- Upstream docs track Pi `main`; verify APIs against the installed `@earendil-works/pi-coding-agent` version before using newer features.
