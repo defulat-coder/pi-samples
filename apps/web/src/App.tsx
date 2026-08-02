@@ -273,22 +273,14 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
               <Plus size={14} weight="bold" />
               新建会话
             </button>
-            <span className="workspace-session-chip">
-              <span>当前会话</span>
-              {currentSessionId}
-            </span>
+            <span className="workspace-session-chip" title={`当前会话 ${currentSessionId}`} aria-label={`当前会话 ${currentSessionId}`}>当前会话</span>
           </div>
           <header className="workspace-header">
             <div className="workspace-brand">
               <div className="workspace-symbol">{showingSessions ? <ChatCircle size={18} weight="duotone" /> : <FolderOpen size={18} weight="duotone" />}</div>
               <div>
-                <span className="workspace-kicker">工作区</span>
                 <h2>{showingSessions ? '会话' : '项目文件'}</h2>
               </div>
-            </div>
-            <div className="workspace-count">
-              <strong>{showingSessions ? sessions.length : workspace.resources.length}</strong>
-              <span>{showingSessions ? '个会话' : '个文件'}</span>
             </div>
           </header>
           <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="vertical">
@@ -308,17 +300,12 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
               <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} />
             ) : (
               <>
-                <div className="workspace-root">
-                  <FolderOpen size={15} weight="duotone" />
-                  <strong>.pi</strong>
-                  <span>本地上下文</span>
-                </div>
                 <div className="workspace-toolbar">
                   <label className="workspace-search">
                     <MagnifyingGlass size={14} />
                     <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
                   </label>
-                  <span className="workspace-policy">只读</span>
+                  <span className="workspace-policy">仅查看</span>
                 </div>
                 <div className="workspace-tree" aria-label="Pi 项目文件树">
                   <FileTree node={tree} depth={0} query={filter.trim().toLocaleLowerCase()} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
@@ -460,7 +447,7 @@ export default function App() {
               <div className="welcome-state">
                 <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
                 <h1>你好，我是 Pi</h1>
-                <p>从本地文件和知识库开始对话。Pi 会按需读取上下文，并在回答旁边保留依据。</p>
+                <p>连接本地文件和知识库，开始一次 Pi 会话。</p>
               </div>
             ) : (
               <div className="message-list">
@@ -472,13 +459,11 @@ export default function App() {
             <div className="composer">
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向项目提问…" aria-label="向项目提问" rows={1} />
               <div className="composer-toolbar">
-                <button type="button" className="composer-tool-button composer-tool-add" onClick={() => openWorkspace('files')} aria-label="添加项目上下文" title="打开项目文件"><Plus size={15} weight="bold" /></button>
                 <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />项目文件</button>
-                <button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking}>思考</button>
-                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('sessions')}><ChatCircle size={14} />会话</button>
+                <button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking} aria-label={showThinking ? '隐藏思考过程' : '显示思考过程'} title={showThinking ? '隐藏思考过程' : '显示思考过程'}>{showThinking ? '隐藏思考' : '显示思考'}</button>
                 <span className="composer-toolbar-spacer" />
                 <div className="composer-more-wrap">
-                  <button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-controls="model-selection-menu" aria-label="模型选择" title="查看当前模型" aria-haspopup="dialog"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>
+                  <button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-controls="model-selection-menu" aria-label={`当前模型 ${workspace.model.model ?? '本地降级'}`} title="查看当前模型" aria-haspopup="dialog"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>
                   {modelMenuOpen && <div id="model-selection-menu" className="composer-more-menu model-selection-menu" role="dialog" aria-labelledby="model-selection-title"><strong id="model-selection-title">当前模型</strong><span>{workspace.model.model ?? '本地降级模式'}</span><small>{workspace.model.providerConfigured ? '已配置模型密钥' : '本地降级模式'}</small></div>}
                 </div>
                 <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
