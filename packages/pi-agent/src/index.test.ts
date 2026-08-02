@@ -6,6 +6,7 @@ describe('Pi workspace tools', () => {
   it('registers knowledge search as a Pi decision tool instead of pre-routing the request', async () => {
     const runtime = await createPiAgentSession({
       cwd: getPiProjectRoot(),
+      persistSession: false,
       searchKnowledge: async (query) => [{ kind: 'knowledge', title: 'Session', ref: '.pi/knowledge/agent/session-lifecycle.md', excerpt: `matched ${query}` }],
     });
 

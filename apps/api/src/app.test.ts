@@ -1,12 +1,18 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildApp } from './app.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PiFileSessionStore } from '@pi-workbench/pi-agent';
 
 describe('Pi Workbench API', () => {
-  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', PI_AGENT_ENABLED: false, LOG_LEVEL: 'error' });
+  const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-file-sessions-'));
+  const sessions = new PiFileSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
+  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', PI_AGENT_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
 
   before(async () => app.ready());
-  after(async () => app.close());
+  after(async () => { await app.close(); sessions.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
 
   it('returns a generic local workspace snapshot', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/workspace' });
@@ -29,6 +35,8 @@ describe('Pi Workbench API', () => {
     assert.match(response.json().sources[0].ref, /\.pi\/knowledge/);
     assert.deepEqual(response.json().decision, { decidedBy: 'fallback', toolCalls: [] });
     assert.equal(response.json().tools.policy, 'read-only');
+    assert.equal(response.json().metrics.turn, 1);
+    assert.equal(response.json().metrics.tokenUsage.source, 'estimated');
   });
 
   it('streams fallback text and a terminal response over SSE', async () => {
@@ -41,13 +49,50 @@ describe('Pi Workbench API', () => {
     if (!doneBlock) throw new Error('SSE done event missing');
     const dataLine = doneBlock.split('\n').find((line) => line.startsWith('data:'));
     if (!dataLine) throw new Error('SSE done data missing');
-    assert.equal(JSON.parse(dataLine.slice(5).trim()).response.source, 'local-fallback');
+    const streamedResponse = JSON.parse(dataLine.slice(5).trim()).response;
+    assert.equal(streamedResponse.source, 'local-fallback');
+    assert.equal(streamedResponse.metrics.executionRounds, 1);
+  });
+
+  it('creates ordered sessions and persists streamed history', async () => {
+    const first = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+    const second = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    const firstId = first.json().id as string;
+    const secondId = second.json().id as string;
+    const before = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions' });
+    const beforeIds = before.json().items.map((session: { id: string }) => session.id);
+    assert.ok(beforeIds.indexOf(firstId) < beforeIds.indexOf(secondId));
+    await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: '记录第一个会话', sessionId: firstId, turnId: 'turn-ordered' } });
+    const list = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions' });
+    assert.deepEqual(list.json().items.map((session: { id: string }) => session.id), beforeIds);
+    const detail = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${firstId}` });
+    assert.equal(detail.json().messages[0].kind, 'user');
+    assert.equal(detail.json().messages[0].text, '记录第一个会话');
+  });
+
+  it('persists assistant feedback without changing session order', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+    const sessionId = created.json().id as string;
+    await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: '给这条回答加反馈', sessionId, turnId: 'turn-feedback' } });
+    const detail = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${sessionId}` });
+    const assistant = detail.json().messages.find((message: { kind: string }) => message.kind === 'assistant') as { id: string } | undefined;
+    assert.ok(assistant);
+    const liked = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}/messages/${assistant!.id}/feedback`, payload: { feedback: 'like' } });
+    assert.equal(liked.statusCode, 200);
+    assert.equal(liked.json().messages.find((message: { id: string }) => message.id === assistant!.id).feedback, 'like');
+    const cleared = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}/messages/${assistant!.id}/feedback`, payload: { feedback: null } });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json().messages.find((message: { id: string }) => message.id === assistant!.id).feedback, undefined);
   });
 
   it('exposes the Pi workspace runtime contract', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/agent/workspace' });
     assert.equal(response.statusCode, 200);
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.includes('pi-workbench')));
+    assert.ok(response.json().resources.some((resource: { path: string }) => resource.path === '.pi/README.md'));
+    assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.startsWith('.pi/sessions/')));
     assert.deepEqual(response.json().tools, { enabled: ['read', 'search_knowledge'], policy: 'read-only' });
     assert.equal(response.json().data.kind, 'local-sqlite');
   });

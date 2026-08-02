@@ -8,7 +8,7 @@ Pi Workbench 的核心不是 CLI，也不是业务后台，而是一个由 Web �
 浏览器 Agent Playground
   -> POST /api/v1/agent/chat/stream (SSE)
   -> Fastify Agent Gateway
-  -> 创建/复用 Pi session，并注入只读工具
+  -> 在项目 .pi/sessions/ 创建/复用 Pi JSONL session，并注入只读工具
   -> DefaultResourceLoader 加载 .pi/
   -> session.prompt(原始用户消息)
   -> Pi 自己决定：直接回答，或调用 search_knowledge / read
@@ -23,9 +23,10 @@ Pi Workbench 的核心不是 CLI，也不是业务后台，而是一个由 Web �
 1. [apps/web/src/App.tsx](../apps/web/src/App.tsx)：对话页面、消息状态、证据和运行 Inspector。
 2. [apps/api/src/app.ts](../apps/api/src/app.ts)：`/api/v1/agent/chat/stream`、兼容 JSON 的 `/api/v1/agent/chat` 和 `/api/v1/agent/workspace`。
 3. [packages/pi-agent/src/index.ts](../packages/pi-agent/src/index.ts)：`createPiAgentSession()`、`askPiAgent()` 和 Pi 事件收集。
-4. [.pi/skills/pi-workbench/SKILL.md](../.pi/skills/pi-workbench/SKILL.md)：项目级 Agent 行为约束。
-5. [.pi/prompts/agent-chat.md](../.pi/prompts/agent-chat.md)：对话提示模板。
-6. [packages/workspace-data/src/knowledge.ts](../packages/workspace-data/src/knowledge.ts)：OKF-compatible Markdown 加载和确定性检索 consumer。
+4. [packages/pi-agent/src/session-store.ts](../packages/pi-agent/src/session-store.ts)：Pi 官方 JSONL session 文件、Web 元数据 custom entry 和反馈投影。
+5. [.pi/skills/pi-workbench/SKILL.md](../.pi/skills/pi-workbench/SKILL.md)：项目级 Agent 行为约束。
+6. [.pi/prompts/agent-chat.md](../.pi/prompts/agent-chat.md)：对话提示模板。
+7. [packages/workspace-data/src/knowledge.ts](../packages/workspace-data/src/knowledge.ts)：OKF-compatible Markdown 加载和确定性检索 consumer。
 
 ## 三层职责
 
@@ -47,7 +48,7 @@ API 是安全边界和编排入口：
 
 1. 校验请求；
 2. 读取当前项目资源快照；
-3. 创建或复用 Pi session；
+3. 创建或复用 `.pi/sessions/*.jsonl` 中的 Pi session；
 4. 注入 `read` 和 `search_knowledge` 两个只读工具；
 5. 把原始消息交给 Pi，不在这里判断业务意图；
 6. 收集 Pi 的工具事件和来源，实时转发 SSE，再在 `done` 事件中返回统一 DTO。
@@ -61,6 +62,8 @@ API 是安全边界和编排入口：
 - `session.prompt()`：提交原始用户问题；
 - `session.subscribe()`：观察消息和工具事件；
 - `session.dispose()`：关闭 session。
+
+Session 历史不再进入 SQLite：`SessionManager` 使用官方 JSONL 树结构保存用户消息、assistant 消息、tool result、thinking、模型 usage 等；本项目的回答指标和点赞/点踩作为 `custom` entry 写入同一个 JSONL 文件，不会进入 LLM context。`.pi/sessions/` 已加入 `.gitignore`，避免把用户对话和模型输出提交到仓库。
 
 Pi 不直接写文件、执行 shell 或修改外部数据。它在只读工具边界内自行决定是否检索，并组织答案。
 
@@ -78,6 +81,7 @@ Pi 不直接写文件、执行 shell 或修改外部数据。它在只读工具�
 .pi/
 ├── skills/pi-workbench/SKILL.md
 ├── prompts/agent-chat.md
+├── sessions/                 # Pi 官方 JSONL session（本地忽略）
 └── knowledge/
     ├── index.md
     └── agent/*.md
@@ -108,6 +112,6 @@ pnpm dev
 ## 下一步实验
 
 - 将 `search_knowledge` 替换为 QMD/SQLite FTS5 consumer，保持 Pi 的工具决策不变；
-- 把 `SessionManager.inMemory()` 换成持久化会话，观察多轮上下文和 compaction；
+- 阅读 `.pi/sessions/*.jsonl`，观察多轮上下文、树结构、compaction 和 custom entry；
 - 给知识文档增加 `owner`、`effective_from`、`stale_after`，检索时过滤过期资源；
 - 记录 prompt、route、sources、model 和 latency，建立 Agent 评测集。

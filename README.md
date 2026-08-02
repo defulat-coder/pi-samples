@@ -6,10 +6,12 @@ Pi Workbench 是一个以 Pi Coding Agent 为核心、以 Web 为入口的 TypeS
 
 - `apps/web`：Agent 对话页面，展示回答、来源、运行状态和事件摘要。
 - `apps/api`：Agent Gateway，负责请求校验、资源快照、只读工具注入和 Pi 调用；不做语义路由。
-- `packages/pi-agent`：`@earendil-works/pi-coding-agent` SDK 适配层，封装 session 和 turn。
+- `packages/pi-agent`：`@earendil-works/pi-coding-agent` SDK 适配层，封装 session、turn 和 `.pi/sessions/` JSONL 持久化。
 - `packages/contracts`：Web/API/Agent 的共享 DTO。
 - `packages/workspace-data`：通用本地 SQLite 数据与 Markdown consumer，提供可替换的数据适配样例。
 - `.pi/`：类似 Claude Code `.claude/` 的项目级 Agent 文件资源。
+
+会话历史遵循 Pi 官方 `SessionManager` JSONL 格式，保存在项目 `.pi/sessions/`；不会写入 SQLite。Pi 的原生消息、thinking、tool result 和 usage 保留在 JSONL 中，工作台指标与反馈使用同文件的 `custom` entries 保存。
 
 ## 启动
 

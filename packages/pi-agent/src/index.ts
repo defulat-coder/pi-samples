@@ -10,8 +10,9 @@ import {
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentEventSummary, AgentResourceSummary, QuerySource } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentEventSummary, AgentResourceSummary, AgentTurnMetrics, QuerySource } from '@pi-workbench/contracts';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { getPiSessionDir } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
@@ -20,6 +21,10 @@ export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'x
 
 export interface PiAgentSessionOptions {
   cwd?: string;
+  sessionId?: string;
+  sessionDir?: string;
+  /** Unit tests can opt into Pi's in-memory manager; Web sessions persist by default. */
+  persistSession?: boolean;
   provider?: string;
   model?: string;
   thinkingLevel?: PiThinkingLevel;
@@ -44,6 +49,8 @@ interface PiTurnState {
 }
 
 export interface AgentTurnOptions {
+  /** Position of this request in the persisted Web session. */
+  turnNumber?: number;
   onEvent?: (event: AgentSessionEvent) => void;
   onEventSummary?: (event: AgentEventSummary) => void;
   onTextDelta?: (delta: string) => void;
@@ -52,6 +59,7 @@ export interface AgentTurnOptions {
 
 export interface AgentTurnResult {
   answer: string;
+  thinkingText: string;
   eventCounts: Record<string, number>;
   events: AgentEventSummary[];
   sources: QuerySource[];
@@ -63,6 +71,7 @@ const systemPrompt = `你是一个运行在 Pi Workbench 中的通用 Agent。�
 export interface PiAgentSession {
   cwd: string;
   session: AgentSession;
+  sessionManager: SessionManager;
   turnState: PiTurnState;
   close: () => void;
 }
@@ -113,9 +122,19 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
   });
   await resourceLoader.reload();
 
+  const persistSession = options.persistSession !== false;
+  const sessionDir = options.sessionDir ?? getPiSessionDir(cwd);
+  let sessionManager: SessionManager;
+  if (!persistSession) {
+    sessionManager = SessionManager.inMemory(cwd);
+  } else {
+    const existing = options.sessionId ? (await SessionManager.list(cwd, sessionDir)).find((info) => info.id === options.sessionId) : undefined;
+    sessionManager = existing ? SessionManager.open(existing.path, sessionDir, cwd) : SessionManager.create(cwd, sessionDir, options.sessionId ? { id: options.sessionId } : undefined);
+  }
+
   const { session } = await createAgentSession({
     cwd,
-    sessionManager: SessionManager.inMemory(cwd),
+    sessionManager,
     modelRuntime,
     resourceLoader,
     model,
@@ -124,7 +143,7 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
     thinkingLevel: getPiThinkingLevel(options.thinkingLevel),
   });
 
-  return { cwd, session, turnState, close: () => session.dispose() };
+  return { cwd, session, sessionManager, turnState, close: () => session.dispose() };
 }
 
 function buildResourceCatalog(resources: AgentResourceSummary[]): string {
@@ -226,6 +245,7 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
   const eventCounts: Record<string, number> = {};
   const events: AgentEventSummary[] = [];
   let answer = '';
+  let thinkingText = '';
   runtime.turnState.sources = [];
   runtime.turnState.toolCalls = [];
   const unsubscribe = runtime.session.subscribe((event) => {
@@ -241,12 +261,15 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
       answer += event.assistantMessageEvent.delta;
       options.onTextDelta?.(event.assistantMessageEvent.delta);
     }
-    if (event.type === 'message_update' && event.assistantMessageEvent.type === 'thinking_delta') options.onThinkingDelta?.(event.assistantMessageEvent.delta);
+    if (event.type === 'message_update' && event.assistantMessageEvent.type === 'thinking_delta') {
+      thinkingText += event.assistantMessageEvent.delta;
+      options.onThinkingDelta?.(event.assistantMessageEvent.delta);
+    }
   });
 
   try {
     await runtime.session.prompt(prompt);
-    return { answer: answer.trim(), eventCounts, events, sources: [...runtime.turnState.sources], toolCalls: [...runtime.turnState.toolCalls] };
+    return { answer: answer.trim(), thinkingText, eventCounts, events, sources: [...runtime.turnState.sources], toolCalls: [...runtime.turnState.toolCalls] };
   } finally {
     unsubscribe();
   }
@@ -259,7 +282,7 @@ export class PiSessionRegistry {
   private getOrCreate(sessionId: string, options: PiAgentSessionOptions = {}): Promise<PiAgentSession> {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
-    const created = createPiAgentSession(options);
+    const created = createPiAgentSession({ ...options, sessionId, persistSession: true });
     this.sessions.set(sessionId, created);
     return created;
   }
@@ -283,6 +306,8 @@ export class PiSessionRegistry {
 
 export const piSessionRegistry = new PiSessionRegistry();
 
+export * from './session-store.js';
+
 export function getPiModelStatus(enabled = process.env.PI_AGENT_ENABLED === 'true'): PiModelStatus {
   const config = getPiModelConfig();
   const providerKeyEnv: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', google: 'GOOGLE_API_KEY', 'google-vertex': 'GOOGLE_API_KEY', 'kimi-coding': 'KIMI_API_KEY' };
@@ -294,7 +319,42 @@ function availableTools(context: PiWorkspaceContext): string[] {
   return context.searchKnowledge ? ['read', 'search_knowledge'] : ['read'];
 }
 
-async function workspaceFallback(message: string, context: PiWorkspaceContext, extra?: string): Promise<AgentChatResponse> {
+function estimateTokens(text: string): number {
+  return text ? Math.ceil(text.length / 4) : 0;
+}
+
+function createTurnMetrics(input: {
+  message: string;
+  answer: string;
+  thinkingText: string;
+  events: AgentEventSummary[];
+  eventCounts: Record<string, number>;
+  toolCalls: string[];
+  startedAt: number;
+  turnNumber?: number;
+}): AgentTurnMetrics {
+  const completedAt = Date.now();
+  const outputText = `${input.thinkingText}${input.answer}`;
+  const inputTokens = estimateTokens(input.message);
+  const outputTokens = estimateTokens(outputText);
+  const eventCount = Object.values(input.eventCounts).reduce((total, count) => total + count, 0);
+  const executionRounds = Math.max(1, input.eventCounts.turn_start ?? 0, input.toolCalls.length + 1);
+  return {
+    turn: Math.max(1, input.turnNumber ?? 1),
+    executionRounds,
+    startedAt: new Date(input.startedAt).toISOString(),
+    completedAt: new Date(completedAt).toISOString(),
+    durationMs: Math.max(0, completedAt - input.startedAt),
+    eventCount: eventCount || input.events.length,
+    toolCallCount: input.toolCalls.length,
+    inputChars: input.message.length,
+    outputChars: input.answer.length,
+    thinkingChars: input.thinkingText.length,
+    tokenUsage: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens, source: 'estimated' },
+  };
+}
+
+async function workspaceFallback(message: string, context: PiWorkspaceContext, extra?: string, startedAt = Date.now(), turnNumber?: number): Promise<AgentChatResponse> {
   let sources: QuerySource[] = [];
   if (context.searchKnowledge) {
     try {
@@ -319,19 +379,22 @@ async function workspaceFallback(message: string, context: PiWorkspaceContext, e
     answer = '这是一个 Pi Agent 验证工作台。你可以询问资源内容、工具权限、session 生命周期或让 Agent 总结当前项目上下文。';
   }
 
+  const finalAnswer = extra ? `${answer}\n\n${extra}` : answer;
+  const events: AgentEventSummary[] = [{ type: 'local_fallback', label: '本地降级回答' }];
   return {
-    answer: extra ? `${answer}\n\n${extra}` : answer,
+    answer: finalAnswer,
     source: 'local-fallback',
     sessionId: context.sessionId,
     route: sources.length ? 'knowledge' : 'workspace',
     sources,
     resources: context.resources,
-    events: [{ type: 'local_fallback', label: '本地降级回答' }],
+    events,
     decision: { decidedBy: 'fallback', toolCalls: [] },
     tools: { enabled: availableTools(context), policy: 'read-only' },
     model: getPiModelStatus(),
     latencyMs: 0,
     createdAt: new Date().toISOString(),
+    metrics: createTurnMetrics({ message, answer: finalAnswer, thinkingText: '', events, eventCounts: { local_fallback: 1 }, toolCalls: [], startedAt, turnNumber }),
   };
 }
 
@@ -344,13 +407,14 @@ function notifyFallback(response: AgentChatResponse, options: AgentTurnOptions):
 export async function askPiAgent(message: string, context: PiWorkspaceContext, options: AgentTurnOptions = {}): Promise<AgentChatResponse> {
   const startedAt = Date.now();
   if (process.env.PI_AGENT_ENABLED !== 'true') {
-    const response = notifyFallback(await workspaceFallback(message, context), options);
+    const response = notifyFallback(await workspaceFallback(message, context, undefined, startedAt, options.turnNumber), options);
     return { ...response, latencyMs: Date.now() - startedAt };
   }
 
   try {
     const result = await piSessionRegistry.run(context.sessionId, buildWorkspacePrompt(message, context), options, { searchKnowledge: context.searchKnowledge });
-    if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。'), options), latencyMs: Date.now() - startedAt };
+    if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。', startedAt, options.turnNumber), options), latencyMs: Date.now() - startedAt };
+    const metrics = createTurnMetrics({ message, answer: result.answer, thinkingText: result.thinkingText, events: result.events, eventCounts: result.eventCounts, toolCalls: result.toolCalls, startedAt, turnNumber: options.turnNumber });
     return {
       answer: result.answer,
       source: 'pi-coding-agent',
@@ -362,10 +426,11 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
       events: result.events,
       tools: { enabled: availableTools(context), policy: 'read-only' },
       model: getPiModelStatus(),
-      latencyMs: Date.now() - startedAt,
+      latencyMs: metrics.durationMs,
       createdAt: new Date().toISOString(),
+      metrics,
     };
   } catch (error) {
-    return { ...notifyFallback(await workspaceFallback(message, context, `Pi 暂时不可用，已切换到本地降级回答（${error instanceof Error ? error.message : '未知错误'}）。`), options), latencyMs: Date.now() - startedAt };
+    return { ...notifyFallback(await workspaceFallback(message, context, `Pi 暂时不可用，已切换到本地降级回答（${error instanceof Error ? error.message : '未知错误'}）。`, startedAt, options.turnNumber), options), latencyMs: Date.now() - startedAt };
   }
 }

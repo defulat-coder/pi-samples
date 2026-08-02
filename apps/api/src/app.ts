@@ -1,12 +1,13 @@
-import { readFileSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentChatRequest, AgentChatStreamEvent, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
+import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getPiModelStatus } from '@pi-workbench/pi-agent';
+import { askPiAgent, getPiModelStatus, piFileSessionStore } from '@pi-workbench/pi-agent';
+import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 
 const WorkspaceRecordQuerySchema = Type.Object({
@@ -17,33 +18,57 @@ const WorkspaceRecordQuerySchema = Type.Object({
   status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('draft'), Type.Literal('archived')])),
 });
 
-function workspaceResources() {
-  return [
-    { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill' as const, title: 'Pi 工作台智能体技能', status: 'active' as const },
-    { path: '.pi/prompts/agent-chat.md', kind: 'prompt' as const, title: '智能体对话提示词', status: 'active' as const },
-    ...loadKnowledgeBundle().map((concept) => ({ path: concept.path, kind: 'knowledge' as const, title: concept.title, status: concept.status })),
-  ];
+type AppDependencies = { sessionStore?: PiFileSessionStore };
+
+function projectRoot() {
+  const candidates = [resolve(process.cwd()), resolve(process.cwd(), '..'), resolve(process.cwd(), '../..')];
+  return candidates.find((candidate) => existsSync(resolve(candidate, '.pi'))) ?? resolve(process.cwd());
+}
+
+function walkPiFiles(directory: string, root = directory): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))) {
+    const absolutePath = join(directory, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) files.push(...walkPiFiles(absolutePath, root));
+    else if (entry.isFile()) files.push(relative(root, absolutePath).split(sep).join('/'));
+  }
+  return files;
+}
+
+function inferredResource(path: string): AgentResourceSummary {
+  const name = basename(path);
+  const extension = extname(name).toLowerCase();
+  const kind = path.startsWith('.pi/skills/') ? 'skill' : path.startsWith('.pi/prompts/') ? 'prompt' : path.startsWith('.pi/knowledge/') && extension === '.md' ? 'knowledge' : path.startsWith('.pi/sessions/') ? 'session' : 'file';
+  const title = path === '.pi/README.md' ? 'Pi 项目说明' : kind === 'session' ? `会话 ${name.replace(/^.*_session_/, '').replace(/\.jsonl$/i, '')}` : extension === '.jsonl' ? `运行记录 · ${name.replace(/\.jsonl$/i, '')}` : name.replace(/\.[^.]+$/, '');
+  return { path, kind, title, status: 'active' };
+}
+
+function workspaceResources(): AgentResourceSummary[] {
+  const known = new Map<string, AgentResourceSummary>(loadKnowledgeBundle().map((concept) => [concept.path, { path: concept.path, kind: 'knowledge' as const, title: concept.title, status: concept.status }] as const));
+  known.set('.pi/skills/pi-workbench/SKILL.md', { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill', title: 'Pi 工作台智能体技能', status: 'active' });
+  known.set('.pi/prompts/agent-chat.md', { path: '.pi/prompts/agent-chat.md', kind: 'prompt', title: '智能体对话提示词', status: 'active' });
+  return walkPiFiles(resolve(projectRoot(), '.pi'), resolve(projectRoot())).map((path) => known.get(path) ?? inferredResource(path));
 }
 
 function readAgentResource(path: string): AgentResourceDocument | undefined {
   const resource = workspaceResources().find((item) => item.path === path) as AgentResourceSummary | undefined;
   if (!resource) return undefined;
 
-  const projectRoots = [resolve(process.cwd()), resolve(process.cwd(), '..'), resolve(process.cwd(), '../..')];
-  for (const projectRoot of projectRoots) {
-    const absolutePath = resolve(projectRoot, resource.path);
-    const relativePath = relative(projectRoot, absolutePath);
-    if (relativePath.startsWith(`..${sep}`) || relativePath === '..' || relativePath.includes(`${sep}..${sep}`)) continue;
-    try {
-      return { resource, content: readFileSync(absolutePath, 'utf8') };
-    } catch {
-      // The API can run from the repository root or from apps/api in tests.
-    }
+  const root = projectRoot();
+  const absolutePath = resolve(root, resource.path);
+  const relativePath = relative(root, absolutePath);
+  if (relativePath.startsWith(`..${sep}`) || relativePath === '..' || relativePath.includes(`${sep}..${sep}`)) return undefined;
+  try {
+    return { resource, content: readFileSync(absolutePath, 'utf8') };
+  } catch {
+    // A session can be rotated between listing and opening; return a normal 404.
   }
   return undefined;
 }
 
-export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
+export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
+  const sessions = dependencies.sessionStore ?? piFileSessionStore;
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
     genReqId: () => `req_${crypto.randomUUID().slice(0, 8)}`,
@@ -70,7 +95,32 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
       tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' as const },
       model: getPiModelStatus(config.PI_AGENT_ENABLED),
       data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
+      sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
     }));
+
+    v1.get('/agent/sessions', async () => {
+      const items = await sessions.listSessions();
+      return { items, total: items.length };
+    });
+
+    v1.post('/agent/sessions', async () => sessions.createSession());
+
+    v1.get<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
+      const session = await sessions.getSession(request.params.id);
+      if (!session) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
+      return session;
+    });
+
+    v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { feedback: AgentFeedback | null } }>('/agent/sessions/:sessionId/messages/:messageId/feedback', {
+      schema: {
+        params: Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 120 }), messageId: Type.String({ minLength: 1, maxLength: 160 }) }),
+        body: Type.Object({ feedback: Type.Union([Type.Literal('like'), Type.Literal('dislike'), Type.Null()]) }),
+      },
+    }, async (request, reply) => {
+      const session = await sessions.setMessageFeedback(request.params.sessionId, request.params.messageId, request.body.feedback);
+      if (!session) return reply.code(404).send({ error: 'NotFound', message: '可反馈的智能体消息不存在' });
+      return session;
+    });
 
     v1.get<{ Querystring: { path: string } }>('/agent/resource', { schema: { querystring: Type.Object({ path: Type.String({ minLength: 1, maxLength: 400 }) }) } }, async (request, reply) => {
       const document = readAgentResource(request.query.path);
@@ -78,13 +128,22 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
       return document;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request) => {
+    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request) => {
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
-      return askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge });
+      const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
+      await sessions.ensureSession(sessionId);
+      const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
+      const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, { turnNumber });
+      if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
+      else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
+      return response;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request, reply) => {
+    v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request, reply) => {
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
+      const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
+      await sessions.ensureSession(sessionId);
+      const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
       const raw = reply.raw;
       let clientClosed = false;
 
@@ -110,11 +169,14 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
       try {
         let sawTextDelta = false;
         const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, {
+          turnNumber,
           onEventSummary: (event) => send('event', { event }),
           onTextDelta: (delta) => { if (delta) { sawTextDelta = true; send('text_delta', { delta }); } },
           onThinkingDelta: (delta) => { if (delta) send('thinking_delta', { delta }); },
         });
         if (!sawTextDelta && response.answer) send('text_delta', { delta: response.answer });
+        if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
+        else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
         send('done', { response });
       } catch (error) {
         send('error', { message: error instanceof Error ? error.message : '智能体流式响应失败' });

@@ -41,7 +41,7 @@ Pi 的事件模型适合由后端转换为 Web 流，但官方定义的是进程
 
 ### 本项目对应关系（推论）
 
-`packages/pi-agent/src/index.ts` 当前的 `createPiAgentSession()` 对官方 API 的组合方式是合理的：设置 `cwd`、构造 `DefaultResourceLoader`、`await resourceLoader.reload()`，然后把 `SessionManager.inMemory(cwd)`、`tools`、`customTools` 和 `thinkingLevel` 传给 `createAgentSession()`。这段代码是本项目实现，不是 Pi 官方对项目架构的承诺。
+`packages/pi-agent/src/index.ts` 当前的 `createPiAgentSession()` 对官方 API 的组合方式是合理的：设置 `cwd`、构造 `DefaultResourceLoader`、`await resourceLoader.reload()`，然后把项目 `.pi/sessions/` 下的 `SessionManager.create/open()`、`tools`、`customTools` 和 `thinkingLevel` 传给 `createAgentSession()`。测试场景才使用 `SessionManager.inMemory(cwd)`。这段目录选择是本项目实现；JSONL、树结构和 `SessionManager` API 是 Pi 官方能力，不是 Pi 官方要求所有 Web 应用都使用项目目录。
 
 项目代码中 `session.prompt()` 与 `session.subscribe()` 的用法遵循官方接口，但 API 层如何复用 session、串行化 sessionId、清理订阅和处理异常，仍需由项目自己保证。
 

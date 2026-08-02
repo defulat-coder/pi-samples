@@ -73,7 +73,7 @@ export type AgentChatRoute = 'workspace' | 'knowledge';
 
 export interface AgentResourceSummary {
   path: string;
-  kind: 'skill' | 'prompt' | 'knowledge';
+  kind: 'skill' | 'prompt' | 'knowledge' | 'session' | 'file';
   title: string;
   status: 'active' | 'draft' | 'deprecated';
 }
@@ -99,9 +99,36 @@ export interface AgentDecision {
   toolCalls: string[];
 }
 
+export type AgentFeedback = 'like' | 'dislike';
+
+export interface AgentTokenUsage {
+  input: number;
+  output: number;
+  total: number;
+  /** `estimated` is used until a provider exposes an authoritative usage payload. */
+  source: 'provider' | 'estimated' | 'unavailable';
+}
+
+export interface AgentTurnMetrics {
+  /** Position of this user request within the persisted session. */
+  turn: number;
+  /** Number of model/tool exchanges observed for this response. */
+  executionRounds: number;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  eventCount: number;
+  toolCallCount: number;
+  inputChars: number;
+  outputChars: number;
+  thinkingChars: number;
+  tokenUsage: AgentTokenUsage;
+}
+
 export interface AgentChatRequest {
   message: string;
   sessionId?: string;
+  turnId?: string;
   debug?: boolean;
 }
 
@@ -125,8 +152,27 @@ export interface AgentChatResponse {
     model?: string;
     thinkingLevel?: string;
   };
+  metrics: AgentTurnMetrics;
   latencyMs: number;
   createdAt: string;
+}
+
+export type AgentSessionMessage =
+  | { id: string; kind: 'user'; text: string; turnId?: string }
+  | { id: string; kind: 'thinking'; turnId: string; text: string; status: 'streaming' | 'complete' }
+  | { id: string; kind: 'assistant'; turnId: string; text: string; response?: AgentChatResponse; feedback?: AgentFeedback | null };
+
+export interface AgentSessionRecord {
+  id: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+  messages: AgentSessionMessage[];
+}
+
+export interface AgentSessionListResponse {
+  items: AgentSessionRecord[];
+  total: number;
 }
 
 /** Payloads transported by the POST /agent/chat/stream SSE endpoint. */

@@ -4,6 +4,7 @@ node_modules/
 dist/
 .turbo/
 .data/
+.pi/sessions/
 .pi/knowledge/.*-generation-progress.jsonl
 .env
 .env.*

@@ -25,7 +25,7 @@
 ## Pi Integration Contract
 
 - Use `@earendil-works/pi-coding-agent` SDK through `packages/pi-agent`; the Web app must not import the Pi SDK.
-- Create sessions with `createAgentSession()` and the configured `ModelRuntime`; use `SessionManager.inMemory()` for the current Web session registry.
+- Create sessions with `createAgentSession()` and the configured `ModelRuntime`; persist Web sessions with Pi's `SessionManager` JSONL files under the project `.pi/sessions/` directory (use `SessionManager.inMemory()` only for tests).
 - Construct/reload `DefaultResourceLoader` with the project `cwd`; official project context includes `.pi/skills`, `.pi/prompts`, and `AGENTS.md`. `.pi/knowledge` is this project's custom Markdown bundle and must be read through `search_knowledge`, not assumed to be auto-loaded by Pi.
 - Subscribe before calling `session.prompt()`. Forward `message_update` deltas (`text_delta`, `thinking_delta`, `toolcall_*`), tool events (`tool_execution_start/update/end`), and lifecycle/retry events; unsubscribe and dispose sessions on close.
 - Keep the configured `thinkingLevel` observable. Do not assume a provider emits thinking deltas when thinking is disabled or unsupported.
