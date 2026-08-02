@@ -2,24 +2,45 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentResourceSummary } from '@pi-workbench/contracts';
 import {
   ArrowUpRight,
+  CaretDown,
+  CaretLeft,
   CaretRight,
-  CheckCircle,
-  Clock,
-  DotsThree,
+  ChatCircle,
   FileText,
+  Folder,
+  FolderOpen,
+  MagnifyingGlass,
   Plus,
-  Sparkle,
   WarningCircle,
   X,
 } from '@phosphor-icons/react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
-type Message = {
+type UserMessageItem = {
   id: string;
-  role: 'user' | 'assistant';
+  kind: 'user';
   text: string;
-  thinking?: string;
+};
+
+type ThinkingMessageItem = {
+  id: string;
+  kind: 'thinking';
+  turnId: string;
+  text: string;
+  status: 'streaming' | 'complete';
+};
+
+type AssistantMessageItem = {
+  id: string;
+  kind: 'assistant';
+  turnId: string;
+  text: string;
   response?: AgentChatResponse;
 };
+
+/** The stream's semantic output stays split into sibling UI items. */
+type ConversationItem = UserMessageItem | ThinkingMessageItem | AssistantMessageItem;
 
 type WorkspaceSnapshot = {
   resources: AgentResourceSummary[];
@@ -27,13 +48,28 @@ type WorkspaceSnapshot = {
   model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string };
 };
 
+type FileTreeNode = {
+  name: string;
+  path: string;
+  kind: 'folder' | 'file';
+  children: FileTreeNode[];
+  resource?: AgentResourceSummary;
+};
+
+type SessionRecord = {
+  id: string;
+  messages: ConversationItem[];
+};
+
+type WorkspaceView = 'sessions' | 'files';
+
 const fallbackResources: AgentResourceSummary[] = [
-  { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill', title: 'Pi Workbench Agent Skill', status: 'active' },
-  { path: '.pi/prompts/agent-chat.md', kind: 'prompt', title: 'Agent 对话提示词', status: 'active' },
-  { path: '.pi/knowledge/agent/session-lifecycle.md', kind: 'knowledge', title: 'Pi Session 生命周期', status: 'active' },
+  { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill', title: 'Pi 工作台智能体技能', status: 'active' },
+  { path: '.pi/prompts/agent-chat.md', kind: 'prompt', title: '智能体对话提示词', status: 'active' },
+  { path: '.pi/knowledge/agent/session-lifecycle.md', kind: 'knowledge', title: 'Pi 会话生命周期', status: 'active' },
   { path: '.pi/knowledge/agent/resource-loading.md', kind: 'knowledge', title: '项目资源加载', status: 'active' },
   { path: '.pi/knowledge/agent/tool-policy.md', kind: 'knowledge', title: '只读工具策略', status: 'active' },
-  { path: '.pi/knowledge/agent/answer-contract.md', kind: 'knowledge', title: 'Agent 回答契约', status: 'active' },
+  { path: '.pi/knowledge/agent/answer-contract.md', kind: 'knowledge', title: '智能体回答契约', status: 'active' },
   { path: '.pi/knowledge/agent/local-fallback.md', kind: 'knowledge', title: '本地降级模式', status: 'active' },
 ];
 
@@ -44,14 +80,38 @@ const fallbackWorkspace: WorkspaceSnapshot = {
 };
 
 const starterPrompts = [
-  { label: '解释 session 生命周期', prompt: '请解释一次 Pi Agent session 从创建到结束的生命周期，并引用对应资源。' },
-  { label: '查看只读权限', prompt: '当前 Agent 有哪些工具权限？哪些事情明确不能做？' },
-  { label: '总结项目资源', prompt: '请总结当前 .pi/ 目录里有哪些资源，以及它们分别负责什么。' },
-  { label: '回答契约是什么', prompt: '一个可验证的 Agent 回答应该包含哪些字段？' },
+  { label: '讲清一次会话', prompt: '请解释一次 Pi 智能体会话从创建到结束的生命周期，并引用对应资源。' },
+  { label: '列出可用工具', prompt: '当前智能体有哪些工具权限？哪些事情明确不能做？' },
+  { label: '检阅 .pi 文件树', prompt: '请按目录结构总结当前 .pi/ 下的技能、提示词和知识文件。' },
+  { label: '回答应包含什么', prompt: '一个可验证的智能体回答应该包含哪些字段？' },
 ];
 
 function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sessionTitle(messages: ConversationItem[]) {
+  const firstUserMessage = messages.find((message): message is UserMessageItem => message.kind === 'user')?.text.trim();
+  return firstUserMessage ? firstUserMessage.slice(0, 34) : '新对话';
+}
+
+function routeLabel(route: AgentChatResponse['route']) {
+  return route === 'knowledge' ? '知识库' : '工作区';
+}
+
+function responseSourceLabel(source: AgentChatResponse['source']) {
+  return source === 'pi-coding-agent' ? 'Pi 会话' : '本地降级';
+}
+
+function resourceTitle(title: string) {
+  return title
+    .replace(/Pi Workbench Agent Skill/g, 'Pi 工作台智能体技能')
+    .replace(/\bWorkbench\b/g, '工作台')
+    .replace(/\bAgent\b/g, '智能体')
+    .replace(/\bSession\b/g, '会话')
+    .replace(/\bSkill\b/g, '技能')
+    .replace(/\bPrompt\b/g, '提示词')
+    .replace(/\bKnowledge\b/g, '知识');
 }
 
 function parseStreamPayload(eventName: string, data: string): AgentChatStreamEvent {
@@ -61,12 +121,12 @@ function parseStreamPayload(eventName: string, data: string): AgentChatStreamEve
   if (eventName === 'text_delta') return { type: 'text_delta', delta: String(payload.delta ?? '') };
   if (eventName === 'thinking_delta') return { type: 'thinking_delta', delta: String(payload.delta ?? '') };
   if (eventName === 'done') return { type: 'done', response: payload.response as AgentChatResponse };
-  if (eventName === 'error') return { type: 'error', message: String(payload.message ?? 'Agent stream failed') };
-  throw new Error(`Unknown stream event: ${eventName}`);
+  if (eventName === 'error') return { type: 'error', message: String(payload.message ?? '智能体流式响应失败') };
+  throw new Error(`未知的流式事件：${eventName}`);
 }
 
 async function consumeAgentStream(response: Response, onEvent: (event: AgentChatStreamEvent) => void): Promise<AgentChatResponse> {
-  if (!response.body) throw new Error('Agent Gateway 没有返回可读流');
+  if (!response.body) throw new Error('智能体网关没有返回可读流');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -99,55 +159,196 @@ async function consumeAgentStream(response: Response, onEvent: (event: AgentChat
     if (done) break;
   }
   if (buffer.trim()) consumeBlock(buffer);
-  if (!finalResponse) throw new Error('Agent stream 在 done 事件前结束');
+  if (!finalResponse) throw new Error('智能体流在完成事件前结束');
   return finalResponse;
 }
 
-function resourceGroup(resources: AgentResourceSummary[], kind: AgentResourceSummary['kind']) {
-  return resources.filter((resource) => resource.kind === kind);
+function buildFileTree(resources: AgentResourceSummary[]): FileTreeNode {
+  const root: FileTreeNode = { name: '.pi', path: '.pi', kind: 'folder', children: [] };
+  for (const resource of resources) {
+    const parts = resource.path.split('/')[0] === '.pi' ? resource.path.split('/').slice(1) : resource.path.split('/');
+    let cursor = root;
+    parts.forEach((part, index) => {
+      const path = [root.path, ...parts.slice(0, index + 1)].join('/');
+      const isFile = index === parts.length - 1;
+      let child = cursor.children.find((item) => item.path === path);
+      if (!child) {
+        child = { name: part, path, kind: isFile ? 'file' : 'folder', children: [], resource: isFile ? resource : undefined };
+        cursor.children.push(child);
+      }
+      cursor = child;
+    });
+  }
+
+  const sortChildren = (node: FileTreeNode) => {
+    node.children.sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1;
+      return left.name.localeCompare(right.name, 'zh-CN');
+    });
+    node.children.forEach(sortChildren);
+  };
+  sortChildren(root);
+  return root;
 }
 
-function ResourceGlyph({ kind }: { kind: AgentResourceSummary['kind'] }) {
-  if (kind === 'skill') return <span className="resource-glyph resource-glyph-skill">S</span>;
-  if (kind === 'prompt') return <span className="resource-glyph resource-glyph-prompt">P</span>;
-  return <FileText size={15} weight="duotone" />;
+function countFiles(node: FileTreeNode): number {
+  return node.kind === 'file' ? 1 : node.children.reduce((total, child) => total + countFiles(child), 0);
 }
 
-function EventRow({ event }: { event: AgentEventSummary }) {
-  const isTool = event.type.startsWith('tool_execution');
-  const isThinking = event.category === 'thinking';
-  return <div className="event-row"><span className={isTool ? 'event-marker event-marker-tool' : isThinking ? 'event-marker event-marker-thinking' : 'event-marker'}>{isTool ? 'T' : isThinking ? '∴' : '·'}</span><span className="event-copy"><strong>{event.label}</strong>{event.detail && <code>{event.detail}</code>}</span><small>{event.type}</small></div>;
+function collectCollapsedFolders(node: FileTreeNode, depth = 0, paths: string[] = []): string[] {
+  if (node.kind === 'folder' && depth >= 2) paths.push(node.path);
+  node.children.forEach((child) => collectCollapsedFolders(child, depth + 1, paths));
+  return paths;
+}
+
+function treeHasMatch(node: FileTreeNode, query: string): boolean {
+  if (!query) return true;
+  const value = `${node.name} ${node.path} ${node.resource?.title ?? ''}`.toLocaleLowerCase();
+  return value.includes(query) || node.children.some((child) => treeHasMatch(child, query));
+}
+
+function fileKindLabel(resource?: AgentResourceSummary) {
+  if (resource?.kind === 'skill') return 'S';
+  if (resource?.kind === 'prompt') return 'P';
+  return 'MD';
+}
+
+function FileTree({ node, depth, filter, collapsedPaths, selectedResource, onToggle, onSelect }: { node: FileTreeNode; depth: number; filter: string; collapsedPaths: Set<string>; selectedResource: string; onToggle: (path: string) => void; onSelect: (path: string) => void }) {
+  const query = filter.trim().toLocaleLowerCase();
+  if (query && !treeHasMatch(node, query)) return null;
+  if (node.kind === 'file' && node.resource) {
+    const isSelected = selectedResource === node.path;
+    return <button className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={{ paddingLeft: `${12 + depth * 10}px` }} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
+  }
+
+  const isOpen = Boolean(query) || !collapsedPaths.has(node.path);
+  return <div className="tree-node"><button className="tree-row tree-folder" style={{ paddingLeft: `${12 + depth * 10}px` }} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{countFiles(node)} 个文件</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} filter={filter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
 }
 
 function SourceList({ response }: { response: AgentChatResponse }) {
   if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
-  return <div className="source-list">{response.sources.map((source) => <div className="source-row" key={source.ref}><span className="source-kind">MD</span><span><strong>{source.title}</strong><small>{source.ref}</small></span></div>)}</div>;
+  return <div className="source-list">{response.sources.map((source) => <div className="source-row" key={source.ref}><span className="source-kind">MD</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span></div>)}</div>;
 }
 
-function AssistantMessage({ message }: { message: Message }) {
+function ThinkingMessage({ message }: { message: ThinkingMessageItem }) {
+  if (!message.text) return null;
+  const isWorking = message.status === 'streaming';
+  return <section className="thinking-layer" aria-label="思考过程"><div className="thinking-layer-marker" aria-hidden="true">∴</div><details className="thinking-trace" open={isWorking}><summary>思考过程 · {message.text.length} 字符</summary><pre>{message.text}</pre></details></section>;
+}
+
+function AssistantMessage({ message }: { message: AssistantMessageItem }) {
   const isWorking = !message.response;
-  return <article className="message message-assistant"><div className="message-avatar"><Sparkle size={15} weight="fill" /></div><div className="message-body"><div className="message-meta"><strong>Pi Agent</strong><span>{isWorking ? 'working' : '刚刚'}</span></div>{message.text ? <p>{message.text}</p> : isWorking && <div className="typing-line"><i /><i /><i /></div>}{message.thinking && <details className="thinking-trace" open={isWorking}><summary>thinking trace · {message.thinking.length} chars</summary><pre>{message.thinking}</pre></details>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>evidence</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{message.response.source === 'pi-coding-agent' ? 'Pi session' : 'local fallback'}</span><span className="route-tag">observed · {message.response.route}</span></div><SourceList response={message.response} /></div>}</div></article>;
+  return <article className="message message-assistant"><div className="message-avatar"><span className="agent-avatar-mark">π</span></div><div className="message-body"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : '刚刚'}</span></div>{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line"><i /><i /><i /></div>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span></div><SourceList response={message.response} /></div>}</div></article>;
 }
 
-function UserMessage({ message }: { message: Message }) {
-  return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>You</strong><span>刚刚</span></div><p>{message.text}</p></div></article>;
+function UserMessage({ message }: { message: UserMessageItem }) {
+  return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>你</strong><span>刚刚</span></div><p>{message.text}</p></div></article>;
 }
 
-function ResourceSection({ title, resources, selected, onSelect }: { title: string; resources: AgentResourceSummary[]; selected: string; onSelect: (path: string) => void }) {
-  return <section className="resource-section"><div className="resource-section-title"><span>{title}</span><small>{resources.length}</small></div>{resources.map((resource) => <button className={selected === resource.path ? 'resource-item selected' : 'resource-item'} key={resource.path} onClick={() => onSelect(resource.path)}><ResourceGlyph kind={resource.kind} /><span>{resource.title}</span>{selected === resource.path && <CaretRight size={12} />}</button>)}</section>;
+function SessionList({ sessions, currentSessionId, pending, onSelect }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void }) {
+  return <div className="workspace-session-list" aria-label="会话列表"><div className="workspace-list-caption"><span>会话列表</span><span>共 {sessions.length} 个</span></div>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{session.id} · {messageCount} 次提问</small></span><span className="session-row-state">{isCurrent ? '当前' : '已保存'}</span></button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</div>;
+}
+
+function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void }) {
+  const showingSessions = view === 'sessions';
+  return (
+    <aside id="project-workspace" className={open ? 'workspace-panel' : 'workspace-panel workspace-panel-collapsed'} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
+      <button type="button" className="workspace-toggle-button" data-sidebar="trigger" onClick={onToggleOpen} aria-controls="project-workspace" aria-expanded={open} aria-label={open ? '收起工作区' : '展开工作区'} title={open ? '收起工作区' : '展开工作区'}>
+        {open ? <CaretRight size={15} /> : <CaretLeft size={15} />}
+        <span className="sr-only">{open ? '收起工作区' : '展开工作区'}</span>
+      </button>
+      {open ? (
+        <div className="workspace-panel-content">
+          <header className="workspace-brand-header" aria-label="Pi 工作台">
+            <div className="workspace-brand-mark">π</div>
+            <div className="workspace-brand-copy">
+              <strong>Pi 工作台</strong>
+              <span>本地智能体</span>
+            </div>
+          </header>
+          <div className="workspace-actions">
+            <button type="button" className="new-session-button workspace-new-session" onClick={onNewSession}>
+              <Plus size={14} weight="bold" />
+              新建会话
+            </button>
+            <span className="workspace-session-chip">
+              <span>当前会话</span>
+              {currentSessionId}
+            </span>
+          </div>
+          <header className="workspace-header">
+            <div className="workspace-brand">
+              <div className="workspace-symbol">{showingSessions ? <ChatCircle size={18} weight="duotone" /> : <FolderOpen size={18} weight="duotone" />}</div>
+              <div>
+                <span className="workspace-kicker">工作区</span>
+                <h2>{showingSessions ? '会话' : '项目文件'}</h2>
+              </div>
+            </div>
+            <div className="workspace-count">
+              <strong>{showingSessions ? sessions.length : workspace.resources.length}</strong>
+              <span>{showingSessions ? '个会话' : '个文件'}</span>
+            </div>
+          </header>
+          <nav className="workspace-tabs" aria-label="工作区视图">
+            <button className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} aria-selected={showingSessions}>
+              <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
+              <span>会话</span>
+              <small>{sessions.length}</small>
+            </button>
+            <button className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} aria-selected={!showingSessions}>
+              <FolderOpen size={14} weight={!showingSessions ? 'fill' : 'regular'} />
+              <span>项目文件</span>
+              <small>{workspace.resources.length}</small>
+            </button>
+          </nav>
+          {showingSessions ? (
+            <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} />
+          ) : (
+            <>
+              <div className="workspace-root">
+                <FolderOpen size={15} weight="duotone" />
+                <strong>.pi</strong>
+                <span>本地上下文</span>
+              </div>
+              <div className="workspace-toolbar">
+                <label className="workspace-search">
+                  <MagnifyingGlass size={14} />
+                  <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
+                </label>
+                <span className="workspace-policy">只读</span>
+              </div>
+              <div className="workspace-tree" aria-label="Pi 项目文件树">
+                <FileTree node={tree} depth={0} filter={filter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </aside>
+  );
 }
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(fallbackWorkspace);
   const [sessionId, setSessionId] = useState(newSessionId);
   const [prompt, setPrompt] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ConversationItem[]>([]);
   const [pending, setPending] = useState(false);
   const [selectedResource, setSelectedResource] = useState(fallbackResources[0]!.path);
-  const [lastResponse, setLastResponse] = useState<AgentChatResponse | undefined>();
-  const [streamingEvents, setStreamingEvents] = useState<AgentEventSummary[]>([]);
-  const [streamingThinking, setStreamingThinking] = useState('');
+  const [resourceFilter, setResourceFilter] = useState('');
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('files');
+  const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [sessionHistory, setSessionHistory] = useState<SessionRecord[]>([]);
+  const [showThinking, setShowThinking] = useState(true);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [error, setError] = useState('');
+  const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
+  const sessions = useMemo(() => [{ id: sessionId, messages }, ...sessionHistory.filter((session) => session.id !== sessionId)], [messages, sessionHistory, sessionId]);
+
+  useEffect(() => {
+    setCollapsedPaths(new Set(collectCollapsedFolders(fileTree)));
+  }, [fileTree]);
 
   useEffect(() => {
     fetch('/api/v1/agent/workspace').then(async (response) => {
@@ -156,80 +357,76 @@ export default function App() {
     }).then(setWorkspace).catch(() => undefined);
   }, []);
 
-  const selectedResourceData = useMemo(() => workspace.resources.find((resource) => resource.path === selectedResource) ?? workspace.resources[0], [selectedResource, workspace.resources]);
-  const events = lastResponse?.events ?? streamingEvents;
+  function archiveCurrentSession() {
+    setSessionHistory((current) => [{ id: sessionId, messages }, ...current.filter((session) => session.id !== sessionId)].slice(0, 11));
+  }
 
   function resetSession() {
+    archiveCurrentSession();
     setSessionId(newSessionId());
     setMessages([]);
-    setLastResponse(undefined);
-    setStreamingEvents([]);
-    setStreamingThinking('');
     setError('');
+  }
+
+  function selectSession(nextSessionId: string) {
+    if (pending || nextSessionId === sessionId) return;
+    const target = sessionHistory.find((session) => session.id === nextSessionId);
+    if (!target) return;
+    setSessionHistory((current) => [{ id: sessionId, messages }, ...current.filter((session) => session.id !== sessionId && session.id !== nextSessionId)].slice(0, 11));
+    setSessionId(target.id);
+    setMessages(target.messages);
+    setError('');
+  }
+
+  function togglePath(path: string) {
+    setCollapsedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  }
+
+  function openWorkspace(view: WorkspaceView) {
+    setWorkspaceView(view);
+    setWorkspaceOpen(true);
   }
 
   async function send(message = prompt) {
     const text = message.trim();
     if (!text || pending) return;
     const userId = `${Date.now()}-user`;
+    const thinkingId = `${Date.now()}-thinking`;
     const assistantId = `${Date.now()}-assistant`;
     setPrompt('');
     setError('');
-    setLastResponse(undefined);
-    setStreamingEvents([]);
-    setStreamingThinking('');
-    setMessages((current) => [...current, { id: userId, role: 'user', text }, { id: assistantId, role: 'assistant', text: '' }]);
+    setMessages((current) => [...current, { id: userId, kind: 'user', text }, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming' }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '' }]);
     setPending(true);
     let streamedAnswer = '';
     let streamedThinking = '';
     try {
       const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, debug: true }) });
-      if (!response.ok) throw new Error('Agent Gateway 返回错误');
+      if (!response.ok) throw new Error('智能体网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
-        if (event.type === 'event') {
-          setStreamingEvents((current) => [...current, event.event]);
-        }
         if (event.type === 'text_delta') {
           streamedAnswer += event.delta;
-          setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, text: streamedAnswer, thinking: streamedThinking } : item));
+          setMessages((current) => current.map((item) => item.id === assistantId && item.kind === 'assistant' ? { ...item, text: streamedAnswer } : item));
         }
         if (event.type === 'thinking_delta') {
           streamedThinking += event.delta;
-          setStreamingThinking(streamedThinking);
-          setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, thinking: streamedThinking } : item));
+          setMessages((current) => current.map((item) => item.id === thinkingId && item.kind === 'thinking' ? { ...item, text: streamedThinking } : item));
         }
       });
-      setLastResponse(data);
-      setStreamingEvents(data.events);
-      setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, text: data.answer, thinking: streamedThinking, response: data } : item));
+      setMessages((current) => current.map((item) => {
+        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, status: 'complete', text: streamedThinking };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: data.answer, response: data };
+        return item;
+      }));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Agent Gateway 暂时不可用');
+      setError(requestError instanceof Error ? requestError.message : '智能体网关暂时不可用');
     } finally {
       setPending(false);
     }
   }
 
-  return <div className="workbench-shell">
-    <aside className="workbench-sidebar">
-      <div className="brand-lockup"><div className="brand-symbol">π</div><div><strong>Pi Workbench</strong><span>agent playground</span></div></div>
-      <button className="new-session" onClick={resetSession}><Plus size={16} weight="bold" />New session</button>
-      <nav className="side-nav"><span className="side-nav-label">Workspace</span><button className="side-nav-item active"><span className="nav-signal" />Conversation</button><button className="side-nav-item" onClick={() => setSelectedResource(workspace.resources[0]?.path ?? '')}><FileText size={15} />Resources <small>{workspace.resources.length}</small></button></nav>
-      <div className="resource-divider" />
-      <div className="resource-list"><ResourceSection title="Skills" resources={resourceGroup(workspace.resources, 'skill')} selected={selectedResource} onSelect={setSelectedResource} /><ResourceSection title="Prompts" resources={resourceGroup(workspace.resources, 'prompt')} selected={selectedResource} onSelect={setSelectedResource} /><ResourceSection title="Knowledge" resources={resourceGroup(workspace.resources, 'knowledge')} selected={selectedResource} onSelect={setSelectedResource} /></div>
-      <div className="sidebar-footer"><div className="read-only-badge"><span className="read-only-dot" /><span><strong>read only</strong><small>no side effects</small></span></div><button className="sidebar-more" aria-label="更多设置"><DotsThree size={19} /></button></div>
-    </aside>
-
-    <main className="conversation-column">
-      <header className="conversation-header"><div><div className="crumb"><span>Pi Workbench</span><CaretRight size={12} /><strong>Conversation</strong></div><div className="header-title"><span className="live-pulse" />Agent is ready</div></div><div className="header-actions"><span className="session-chip"><span>session</span>{sessionId}</span><button className="header-icon" onClick={resetSession} aria-label="重置 session"><span>↻</span></button><button className="header-icon" aria-label="更多"><DotsThree size={19} /></button></div></header>
-      <section className="conversation-stage">
-        <div className="conversation-scroll">
-      {messages.length === 0 ? <div className="welcome-state"><div className="welcome-mark"><Sparkle size={23} weight="fill" /></div><span className="welcome-kicker">PI CODING AGENT / PLAYGROUND</span><h1>Observe the agent.<br /><em>Understand the turn.</em></h1><p>用一个真实的 Web 对话，验证资源加载、只读工具和 Pi session 的回答链路。</p><div className="prompt-grid">{starterPrompts.map((item) => <button className="prompt-card" key={item.label} onClick={() => void send(item.prompt)}><span>{item.label}</span><ArrowUpRight size={15} /></button>)}</div></div> : <div className="message-list">{messages.map((message) => message.role === 'user' ? <UserMessage key={message.id} message={message} /> : <AssistantMessage key={message.id} message={message} />)}</div>}
-        </div>
-        <div className="composer-wrap"><div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Ask the agent about this workspace…" rows={1} /><button className="send-button" onClick={() => void send()} disabled={pending || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button></div><div className="composer-foot"><span>Enter to send · Shift + Enter for new line</span><span><span className="composer-lock" />read-only context</span></div></div>
-      </section>
-    </main>
-
-    <aside className="inspector-panel"><div className="inspector-header"><div><span className="inspector-kicker">INSPECTOR</span><h2>Runtime</h2></div><button className="header-icon" aria-label="关闭面板"><X size={17} /></button></div><div className="runtime-state"><div className={workspace.model.enabled ? 'runtime-orb runtime-orb-live' : 'runtime-orb'}><Sparkle size={18} weight="fill" /></div><div><strong>{workspace.model.enabled ? 'Pi enabled' : 'Local fallback'}</strong><span>{workspace.model.provider ? `${workspace.model.provider} · ${workspace.model.model ?? 'default model'} · thinking ${workspace.model.thinkingLevel ?? 'default'}` : workspace.model.providerConfigured ? `provider detected · thinking ${workspace.model.thinkingLevel ?? 'default'}` : 'no provider key detected'}</span></div><span className="runtime-status-dot" /></div><div className="inspector-block"><div className="block-heading"><span>Current turn</span><span className="block-rule" /></div>{lastResponse ? <div className="turn-summary"><div><span>decision</span><strong>{lastResponse.decision.decidedBy === 'pi' ? 'Pi selected' : 'fallback'}</strong></div><div><span>observed</span><strong>{lastResponse.route}</strong></div><div><span>source</span><strong>{lastResponse.source === 'pi-coding-agent' ? 'Pi session' : 'local rules'}</strong></div><div><span>latency</span><strong>{lastResponse.latencyMs}ms</strong></div></div> : pending ? <div className="turn-summary turn-summary-live"><div><span>state</span><strong>streaming</strong></div><div><span>events</span><strong>{events.length}</strong></div><div><span>thinking</span><strong>{streamingThinking ? `${streamingThinking.length} chars` : 'waiting'}</strong></div></div> : <div className="inspector-empty"><Clock size={16} /><span>Send a message to inspect the turn.</span></div>}</div><div className="inspector-block"><div className="block-heading"><span>Event stream</span><span className="event-count">{events.length || '—'}</span></div>{events.length ? <div className="event-list">{events.map((event, index) => <EventRow key={`${event.type}-${index}`} event={event} />)}</div> : <div className="inspector-empty"><span className="empty-line" /><span>Events will appear here.</span></div>}</div><div className="inspector-block"><div className="block-heading"><span>Tool policy</span><span className="policy-tag">locked</span></div><div className="tool-policy"><div className="tool-row"><span className="tool-icon">R</span><div><strong>read</strong><small>inspect project files</small></div><CheckCircle size={15} /></div><div className="tool-row"><span className="tool-icon">⌕</span><div><strong>search_knowledge</strong><small>query local Markdown</small></div><CheckCircle size={15} /></div><div className="denied-copy">write, bash and external side effects are disabled.</div></div></div><div className="inspector-block inspector-resource"><div className="block-heading"><span>Selected resource</span><span className="block-rule" /></div>{selectedResourceData ? <><div className="selected-resource-head"><ResourceGlyph kind={selectedResourceData.kind} /><div><strong>{selectedResourceData.title}</strong><span>{selectedResourceData.kind}</span></div></div><code>{selectedResourceData.path}</code><p>此文件通过项目资源加载器进入 Agent 上下文。</p></> : <div className="inspector-empty">暂无资源</div>}</div><div className="inspector-footer"><span>workspace</span><strong>.pi/</strong><button className="refresh-link" onClick={() => window.location.reload()}>refresh</button></div></aside>
-    {error && <div className="error-toast"><WarningCircle size={17} weight="fill" /><span>{error}</span><button onClick={() => setError('')}><X size={14} /></button></div>}
-  </div>;
+  return <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}><main className="session-panel"><section className="conversation-stage"><div className="conversation-scroll">{messages.length === 0 ? <div className="welcome-state"><div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div><h1>你好，我是 Pi</h1><p>从本地文件和知识库开始对话。Pi 会按需读取上下文，并在回答旁边保留依据。</p></div>: <div className="message-list">{messages.map((message) => message.kind === 'user' ? <UserMessage key={message.id} message={message} /> : message.kind === 'thinking' ? (showThinking ? <ThinkingMessage key={message.id} message={message} /> : null) : <AssistantMessage key={message.id} message={message} />)}</div>}</div><div className="composer-wrap"><div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向项目提问…" rows={1} /><div className="composer-toolbar"><button type="button" className="composer-tool-button composer-tool-add" onClick={() => openWorkspace('files')} aria-label="添加项目上下文" title="打开项目文件"><Plus size={15} weight="bold" /></button><button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />项目文件</button><button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking}>思考</button><button type="button" className="composer-tool-button" onClick={() => openWorkspace('sessions')}><ChatCircle size={14} />会话</button><span className="composer-toolbar-spacer" /><div className="composer-more-wrap"><button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-label="模型选择" title="选择模型" aria-haspopup="listbox"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>{modelMenuOpen && <div className="composer-more-menu model-selection-menu" role="status"><strong>当前模型</strong><span>{workspace.model.model ?? '本地降级模式'}</span><small>{workspace.model.providerConfigured ? '已配置模型密钥' : '本地降级模式'}</small></div>}</div><button type="button" className="send-button" onClick={() => void send()} disabled={pending || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button></div></div><div className="workspace-promo" aria-label="项目上下文提示"><span className="workspace-promo-mark">π</span><span className="workspace-promo-copy"><strong>从项目上下文开始</strong><small>文件、提示词和知识库会由 Pi 按需读取</small></span></div><div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div></div></section></main><WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={setSelectedResource} onSelectSession={selectSession} onNewSession={resetSession} />{error && <div className="error-toast"><WarningCircle size={17} weight="fill" /><span>{error}</span><button onClick={() => setError('')}><X size={14} /></button></div>}</div>;
 }

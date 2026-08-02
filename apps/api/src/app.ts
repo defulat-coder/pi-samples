@@ -17,8 +17,8 @@ const WorkspaceRecordQuerySchema = Type.Object({
 
 function workspaceResources() {
   return [
-    { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill' as const, title: 'Pi Workbench Agent Skill', status: 'active' as const },
-    { path: '.pi/prompts/agent-chat.md', kind: 'prompt' as const, title: 'Agent 对话提示词', status: 'active' as const },
+    { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill' as const, title: 'Pi 工作台智能体技能', status: 'active' as const },
+    { path: '.pi/prompts/agent-chat.md', kind: 'prompt' as const, title: '智能体对话提示词', status: 'active' as const },
     ...loadKnowledgeBundle().map((concept) => ({ path: concept.path, kind: 'knowledge' as const, title: concept.title, status: concept.status })),
   ];
 }
@@ -91,7 +91,7 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
         if (!sawTextDelta && response.answer) send('text_delta', { delta: response.answer });
         send('done', { response });
       } catch (error) {
-        send('error', { message: error instanceof Error ? error.message : 'Agent stream failed' });
+        send('error', { message: error instanceof Error ? error.message : '智能体流式响应失败' });
       } finally {
         if (!raw.writableEnded) raw.end();
       }
@@ -109,7 +109,7 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
 
   app.setErrorHandler((error, request, reply) => {
     const handledError = error as { validation?: unknown; statusCode?: number };
-    if (handledError.validation) return reply.code(400).send({ error: 'ValidationError', message: '请求参数不符合 Agent Workbench 接口约定', requestId: request.id });
+    if (handledError.validation) return reply.code(400).send({ error: 'ValidationError', message: '请求参数不符合智能体工作台接口约定', requestId: request.id });
     request.log.error({ err: error });
     const statusCode = handledError.statusCode && handledError.statusCode >= 400 ? handledError.statusCode : 500;
     return reply.code(statusCode).send({ error: 'InternalError', message: '服务暂时无法处理请求', requestId: request.id });
