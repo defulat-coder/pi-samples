@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
@@ -8,6 +8,7 @@ import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResour
 import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
 import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
+import { createFeishuAuth } from './auth.js';
 import { loadConfig, type AppConfig } from './config.js';
 
 const WorkspaceRecordQuerySchema = Type.Object({
@@ -79,7 +80,44 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
   app.get('/health', async () => ({ status: 'ok', service: 'pi-workbench-api', timestamp: new Date().toISOString() }));
 
+  const auth = createFeishuAuth(config);
+  const authGuard = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!config.AUTH_REQUIRED) return;
+    if (await auth.getSession(request)) return;
+    return reply.code(401).send({ error: 'Unauthenticated', message: '请先使用飞书登录' });
+  };
+
+  app.register(async (authRoutes) => {
+    authRoutes.get('/status', async (request) => auth.status(request));
+    authRoutes.get('/feishu/start', async (_request, reply) => {
+      if (!auth.start(reply)) return reply.code(503).send({ error: 'AuthNotConfigured', message: '飞书登录尚未配置，请设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET。' });
+      return reply;
+    });
+    authRoutes.get<{ Querystring: { code?: string; state?: string; error?: string; error_description?: string } }>('/feishu/callback', {
+      schema: { querystring: Type.Object({ code: Type.Optional(Type.String({ maxLength: 2000 })), state: Type.Optional(Type.String({ maxLength: 300 })), error: Type.Optional(Type.String({ maxLength: 200 })), error_description: Type.Optional(Type.String({ maxLength: 500 })) }) },
+    }, async (request, reply) => {
+      if (request.query.error) {
+        auth.clearCookies(reply);
+        return reply.redirect(auth.redirectWithError(request.query.error_description ?? request.query.error));
+      }
+      if (!request.query.code || !request.query.state) {
+        auth.clearCookies(reply);
+        return reply.redirect(auth.redirectWithError('feishu_callback_missing_code'));
+      }
+      try {
+        await auth.complete(request, reply, request.query.code, request.query.state);
+        return reply.redirect(config.WEB_ORIGIN);
+      } catch (error) {
+        request.log.warn({ err: error instanceof Error ? error.message : 'unknown' }, 'Feishu OAuth callback failed');
+        auth.clearCookies(reply);
+        return reply.redirect(auth.redirectWithError('feishu_callback_failed'));
+      }
+    });
+    authRoutes.post('/logout', async (request, reply) => auth.logout(request, reply));
+  }, { prefix: '/api/v1/auth' });
+
   app.register(async (v1) => {
+    v1.addHook('preHandler', authGuard);
     v1.get('/workspace', async () => workspaceStore.getSnapshot(loadKnowledgeBundle().length));
 
     v1.get<{ Querystring: WorkspaceRecordQuery }>('/workspace/records', { schema: { querystring: WorkspaceRecordQuerySchema } }, async (request) => workspaceStore.listRecords(request.query));

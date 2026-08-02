@@ -1,8 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
 import {
+  ArrowRight,
   ArrowUpRight,
   ArrowsClockwise,
+  Buildings,
   CaretDown,
   CaretLeft,
   CaretRight,
@@ -13,6 +15,8 @@ import {
   FolderOpen,
   MagnifyingGlass,
   Plus,
+  SignOut,
+  ShieldCheck,
   ThumbsDown,
   ThumbsUp,
   WarningCircle,
@@ -161,6 +165,59 @@ async function fetchSessionRecord(id: string): Promise<SessionRecord> {
   return response.json() as Promise<SessionRecord>;
 }
 
+async function fetchAuthStatus(): Promise<AuthStatusResponse> {
+  const response = await fetch('/api/v1/auth/status', { credentials: 'include', cache: 'no-store' });
+  if (!response.ok) throw new Error('登录服务暂时无法连接');
+  return response.json() as Promise<AuthStatusResponse>;
+}
+
+function authErrorLabel(error: string) {
+  const labels: Record<string, string> = {
+    access_denied: '你取消了飞书授权，可以准备好后再次登录。',
+    feishu_callback_missing_code: '飞书没有返回授权码，请重新发起登录。',
+    feishu_callback_failed: '飞书登录没有完成，请检查应用配置和回调地址后重试。',
+  };
+  return labels[error] ?? '登录没有完成，请重试。';
+}
+
+function AuthLoadingScreen() {
+  return <main className="auth-loading" aria-live="polite"><span className="auth-loading-mark">π</span><strong>正在检查登录状态</strong><span>马上回到 Pi 工作台。</span></main>;
+}
+
+function FeishuLoginPage({ status, error, onRetry }: { status: AuthStatusResponse; error: string; onRetry: () => void }) {
+  const [starting, setStarting] = useState(false);
+  const configured = status.configured;
+  return <div className="auth-shell">
+    <section className="auth-context" aria-labelledby="auth-context-title">
+      <header className="auth-brand"><span className="auth-brand-mark">π</span><span><strong>Pi 工作台</strong><small>本地智能体工作区</small></span></header>
+      <div className="auth-context-body">
+        <h1 id="auth-context-title">先确认身份，<br /><span>再把项目交给 Pi。</span></h1>
+        <p>使用飞书账号进入一个只读、可追溯的项目上下文。文件、提示词、知识库和每次会话，都在同一个工作台里保持清晰。</p>
+        <ol className="auth-flow" aria-label="登录后的工作流">
+          <li><span className="auth-flow-index">1</span><div><strong>飞书身份</strong><small>确认你是谁</small></div></li>
+          <li><span className="auth-flow-index">2</span><div><strong>项目上下文</strong><small>读取已配置资源</small></div></li>
+          <li><span className="auth-flow-index">3</span><div><strong>Pi 会话</strong><small>开始对话与检索</small></div></li>
+        </ol>
+      </div>
+      <footer className="auth-context-foot"><span>PC 工作台</span><span>·</span><span>文件优先</span><span>·</span><span>本地运行</span></footer>
+    </section>
+    <main className="auth-panel" aria-labelledby="auth-title">
+      <div className="auth-panel-inner">
+        <div className="auth-provider-mark" aria-hidden="true"><Buildings size={22} weight="duotone" /></div>
+        <h2 id="auth-title">登录 Pi 工作台</h2>
+        <p className="auth-panel-lead">使用飞书账号继续你的项目会话</p>
+        {error && <div className="auth-feedback auth-feedback-error" role="alert"><WarningCircle size={17} weight="fill" /><span>{authErrorLabel(error)}</span></div>}
+        <button type="button" className="feishu-login-button" onClick={() => { setStarting(true); window.location.assign('/api/v1/auth/feishu/start'); }} disabled={!configured || starting} aria-busy={starting}>
+          <Buildings size={19} weight="duotone" /><span>{starting ? '正在打开飞书…' : '使用飞书登录'}</span><ArrowRight size={16} />
+        </button>
+        {!configured ? <div className="auth-feedback auth-feedback-config" role="status"><strong>等待配置飞书应用</strong><span>{status.message ?? '服务端还没有配置飞书应用凭据。'}</span><code>FEISHU_APP_ID</code><code>FEISHU_APP_SECRET</code></div> : <p className="auth-configured-note">将跳转到飞书完成授权，授权完成后自动返回这里。</p>}
+        <div className="auth-trust"><ShieldCheck size={17} weight="duotone" /><span>授权凭据只保存在 API 服务端，浏览器仅持有 HttpOnly 登录 Cookie。</span></div>
+        <button type="button" className="auth-retry-button" onClick={onRetry}>重新检查登录状态</button>
+      </div>
+    </main>
+  </div>;
+}
+
 function buildFileTree(resources: AgentResourceSummary[]): FileTreeNode {
   const root: FileTreeNode = { name: '.pi', path: '.pi', kind: 'folder', children: [], fileCount: 0, searchText: '' };
   for (const resource of resources) {
@@ -245,7 +302,7 @@ function SourceList({ response }: { response: AgentChatResponse }) {
 function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
   if (!message.text) return null;
   const isWorking = message.status === 'streaming';
-  return <section className="agent-turn-thinking" aria-label="思考过程"><details className="thinking-trace" open={isWorking}><summary><span>思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
+  return <section className="agent-turn-thinking" aria-label="思考过程" aria-busy={isWorking} aria-live={isWorking ? 'polite' : undefined}><details className="thinking-trace" open={isWorking}><summary><span className="thinking-trace-title"><i className={isWorking ? 'thinking-trace-dot thinking-trace-dot-active' : 'thinking-trace-dot'} aria-hidden="true" />思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
 }
 
 function AgentToolEvents({ events, toolCalls, toolMetrics }: { events: AgentEventSummary[]; toolCalls: string[]; toolMetrics: NonNullable<NonNullable<AgentChatResponse['metrics']>['toolMetrics']> }) {
@@ -335,7 +392,7 @@ function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFee
 
 function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
   const isWorking = !message.response;
-  return <section className="agent-turn-answer">{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line"><i /><i /><i /></div>}{message.response && <><div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span></div><SourceList response={message.response} /></div><AgentMetrics response={message.response} /></>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</section>;
+  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <><div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span></div><SourceList response={message.response} /></div><AgentMetrics response={message.response} /></>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</section>;
 }
 
 type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem };
@@ -510,7 +567,7 @@ function SessionJsonlViewer({ document }: { document: AgentResourceDocument }) {
 function ResourceViewer({ document, loading, error, onClose }: { document: AgentResourceDocument | null; loading: boolean; error: string; onClose: () => void }) {
   const isSession = document?.resource.kind === 'session';
   const isRawText = document?.resource.path.endsWith('.jsonl');
-  return <section className="resource-viewer" aria-label="项目文件预览">
+  return <section className="resource-viewer" aria-label="项目文件预览" aria-busy={loading}>
     <header className="resource-viewer-header">
       <button type="button" className="resource-viewer-close" onClick={onClose} aria-label="返回聊天" title="返回聊天"><CaretLeft size={16} /></button>
       <div className="resource-viewer-heading">
@@ -520,19 +577,28 @@ function ResourceViewer({ document, loading, error, onClose }: { document: Agent
       <span className="resource-viewer-kind">{document ? fileKindLabel(document.resource) : 'MD'}</span>
     </header>
     <div className="resource-viewer-scroll">
-      {loading && <div className="resource-viewer-state"><strong>正在读取文件</strong><span>只读内容即将显示在这里。</span></div>}
-      {!loading && error && <div className="resource-viewer-state resource-viewer-error"><strong>文件读取失败</strong><span>{error}</span><button type="button" onClick={onClose}>返回聊天</button></div>}
+      {loading && <div className="resource-viewer-state" role="status"><strong>正在读取文件</strong><span>只读内容即将显示在这里。</span></div>}
+      {!loading && error && <div className="resource-viewer-state resource-viewer-error" role="alert"><strong>文件读取失败</strong><span>{error}</span><button type="button" onClick={onClose}>返回聊天</button></div>}
       {!loading && !error && document && (isSession ? <SessionJsonlViewer document={document} /> : isRawText ? <pre className="resource-viewer-raw">{document.content}</pre> : <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{document.content}</Markdown></article>)}
     </div>
   </section>;
 }
 
 function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSession }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void; onNewSession: () => void }) {
-  return <div className="workspace-session-list" aria-label="会话列表"><button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{messageCount ? `${messageCount} 次提问` : '尚未提问'}</small></span>{isCurrent && <span className="session-row-state">当前</span>}</button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</div>;
+  return <nav className="workspace-session-list" aria-label="会话列表"><button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button type="button" className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent} aria-current={isCurrent ? 'page' : undefined} title={sessionTitle(session.messages)}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{messageCount ? `${messageCount} 次提问` : '尚未提问'}</small></span>{isCurrent && <span className="session-row-state">当前</span>}</button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</nav>;
 }
 
-function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRefreshWorkspace }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRefreshWorkspace: () => void }) {
+function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRefreshWorkspace: () => void; onLogout: () => void }) {
   const showingSessions = view === 'sessions';
+  const normalizedFilter = filter.trim().toLocaleLowerCase();
+  const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextView = event.key === 'Home' || (event.key === 'ArrowLeft' && showingSessions) || (event.key === 'ArrowRight' && !showingSessions) ? 'sessions' : 'files';
+    onViewChange(nextView);
+    requestAnimationFrame(() => document.getElementById(`workspace-tab-${nextView}`)?.focus());
+  };
   return (
     <aside id="project-workspace" className={open ? 'workspace-panel' : 'workspace-panel workspace-panel-collapsed'} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
       <button type="button" className="workspace-toggle-button" data-sidebar="trigger" onClick={onToggleOpen} aria-controls="project-workspace" aria-expanded={open} aria-label={open ? '收起工作区' : '展开工作区'} title={open ? '收起工作区' : '展开工作区'}>
@@ -551,18 +617,17 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
             </div>
           </header>
           <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="horizontal">
-            <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
+            <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
               <span>会话</span>
               <small>{sessions.length}</small>
             </button>
-            <button type="button" id="workspace-tab-files" role="tab" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} aria-controls="workspace-view-panel" aria-selected={!showingSessions} tabIndex={showingSessions ? -1 : 0}>
+            <button type="button" id="workspace-tab-files" role="tab" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={!showingSessions} tabIndex={showingSessions ? -1 : 0}>
               <FolderOpen size={14} weight={!showingSessions ? 'fill' : 'regular'} />
               <span>项目文件</span>
               <small>{workspace.resources.length}</small>
             </button>
           </nav>
-          {workspace.pi && <div className="workspace-capability-strip" aria-label="Pi 资源能力"><span>Skills {workspace.pi.skills.length}</span><span>Prompts {workspace.pi.prompts.length}</span><span>Themes {workspace.pi.themes.length}</span><span className={workspace.pi.extensionsEnabled ? 'workspace-capability-enabled' : 'workspace-capability-gated'}>Extensions {workspace.pi.extensionsEnabled ? '开' : '关'}</span></div>}
           <div id="workspace-view-panel" className="workspace-view-panel" role="tabpanel" aria-labelledby={showingSessions ? 'workspace-tab-sessions' : 'workspace-tab-files'} tabIndex={0}>
             {showingSessions ? (
               <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onNewSession={onNewSession} />
@@ -573,21 +638,26 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
                     <MagnifyingGlass size={14} />
                     <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
                   </label>
-                  <button type="button" className="workspace-refresh-button" onClick={onRefreshWorkspace} aria-label="刷新项目资源" title="刷新项目资源"><ArrowsClockwise size={14} /></button>
+                  <button type="button" className={refreshing ? 'workspace-refresh-button is-refreshing' : 'workspace-refresh-button'} onClick={onRefreshWorkspace} disabled={refreshing} aria-busy={refreshing} aria-label={refreshing ? '正在刷新项目资源' : '刷新项目资源'} title={refreshing ? '正在刷新' : '刷新项目资源'}><ArrowsClockwise size={14} /></button>
                 </div>
                 <div className="workspace-tree" aria-label="Pi 项目文件树">
-                  <FileTree node={tree} depth={0} query={filter.trim().toLocaleLowerCase()} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
+                  {hasMatchingResource ? <FileTree node={tree} depth={0} query={normalizedFilter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} /> : <div className="workspace-empty-filter" role="status"><MagnifyingGlass size={17} /><strong>没有匹配的文件</strong><span>换个关键词试试，或清空筛选。</span></div>}
                 </div>
               </>
             )}
           </div>
+          {authUser && <footer className="workspace-account-footer" aria-label="当前登录账号">
+            <span className="workspace-account-avatar" aria-hidden="true">{authUser.name.slice(0, 1)}</span>
+            <span className="workspace-account-copy"><strong>{authUser.name}</strong><small>飞书账号 · 已登录</small></span>
+            <button type="button" className="workspace-logout-button" onClick={onLogout} aria-label="退出飞书登录" title="退出飞书登录"><SignOut size={14} /></button>
+          </footer>}
         </div>
       ) : null}
     </aside>
   );
 }
 
-export default function App() {
+function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: () => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(fallbackWorkspace);
   const [sessionId, setSessionId] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -610,12 +680,22 @@ export default function App() {
   const [resourceError, setResourceError] = useState('');
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const resourceRequestRef = useRef(0);
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const followConversationRef = useRef(true);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
   const sessions = sessionRecords;
 
   useEffect(() => {
     setCollapsedPaths(new Set(collectCollapsedFolders(fileTree)));
   }, [fileTree]);
+
+  useEffect(() => {
+    if (!followConversationRef.current) return;
+    const node = conversationScrollRef.current;
+    if (!node) return;
+    const frame = window.requestAnimationFrame(() => node.scrollTo({ top: node.scrollHeight, behavior: 'auto' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [sessionId, messages, pending]);
 
   async function refreshWorkspace() {
     setWorkspaceRefreshing(true);
@@ -642,6 +722,7 @@ export default function App() {
         if (!records.length) records = [await createSessionRecord()];
         if (!active) return;
         const initial = records[0]!;
+        followConversationRef.current = true;
         setSessionRecords(records);
         setSessionId(initial.id);
         setMessages(initial.messages);
@@ -722,6 +803,7 @@ export default function App() {
       record = { id: newSessionId(), position: sessionRecords.length, createdAt: now, updatedAt: now, messages: [] };
     }
     setSessionRecords((current) => [...current, record]);
+    followConversationRef.current = true;
     setSessionId(record.id);
     setMessages(record.messages);
     setError('');
@@ -732,6 +814,7 @@ export default function App() {
     if (pending || nextSessionId === sessionId) return;
     const target = sessionRecords.find((session) => session.id === nextSessionId);
     if (!target) return;
+    followConversationRef.current = true;
     setSessionId(target.id);
     setMessages(target.messages);
     setError('');
@@ -785,6 +868,7 @@ export default function App() {
   async function send(message = prompt) {
     const text = message.trim();
     if (!text || pending || !sessionsReady || !sessionId) return;
+    followConversationRef.current = true;
     const userId = `${Date.now()}-user`;
     const thinkingId = `${Date.now()}-thinking`;
     const assistantId = `${Date.now()}-assistant`;
@@ -846,7 +930,10 @@ export default function App() {
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
       <main className="session-panel">
         {resourceDocument || resourceLoading || resourceError ? <ResourceViewer document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <section className="conversation-stage">
-          <div className="conversation-scroll">
+          <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
+            const node = event.currentTarget;
+            followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
+          }}>
             {messages.length === 0 ? (
               <div className="welcome-state">
                 <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
@@ -877,8 +964,43 @@ export default function App() {
           </div>
         </section>}
       </main>
-      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} />
+      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
       {error && <div className="error-toast" role="alert"><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></div>}
     </div>
   );
+}
+
+export default function App() {
+  const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+
+  const loadAuthStatus = async () => {
+    setAuthLoading(true);
+    try {
+      const status = await fetchAuthStatus();
+      setAuthStatus(status);
+    } catch {
+      setAuthStatus({ provider: 'feishu', configured: false, authRequired: true, authenticated: false, message: '登录服务暂时无法连接，请确认 API 服务已启动。' });
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get('auth_error');
+    if (error) {
+      setAuthError(error);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    void loadAuthStatus();
+  }, []);
+
+  if (authLoading || !authStatus) return <AuthLoadingScreen />;
+  if (authStatus.authRequired && !authStatus.authenticated) return <FeishuLoginPage status={authStatus} error={authError} onRetry={() => { setAuthError(''); void loadAuthStatus(); }} />;
+  return <WorkbenchApp authUser={authStatus.user} onLogout={async () => {
+    await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' });
+    setAuthStatus((current) => current ? { ...current, authenticated: false, user: undefined } : current);
+  }} />;
 }

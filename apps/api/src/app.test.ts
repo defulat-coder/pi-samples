@@ -9,7 +9,7 @@ import { PiFileSessionStore } from '@pi-workbench/pi-agent';
 describe('Pi Workbench API', () => {
   const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-file-sessions-'));
   const sessions = new PiFileSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
-  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
+  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', AUTH_REQUIRED: false, PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
 
   before(async () => app.ready());
   after(async () => { await app.close(); sessions.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
@@ -20,6 +20,38 @@ describe('Pi Workbench API', () => {
     assert.equal(response.json().workspace.name, 'Pi Workbench');
     assert.ok(response.json().metrics.totalRecords > 0);
     assert.ok(response.json().records.every((record: { id: string }) => record.id.startsWith('record-')));
+  });
+
+  it('exposes the Feishu login status without exposing provider credentials', async () => {
+    const status = await app.inject({ method: 'GET', url: '/api/v1/auth/status' });
+    assert.equal(status.statusCode, 200);
+    assert.deepEqual(status.json(), { provider: 'feishu', configured: false, authRequired: false, authenticated: false, message: '请先在 API 环境变量中配置 FEISHU_APP_ID 和 FEISHU_APP_SECRET。' });
+
+    const start = await app.inject({ method: 'GET', url: '/api/v1/auth/feishu/start' });
+    assert.equal(start.statusCode, 503);
+    assert.equal(start.json().error, 'AuthNotConfigured');
+    assert.doesNotMatch(start.body, /9ZHZzyUa8bV6H1Z8jc0KbhiNafWnYYMS/);
+  });
+
+  it('protects workbench routes when Feishu auth is required', async () => {
+    const protectedApp = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', AUTH_REQUIRED: true, PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
+    await protectedApp.ready();
+    const response = await protectedApp.inject({ method: 'GET', url: '/api/v1/agent/workspace' });
+    await protectedApp.close();
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.json().error, 'Unauthenticated');
+  });
+
+  it('builds the official Feishu authorization URL when configured', async () => {
+    const oauthApp = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', AUTH_REQUIRED: true, FEISHU_APP_ID: 'cli_test_app', FEISHU_APP_SECRET: 'test-secret', PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
+    await oauthApp.ready();
+    const response = await oauthApp.inject({ method: 'GET', url: '/api/v1/auth/feishu/start' });
+    await oauthApp.close();
+    assert.equal(response.statusCode, 302);
+    assert.match(String(response.headers.location), /^https:\/\/accounts\.feishu\.cn\/open-apis\/authen\/v1\/authorize/);
+    assert.match(String(response.headers.location), /client_id=cli_test_app/);
+    assert.match(String(response.headers.location), /response_type=code/);
+    assert.match(String(response.headers['set-cookie']), /HttpOnly/);
   });
 
   it('queries local workspace records without a business domain', async () => {

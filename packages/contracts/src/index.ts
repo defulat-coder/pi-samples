@@ -59,6 +59,22 @@ export interface ApiError {
   requestId?: string;
 }
 
+export interface AuthUser {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  openId?: string;
+}
+
+export interface AuthStatusResponse {
+  provider: 'feishu';
+  configured: boolean;
+  authRequired: boolean;
+  authenticated: boolean;
+  user?: AuthUser;
+  message?: string;
+}
+
 export type QuerySourceKind = 'database' | 'knowledge';
 
 export interface QuerySource {
