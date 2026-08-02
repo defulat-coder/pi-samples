@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentResourceSummary } from '@pi-workbench/contracts';
 import {
   ArrowUpRight,
@@ -6,7 +6,6 @@ import {
   CaretLeft,
   CaretRight,
   ChatCircle,
-  FileText,
   Folder,
   FolderOpen,
   MagnifyingGlass,
@@ -53,6 +52,8 @@ type FileTreeNode = {
   path: string;
   kind: 'folder' | 'file';
   children: FileTreeNode[];
+  fileCount: number;
+  searchText: string;
   resource?: AgentResourceSummary;
 };
 
@@ -78,13 +79,6 @@ const fallbackWorkspace: WorkspaceSnapshot = {
   tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
   model: { enabled: false, providerConfigured: false, provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'low' },
 };
-
-const starterPrompts = [
-  { label: '讲清一次会话', prompt: '请解释一次 Pi 智能体会话从创建到结束的生命周期，并引用对应资源。' },
-  { label: '列出可用工具', prompt: '当前智能体有哪些工具权限？哪些事情明确不能做？' },
-  { label: '检阅 .pi 文件树', prompt: '请按目录结构总结当前 .pi/ 下的技能、提示词和知识文件。' },
-  { label: '回答应包含什么', prompt: '一个可验证的智能体回答应该包含哪些字段？' },
-];
 
 function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
@@ -164,7 +158,7 @@ async function consumeAgentStream(response: Response, onEvent: (event: AgentChat
 }
 
 function buildFileTree(resources: AgentResourceSummary[]): FileTreeNode {
-  const root: FileTreeNode = { name: '.pi', path: '.pi', kind: 'folder', children: [] };
+  const root: FileTreeNode = { name: '.pi', path: '.pi', kind: 'folder', children: [], fileCount: 0, searchText: '' };
   for (const resource of resources) {
     const parts = resource.path.split('/')[0] === '.pi' ? resource.path.split('/').slice(1) : resource.path.split('/');
     let cursor = root;
@@ -173,7 +167,7 @@ function buildFileTree(resources: AgentResourceSummary[]): FileTreeNode {
       const isFile = index === parts.length - 1;
       let child = cursor.children.find((item) => item.path === path);
       if (!child) {
-        child = { name: part, path, kind: isFile ? 'file' : 'folder', children: [], resource: isFile ? resource : undefined };
+        child = { name: part, path, kind: isFile ? 'file' : 'folder', children: [], fileCount: isFile ? 1 : 0, searchText: '', resource: isFile ? resource : undefined };
         cursor.children.push(child);
       }
       cursor = child;
@@ -188,11 +182,19 @@ function buildFileTree(resources: AgentResourceSummary[]): FileTreeNode {
     node.children.forEach(sortChildren);
   };
   sortChildren(root);
+  const annotateNode = (node: FileTreeNode) => {
+    const ownText = `${node.name} ${node.path} ${node.resource?.title ?? ''}`.toLocaleLowerCase();
+    node.fileCount = node.kind === 'file' ? 1 : 0;
+    const childSearchText: string[] = [];
+    for (const child of node.children) {
+      annotateNode(child);
+      node.fileCount += child.fileCount;
+      childSearchText.push(child.searchText);
+    }
+    node.searchText = [ownText, ...childSearchText].join(' ');
+  };
+  annotateNode(root);
   return root;
-}
-
-function countFiles(node: FileTreeNode): number {
-  return node.kind === 'file' ? 1 : node.children.reduce((total, child) => total + countFiles(child), 0);
 }
 
 function collectCollapsedFolders(node: FileTreeNode, depth = 0, paths: string[] = []): string[] {
@@ -202,9 +204,7 @@ function collectCollapsedFolders(node: FileTreeNode, depth = 0, paths: string[] 
 }
 
 function treeHasMatch(node: FileTreeNode, query: string): boolean {
-  if (!query) return true;
-  const value = `${node.name} ${node.path} ${node.resource?.title ?? ''}`.toLocaleLowerCase();
-  return value.includes(query) || node.children.some((child) => treeHasMatch(child, query));
+  return !query || node.searchText.includes(query);
 }
 
 function fileKindLabel(resource?: AgentResourceSummary) {
@@ -213,17 +213,19 @@ function fileKindLabel(resource?: AgentResourceSummary) {
   return 'MD';
 }
 
-function FileTree({ node, depth, filter, collapsedPaths, selectedResource, onToggle, onSelect }: { node: FileTreeNode; depth: number; filter: string; collapsedPaths: Set<string>; selectedResource: string; onToggle: (path: string) => void; onSelect: (path: string) => void }) {
-  const query = filter.trim().toLocaleLowerCase();
+type FileTreeProps = { node: FileTreeNode; depth: number; query: string; collapsedPaths: Set<string>; selectedResource: string; onToggle: (path: string) => void; onSelect: (path: string) => void };
+
+const FileTree = memo(function FileTree({ node, depth, query, collapsedPaths, selectedResource, onToggle, onSelect }: FileTreeProps) {
   if (query && !treeHasMatch(node, query)) return null;
+  const indentStyle = { '--tree-depth': depth } as CSSProperties;
   if (node.kind === 'file' && node.resource) {
     const isSelected = selectedResource === node.path;
-    return <button className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={{ paddingLeft: `${12 + depth * 10}px` }} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
+    return <button type="button" className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={indentStyle} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
   }
 
   const isOpen = Boolean(query) || !collapsedPaths.has(node.path);
-  return <div className="tree-node"><button className="tree-row tree-folder" style={{ paddingLeft: `${12 + depth * 10}px` }} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{countFiles(node)} 个文件</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} filter={filter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
-}
+  return <div className="tree-node"><button type="button" className="tree-row tree-folder" style={indentStyle} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{node.fileCount} 个文件</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} query={query} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
+});
 
 function SourceList({ response }: { response: AgentChatResponse }) {
   if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
@@ -289,39 +291,41 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
               <span>{showingSessions ? '个会话' : '个文件'}</span>
             </div>
           </header>
-          <nav className="workspace-tabs" aria-label="工作区视图">
-            <button className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} aria-selected={showingSessions}>
+          <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="vertical">
+            <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
               <span>会话</span>
               <small>{sessions.length}</small>
             </button>
-            <button className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} aria-selected={!showingSessions}>
+            <button type="button" id="workspace-tab-files" role="tab" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} aria-controls="workspace-view-panel" aria-selected={!showingSessions} tabIndex={showingSessions ? -1 : 0}>
               <FolderOpen size={14} weight={!showingSessions ? 'fill' : 'regular'} />
               <span>项目文件</span>
               <small>{workspace.resources.length}</small>
             </button>
           </nav>
-          {showingSessions ? (
-            <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} />
-          ) : (
-            <>
-              <div className="workspace-root">
-                <FolderOpen size={15} weight="duotone" />
-                <strong>.pi</strong>
-                <span>本地上下文</span>
-              </div>
-              <div className="workspace-toolbar">
-                <label className="workspace-search">
-                  <MagnifyingGlass size={14} />
-                  <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
-                </label>
-                <span className="workspace-policy">只读</span>
-              </div>
-              <div className="workspace-tree" aria-label="Pi 项目文件树">
-                <FileTree node={tree} depth={0} filter={filter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
-              </div>
-            </>
-          )}
+          <div id="workspace-view-panel" className="workspace-view-panel" role="tabpanel" aria-labelledby={showingSessions ? 'workspace-tab-sessions' : 'workspace-tab-files'} tabIndex={0}>
+            {showingSessions ? (
+              <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} />
+            ) : (
+              <>
+                <div className="workspace-root">
+                  <FolderOpen size={15} weight="duotone" />
+                  <strong>.pi</strong>
+                  <span>本地上下文</span>
+                </div>
+                <div className="workspace-toolbar">
+                  <label className="workspace-search">
+                    <MagnifyingGlass size={14} />
+                    <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
+                  </label>
+                  <span className="workspace-policy">只读</span>
+                </div>
+                <div className="workspace-tree" aria-label="Pi 项目文件树">
+                  <FileTree node={tree} depth={0} query={filter.trim().toLocaleLowerCase()} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       ) : null}
     </aside>
@@ -403,30 +407,89 @@ export default function App() {
     setPending(true);
     let streamedAnswer = '';
     let streamedThinking = '';
+    let streamFrame: number | null = null;
+    const flushStream = () => {
+      streamFrame = null;
+      setMessages((current) => current.map((item) => {
+        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, text: streamedThinking };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedAnswer };
+        return item;
+      }));
+    };
+    const scheduleStreamFlush = () => {
+      if (streamFrame === null) streamFrame = window.requestAnimationFrame(flushStream);
+    };
+    const cancelStreamFlush = () => {
+      if (streamFrame !== null) window.cancelAnimationFrame(streamFrame);
+      streamFrame = null;
+    };
     try {
       const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, debug: true }) });
       if (!response.ok) throw new Error('智能体网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
         if (event.type === 'text_delta') {
           streamedAnswer += event.delta;
-          setMessages((current) => current.map((item) => item.id === assistantId && item.kind === 'assistant' ? { ...item, text: streamedAnswer } : item));
+          scheduleStreamFlush();
         }
         if (event.type === 'thinking_delta') {
           streamedThinking += event.delta;
-          setMessages((current) => current.map((item) => item.id === thinkingId && item.kind === 'thinking' ? { ...item, text: streamedThinking } : item));
+          scheduleStreamFlush();
         }
       });
+      cancelStreamFlush();
       setMessages((current) => current.map((item) => {
         if (item.id === thinkingId && item.kind === 'thinking') return { ...item, status: 'complete', text: streamedThinking };
         if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: data.answer, response: data };
         return item;
       }));
     } catch (requestError) {
+      cancelStreamFlush();
       setError(requestError instanceof Error ? requestError.message : '智能体网关暂时不可用');
     } finally {
+      cancelStreamFlush();
       setPending(false);
     }
   }
 
-  return <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}><main className="session-panel"><section className="conversation-stage"><div className="conversation-scroll">{messages.length === 0 ? <div className="welcome-state"><div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div><h1>你好，我是 Pi</h1><p>从本地文件和知识库开始对话。Pi 会按需读取上下文，并在回答旁边保留依据。</p></div>: <div className="message-list">{messages.map((message) => message.kind === 'user' ? <UserMessage key={message.id} message={message} /> : message.kind === 'thinking' ? (showThinking ? <ThinkingMessage key={message.id} message={message} /> : null) : <AssistantMessage key={message.id} message={message} />)}</div>}</div><div className="composer-wrap"><div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向项目提问…" rows={1} /><div className="composer-toolbar"><button type="button" className="composer-tool-button composer-tool-add" onClick={() => openWorkspace('files')} aria-label="添加项目上下文" title="打开项目文件"><Plus size={15} weight="bold" /></button><button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />项目文件</button><button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking}>思考</button><button type="button" className="composer-tool-button" onClick={() => openWorkspace('sessions')}><ChatCircle size={14} />会话</button><span className="composer-toolbar-spacer" /><div className="composer-more-wrap"><button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-label="模型选择" title="选择模型" aria-haspopup="listbox"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>{modelMenuOpen && <div className="composer-more-menu model-selection-menu" role="status"><strong>当前模型</strong><span>{workspace.model.model ?? '本地降级模式'}</span><small>{workspace.model.providerConfigured ? '已配置模型密钥' : '本地降级模式'}</small></div>}</div><button type="button" className="send-button" onClick={() => void send()} disabled={pending || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button></div></div><div className="workspace-promo" aria-label="项目上下文提示"><span className="workspace-promo-mark">π</span><span className="workspace-promo-copy"><strong>从项目上下文开始</strong><small>文件、提示词和知识库会由 Pi 按需读取</small></span></div><div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div></div></section></main><WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={setSelectedResource} onSelectSession={selectSession} onNewSession={resetSession} />{error && <div className="error-toast"><WarningCircle size={17} weight="fill" /><span>{error}</span><button onClick={() => setError('')}><X size={14} /></button></div>}</div>;
+  return (
+    <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
+      <main className="session-panel">
+        <section className="conversation-stage">
+          <div className="conversation-scroll">
+            {messages.length === 0 ? (
+              <div className="welcome-state">
+                <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
+                <h1>你好，我是 Pi</h1>
+                <p>从本地文件和知识库开始对话。Pi 会按需读取上下文，并在回答旁边保留依据。</p>
+              </div>
+            ) : (
+              <div className="message-list">
+                {messages.map((message) => message.kind === 'user' ? <UserMessage key={message.id} message={message} /> : message.kind === 'thinking' ? (showThinking ? <ThinkingMessage key={message.id} message={message} /> : null) : <AssistantMessage key={message.id} message={message} />)}
+              </div>
+            )}
+          </div>
+          <div className="composer-wrap">
+            <div className="composer">
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向项目提问…" aria-label="向项目提问" rows={1} />
+              <div className="composer-toolbar">
+                <button type="button" className="composer-tool-button composer-tool-add" onClick={() => openWorkspace('files')} aria-label="添加项目上下文" title="打开项目文件"><Plus size={15} weight="bold" /></button>
+                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />项目文件</button>
+                <button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking}>思考</button>
+                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('sessions')}><ChatCircle size={14} />会话</button>
+                <span className="composer-toolbar-spacer" />
+                <div className="composer-more-wrap">
+                  <button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-controls="model-selection-menu" aria-label="模型选择" title="查看当前模型" aria-haspopup="dialog"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>
+                  {modelMenuOpen && <div id="model-selection-menu" className="composer-more-menu model-selection-menu" role="dialog" aria-labelledby="model-selection-title"><strong id="model-selection-title">当前模型</strong><span>{workspace.model.model ?? '本地降级模式'}</span><small>{workspace.model.providerConfigured ? '已配置模型密钥' : '本地降级模式'}</small></div>}
+                </div>
+                <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
+              </div>
+            </div>
+            <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>
+          </div>
+        </section>
+      </main>
+      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={setSelectedResource} onSelectSession={selectSession} onNewSession={resetSession} />
+      {error && <div className="error-toast" role="alert"><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></div>}
+    </div>
+  );
 }
