@@ -6,7 +6,7 @@ import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
 import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getPiModelStatus, piFileSessionStore } from '@pi-workbench/pi-agent';
+import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 
@@ -39,8 +39,8 @@ function walkPiFiles(directory: string, root = directory): string[] {
 function inferredResource(path: string): AgentResourceSummary {
   const name = basename(path);
   const extension = extname(name).toLowerCase();
-  const kind = path.startsWith('.pi/skills/') ? 'skill' : path.startsWith('.pi/prompts/') ? 'prompt' : path.startsWith('.pi/knowledge/') && extension === '.md' ? 'knowledge' : path.startsWith('.pi/sessions/') ? 'session' : 'file';
-  const title = path === '.pi/README.md' ? 'Pi 项目说明' : kind === 'session' ? `会话 ${name.replace(/^.*_session_/, '').replace(/\.jsonl$/i, '')}` : extension === '.jsonl' ? `运行记录 · ${name.replace(/\.jsonl$/i, '')}` : name.replace(/\.[^.]+$/, '');
+  const kind = path.startsWith('.pi/skills/') ? 'skill' : path.startsWith('.pi/prompts/') ? 'prompt' : path.startsWith('.pi/knowledge/') && extension === '.md' ? 'knowledge' : path.startsWith('.pi/sessions/') ? 'session' : path.startsWith('.pi/extensions/') && ['.ts', '.js', '.mjs', '.cjs'].includes(extension) ? 'extension' : path.startsWith('.pi/themes/') && extension === '.json' ? 'theme' : path === '.pi/settings.json' ? 'settings' : ['.pi/SYSTEM.md', '.pi/APPEND_SYSTEM.md'].includes(path) ? 'system' : 'file';
+  const title = path === '.pi/README.md' ? 'Pi 项目说明' : path === '.pi/settings.json' ? 'Pi 项目设置' : path === '.pi/APPEND_SYSTEM.md' ? '追加系统提示词' : path === '.pi/SYSTEM.md' ? '系统提示词' : kind === 'extension' ? `Pi 扩展 · ${name.replace(/\.[^.]+$/, '')}` : kind === 'theme' ? `Pi 主题 · ${name.replace(/\.json$/i, '')}` : kind === 'session' ? `会话 ${name.replace(/^.*_session_/, '').replace(/\.jsonl$/i, '')}` : extension === '.jsonl' ? `运行记录 · ${name.replace(/\.jsonl$/i, '')}` : name.replace(/\.[^.]+$/, '');
   return { path, kind, title, status: 'active' };
 }
 
@@ -94,6 +94,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       resources: workspaceResources(),
       tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' as const },
       model: getPiModelStatus(config.PI_AGENT_ENABLED),
+      pi: await loadPiResourceSnapshot(projectRoot(), { projectExtensions: config.PI_PROJECT_EXTENSIONS_ENABLED }),
       data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
       sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
     }));

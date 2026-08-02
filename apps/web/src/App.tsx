@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
 import {
   ArrowUpRight,
+  ArrowsClockwise,
   CaretDown,
   CaretLeft,
   CaretRight,
@@ -31,6 +32,7 @@ type WorkspaceSnapshot = {
   resources: AgentResourceSummary[];
   tools: { enabled: string[]; policy: 'read-only' };
   model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string };
+  pi?: PiRuntimeResourceSnapshot;
 };
 
 type FileTreeNode = {
@@ -213,6 +215,10 @@ function fileKindLabel(resource?: AgentResourceSummary) {
   if (resource?.kind === 'skill') return 'S';
   if (resource?.kind === 'prompt') return 'P';
   if (resource?.kind === 'session' || resource?.path.endsWith('.jsonl')) return 'JSONL';
+  if (resource?.kind === 'extension') return 'EXT';
+  if (resource?.kind === 'theme') return 'THEME';
+  if (resource?.kind === 'settings') return 'CFG';
+  if (resource?.kind === 'system') return 'SYS';
   if (resource?.kind === 'file') return 'FILE';
   return 'MD';
 }
@@ -242,10 +248,10 @@ function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
   return <section className="agent-turn-thinking" aria-label="思考过程"><details className="thinking-trace" open={isWorking}><summary><span>思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
 }
 
-function AgentToolEvents({ events, toolCalls }: { events: AgentEventSummary[]; toolCalls: string[] }) {
+function AgentToolEvents({ events, toolCalls, toolMetrics }: { events: AgentEventSummary[]; toolCalls: string[]; toolMetrics: NonNullable<NonNullable<AgentChatResponse['metrics']>['toolMetrics']> }) {
   const visibleEvents = events.filter((event) => event.category === 'tool' || event.category === 'error');
-  if (!visibleEvents.length && !toolCalls.length) return null;
-  return <section className="agent-tool-events" aria-label="工具调用"><div className="agent-content-label">工具调用</div>{visibleEvents.length ? visibleEvents.map((event, index) => <details className={event.category === 'error' ? 'agent-tool-event agent-tool-event-error' : 'agent-tool-event'} key={`${event.type}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /> <span>{event.label}</span>{event.toolName && <code>{event.toolName}</code>}</summary>{event.detail && <pre>{event.detail}</pre>}</details>) : toolCalls.map((toolName, index) => <div className="agent-tool-event agent-tool-event-compact" key={`${toolName}-${index}`}><span className="agent-tool-event-status" aria-hidden="true" /><span>调用工具</span><code>{toolName}</code></div>)}</section>;
+  if (!visibleEvents.length && !toolCalls.length && !toolMetrics.length) return null;
+  return <section className="agent-tool-events" aria-label="工具调用"><div className="agent-content-label">工具调用</div>{visibleEvents.length ? visibleEvents.map((event, index) => <details className={event.category === 'error' ? 'agent-tool-event agent-tool-event-error' : 'agent-tool-event'} key={`${event.type}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /> <span>{event.label}</span>{event.toolName && <code>{event.toolName}</code>}<small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>) : toolCalls.map((toolName, index) => <div className="agent-tool-event agent-tool-event-compact" key={`${toolName}-${index}`}><span className="agent-tool-event-status" aria-hidden="true" /><span>调用工具</span><code>{toolName}</code></div>)}{toolMetrics.length > 0 && <details className="agent-tool-metrics"><summary>工具执行指标 <small>{toolMetrics.length} 次</small></summary><div className="agent-tool-metric-list">{toolMetrics.map((metric, index) => <div className={metric.status === 'error' ? 'agent-tool-metric agent-tool-metric-error' : 'agent-tool-metric'} key={`${metric.toolCallId ?? metric.toolName}-${index}`}><strong>{metric.toolName}</strong><span>{metric.status === 'error' ? '失败' : '完成'}</span><small>{metric.durationMs !== undefined ? formatDuration(metric.durationMs) : '—'} · 输入 {metric.inputChars.toLocaleString('zh-CN')} 字符 · 输出 {metric.outputChars.toLocaleString('zh-CN')} 字符</small></div>)}</div></details>}</section>;
 }
 
 function formatDuration(durationMs: number) {
@@ -266,13 +272,18 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
   if (!metrics) return null;
   const tokens = metrics.tokenUsage;
   const tokenLabel = tokens.source === 'estimated' ? `${tokens.total.toLocaleString('zh-CN')}（估算）` : tokens.source === 'provider' ? tokens.total.toLocaleString('zh-CN') : '未提供';
+  const contextLabel = metrics.contextUsage?.tokens === null || metrics.contextUsage?.tokens === undefined ? '未知' : `${metrics.contextUsage.tokens.toLocaleString('zh-CN')} / ${metrics.contextUsage.contextWindow.toLocaleString('zh-CN')}`;
+  const sessionTotals = metrics.sessionTotals;
   return <section className="agent-metrics" aria-label="执行指标">
     <div className="agent-metrics-summary" role="list" aria-label="执行指标摘要">
       <span role="listitem"><strong>第 {metrics.turn} 轮</strong></span>
       <span role="listitem">执行 {metrics.executionRounds} 轮</span>
       <span role="listitem">耗时 {formatDuration(metrics.durationMs)}</span>
       <span role="listitem">Token {tokenLabel}</span>
-      <span role="listitem">工具 {metrics.toolCallCount}</span>
+      <span role="listitem">工具 {metrics.toolCallCount}/{metrics.toolResultCount}</span>
+      <span role="listitem">重试 {metrics.retryCount}</span>
+      <span role="listitem">压缩 {metrics.compactionCount}</span>
+      <span role="listitem">上下文 {contextLabel}</span>
       <span role="listitem">事件 {metrics.eventCount}</span>
     </div>
     <details className="agent-metrics-details">
@@ -285,11 +296,26 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
         <span>Thinking 字符<strong>{metrics.thinkingChars.toLocaleString('zh-CN')}</strong></span>
         <span>模型<strong>{response.model.model ?? '本地降级'}</strong></span>
         <span>提供方<strong>{response.model.provider ?? '本地'}</strong></span>
+        <span>API<strong>{response.model.api ?? '—'}</strong></span>
+        <span>响应模型<strong>{response.model.responseModel ?? '—'}</strong></span>
+        <span>响应 ID<strong>{response.model.responseId ?? '—'}</strong></span>
         <span>Thinking<strong>{response.model.thinkingLevel ?? '未提供'}</strong></span>
         <span>输入 Token<strong>{tokens.source === 'unavailable' ? '未提供' : `${tokens.input.toLocaleString('zh-CN')}${tokens.source === 'estimated' ? '（估算）' : ''}`}</strong></span>
         <span>输出 Token<strong>{tokens.source === 'unavailable' ? '未提供' : `${tokens.output.toLocaleString('zh-CN')}${tokens.source === 'estimated' ? '（估算）' : ''}`}</strong></span>
         <span>总 Token<strong>{tokenLabel}</strong></span>
+        <span>缓存读取<strong>{tokens.cacheRead.toLocaleString('zh-CN')}</strong></span>
+        <span>缓存写入<strong>{tokens.cacheWrite.toLocaleString('zh-CN')}</strong></span>
+        <span>Reasoning<strong>{tokens.reasoning?.toLocaleString('zh-CN') ?? '未提供'}</strong></span>
+        <span>成本<strong>{tokens.cost.total ? tokens.cost.total.toFixed(6) : '0'}</strong></span>
+        <span>工具失败<strong>{metrics.toolErrorCount}</strong></span>
+        <span>队列更新<strong>{metrics.queueUpdateCount}</strong></span>
+        <span>Settled<strong>{metrics.settled ? '是' : '否'}</strong></span>
+        <span>停止原因<strong>{metrics.stopReason ?? '未提供'}</strong></span>
+        {sessionTotals && <><span>Session 消息<strong>{sessionTotals.totalMessages}</strong></span><span>Session Token<strong>{sessionTotals.tokenUsage.total.toLocaleString('zh-CN')}</strong></span><span>Session 成本<strong>{sessionTotals.cost ? sessionTotals.cost.toFixed(6) : '0'}</strong></span></>}
       </div>
+      {Object.keys(metrics.eventCounts).length > 0 && <div className="agent-event-counts"><span>事件分布</span>{Object.entries(metrics.eventCounts).map(([name, count]) => <code key={name}>{name} × {count}</code>)}</div>}
+      {metrics.compactions.length > 0 && <div className="agent-metric-list"><span>压缩记录</span>{metrics.compactions.map((item, index) => <small key={`${item.reason}-${index}`}>{item.reason} · {item.tokensBefore?.toLocaleString('zh-CN') ?? '未知'} → {item.estimatedTokensAfter?.toLocaleString('zh-CN') ?? '未知'} · {item.durationMs !== undefined ? formatDuration(item.durationMs) : '—'}</small>)}</div>}
+      {metrics.retries.length > 0 && <div className="agent-metric-list"><span>重试记录</span>{metrics.retries.map((item, index) => <small key={`${item.kind}-${item.attempt}-${index}`}>{item.kind} {item.attempt}/{item.maxAttempts} · {item.success === false ? '失败' : item.success === true ? '成功' : '进行中'} · {item.durationMs !== undefined ? formatDuration(item.durationMs) : '—'}</small>)}</div>}
       {tokens.source === 'estimated' && <small className="agent-metrics-note">当前 Pi 运行时没有返回供应商 usage 字段，Token 按文本长度估算，仅用于观察趋势。</small>}
       {tokens.source === 'unavailable' && <small className="agent-metrics-note">这条历史消息生成时尚未保存 Token usage，因此只展示可回溯的执行指标。</small>}
     </details>
@@ -317,7 +343,7 @@ type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assis
 function AgentTurn({ thinking, assistant, showThinking, copiedMessageId, feedbackPending, onCopy, onFeedback }: { thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; showThinking: boolean; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
   const response = assistant?.response;
   const isWorking = !response;
-  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : '刚刚'}</span></div>{thinking && showThinking && <ThinkingBlock message={thinking} />}{assistant && <AgentToolEvents events={response?.events ?? []} toolCalls={response?.decision.toolCalls ?? []} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</div></article>;
+  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : '刚刚'}</span></div>{thinking && showThinking && <ThinkingBlock message={thinking} />}{assistant && <AgentToolEvents events={response?.events ?? []} toolCalls={response?.decision.toolCalls ?? []} toolMetrics={response?.metrics.toolMetrics ?? []} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
@@ -349,8 +375,141 @@ function ConversationStream({ messages, showThinking, copiedMessageId, feedbackP
   return <>{nodes}</>;
 }
 
+type JsonlRecord = { [key: string]: unknown; type?: string; id?: string; timestamp?: string; parentId?: string | null };
+
+function jsonObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function jsonNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function jsonText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  return value.map((block) => {
+    const item = jsonObject(block);
+    if (!item) return '';
+    if (typeof item.text === 'string') return item.text;
+    if (typeof item.thinking === 'string') return item.thinking;
+    if (typeof item.name === 'string') return item.name;
+    return '';
+  }).filter(Boolean).join('\n');
+}
+
+function jsonlUsage(record: JsonlRecord) {
+  const message = jsonObject(record.message);
+  const data = jsonObject(record.data);
+  const response = jsonObject(data?.response);
+  const metrics = jsonObject(response?.metrics);
+  const usage = jsonObject(message?.usage ?? record.usage ?? metrics?.tokenUsage);
+  if (!usage) return null;
+  return {
+    input: jsonNumber(usage.input),
+    output: jsonNumber(usage.output),
+    cacheRead: jsonNumber(usage.cacheRead),
+    cacheWrite: jsonNumber(usage.cacheWrite),
+    total: jsonNumber(usage.totalTokens ?? usage.total),
+    cost: jsonNumber(jsonObject(usage.cost)?.total ?? usage.cost),
+  };
+}
+
+type JsonlUsageSummary = { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: number };
+
+function parseJsonl(content: string): { entries: JsonlRecord[]; invalidLines: number } {
+  const entries: JsonlRecord[] = [];
+  let invalidLines = 0;
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const value = JSON.parse(line) as unknown;
+      const entry = jsonObject(value);
+      if (entry) entries.push(entry as JsonlRecord);
+      else invalidLines += 1;
+    } catch {
+      invalidLines += 1;
+    }
+  }
+  return { entries, invalidLines };
+}
+
+function jsonlTypeLabel(entry: JsonlRecord) {
+  const labels: Record<string, string> = { session: '会话头', message: '消息', custom: '工作台指标', custom_message: '自定义消息', thinking_level_change: 'Thinking', model_change: '模型', compaction: '上下文压缩', branch_summary: '分支摘要', session_info: '会话信息', label: '标签' };
+  return labels[entry.type ?? ''] ?? entry.type ?? '未知';
+}
+
+function jsonlEntryRole(entry: JsonlRecord) {
+  const message = jsonObject(entry.message);
+  if (typeof message?.role === 'string') return message.role;
+  if (typeof entry.customType === 'string') return entry.customType;
+  return '';
+}
+
+function jsonlEntryPreview(entry: JsonlRecord) {
+  const message = jsonObject(entry.message);
+  if (message) {
+    const text = jsonText(message.content);
+    if (text) return text.replace(/\s+/g, ' ').slice(0, 180);
+    if (typeof message.toolName === 'string') return message.toolName;
+    if (typeof message.model === 'string') return message.model;
+  }
+  if (entry.type === 'session') return `${String(entry.id ?? '')} · ${String(entry.cwd ?? '')}`;
+  if (entry.type === 'model_change') return `${String(entry.provider ?? '')} / ${String(entry.modelId ?? '')}`;
+  if (entry.type === 'compaction') return String(entry.summary ?? '').replace(/\s+/g, ' ').slice(0, 180);
+  if (entry.type === 'branch_summary') return String(entry.summary ?? '').replace(/\s+/g, ' ').slice(0, 180);
+  if (typeof entry.customType === 'string') {
+    const data = jsonObject(entry.data);
+    const response = jsonObject(data?.response);
+    const metrics = jsonObject(response?.metrics);
+    if (metrics) return `第 ${String(metrics.turn ?? '?')} 轮 · ${formatDuration(jsonNumber(metrics.durationMs))} · ${jsonNumber(metrics.eventCount)} 个事件`;
+    return entry.customType;
+  }
+  return '';
+}
+
+function SessionJsonlViewer({ document }: { document: AgentResourceDocument }) {
+  const parsed = useMemo(() => parseJsonl(document.content), [document.content]);
+  const [filter, setFilter] = useState('');
+  const [showRaw, setShowRaw] = useState(false);
+  const query = filter.trim().toLocaleLowerCase();
+  const visibleEntries = parsed.entries.filter((entry) => !query || `${entry.type ?? ''} ${jsonlEntryRole(entry)} ${jsonlEntryPreview(entry)} ${JSON.stringify(entry)}`.toLocaleLowerCase().includes(query));
+  const header = parsed.entries.find((entry) => entry.type === 'session');
+  const messageCount = parsed.entries.filter((entry) => entry.type === 'message').length;
+  const toolCount = parsed.entries.filter((entry) => jsonObject(entry.message)?.role === 'toolResult').length;
+  const usage = parsed.entries.reduce<JsonlUsageSummary>((total, entry) => {
+    const item = jsonlUsage(entry);
+    if (!item || entry.type === 'custom') return total;
+    return { input: total.input + item.input, output: total.output + item.output, cacheRead: total.cacheRead + item.cacheRead, cacheWrite: total.cacheWrite + item.cacheWrite, total: total.total + item.total, cost: total.cost + item.cost };
+  }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0 });
+  const latestTurn = [...parsed.entries].reverse().find((entry) => entry.type === 'custom' && entry.customType === 'pi-workbench.turn');
+  const latestMetrics = jsonObject(jsonObject(latestTurn?.data)?.response) ? jsonObject(jsonObject(latestTurn?.data)?.response)?.metrics : undefined;
+  const latestContext = jsonObject(latestMetrics)?.contextUsage;
+  const latestContextRecord = jsonObject(latestContext);
+  return <div className="session-jsonl-viewer">
+    <section className="session-jsonl-summary" aria-label="Session 文件指标">
+      <div><span>Entries</span><strong>{parsed.entries.length}</strong></div>
+      <div><span>消息</span><strong>{messageCount}</strong></div>
+      <div><span>工具结果</span><strong>{toolCount}</strong></div>
+      <div><span>Total Token</span><strong>{usage.total.toLocaleString('zh-CN')}</strong></div>
+      <div><span>缓存读取</span><strong>{usage.cacheRead.toLocaleString('zh-CN')}</strong></div>
+      <div><span>成本</span><strong>{usage.cost ? usage.cost.toFixed(6) : '0'}</strong></div>
+      {latestContextRecord ? <div><span>当前上下文</span><strong>{jsonNumber(latestContextRecord.tokens).toLocaleString('zh-CN')} / {jsonNumber(latestContextRecord.contextWindow).toLocaleString('zh-CN')}</strong></div> : null}
+    </section>
+    <div className="session-jsonl-toolbar">
+      <label><MagnifyingGlass size={13} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选 entry、工具或内容" aria-label="筛选 Session 文件" /></label>
+      <span>{visibleEntries.length}/{parsed.entries.length}</span>
+      <button type="button" className={showRaw ? 'session-jsonl-view-button active' : 'session-jsonl-view-button'} onClick={() => setShowRaw((value) => !value)}>{showRaw ? '结构化视图' : '原始 JSONL'}</button>
+    </div>
+    {showRaw ? <pre className="resource-viewer-raw session-jsonl-raw">{document.content}</pre> : <div className="session-jsonl-timeline">{visibleEntries.map((entry, index) => <details className="session-jsonl-entry" key={`${String(entry.id ?? entry.type)}-${index}`} open={Boolean(query) || index === 0}><summary><span className={`session-entry-badge session-entry-${entry.type ?? 'unknown'}`}>{jsonlTypeLabel(entry)}</span><strong>{jsonlEntryRole(entry) || jsonlEntryPreview(entry) || '未命名 entry'}</strong><small>{entry.timestamp ? formatMetricTime(entry.timestamp) : '—'}</small></summary><div className="session-jsonl-entry-body"><p>{jsonlEntryPreview(entry) || '该 entry 没有可摘要的文本内容。'}</p><div className="session-jsonl-entry-meta"><span>id <code>{String(entry.id ?? '—')}</code></span>{entry.parentId !== undefined && <span>parent <code>{String(entry.parentId ?? 'root')}</code></span>}{jsonlUsage(entry) && <span>Token <code>{jsonlUsage(entry)!.total.toLocaleString('zh-CN')}</code></span>}</div><pre>{JSON.stringify(entry, null, 2)}</pre></div></details>)}</div>}
+    {parsed.invalidLines > 0 && <p className="session-jsonl-warning">有 {parsed.invalidLines} 行无法解析，已保留在原始 JSONL 视图中。</p>}
+    {header && <p className="session-jsonl-footnote">Session {String(header.id ?? '—')} · cwd {String(header.cwd ?? '—')}</p>}
+  </div>;
+}
+
 function ResourceViewer({ document, loading, error, onClose }: { document: AgentResourceDocument | null; loading: boolean; error: string; onClose: () => void }) {
-  const isRawText = document?.resource.kind === 'session' || document?.resource.path.endsWith('.jsonl');
+  const isSession = document?.resource.kind === 'session';
+  const isRawText = document?.resource.path.endsWith('.jsonl');
   return <section className="resource-viewer" aria-label="项目文件预览">
     <header className="resource-viewer-header">
       <button type="button" className="resource-viewer-close" onClick={onClose} aria-label="返回聊天" title="返回聊天"><CaretLeft size={16} /></button>
@@ -363,7 +522,7 @@ function ResourceViewer({ document, loading, error, onClose }: { document: Agent
     <div className="resource-viewer-scroll">
       {loading && <div className="resource-viewer-state"><strong>正在读取文件</strong><span>只读内容即将显示在这里。</span></div>}
       {!loading && error && <div className="resource-viewer-state resource-viewer-error"><strong>文件读取失败</strong><span>{error}</span><button type="button" onClick={onClose}>返回聊天</button></div>}
-      {!loading && !error && document && (isRawText ? <pre className="resource-viewer-raw">{document.content}</pre> : <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{document.content}</Markdown></article>)}
+      {!loading && !error && document && (isSession ? <SessionJsonlViewer document={document} /> : isRawText ? <pre className="resource-viewer-raw">{document.content}</pre> : <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{document.content}</Markdown></article>)}
     </div>
   </section>;
 }
@@ -372,7 +531,7 @@ function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSessi
   return <div className="workspace-session-list" aria-label="会话列表"><button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{messageCount ? `${messageCount} 次提问` : '尚未提问'}</small></span>{isCurrent && <span className="session-row-state">当前</span>}</button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</div>;
 }
 
-function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void }) {
+function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRefreshWorkspace }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRefreshWorkspace: () => void }) {
   const showingSessions = view === 'sessions';
   return (
     <aside id="project-workspace" className={open ? 'workspace-panel' : 'workspace-panel workspace-panel-collapsed'} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
@@ -403,6 +562,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
               <small>{workspace.resources.length}</small>
             </button>
           </nav>
+          {workspace.pi && <div className="workspace-capability-strip" aria-label="Pi 资源能力"><span>Skills {workspace.pi.skills.length}</span><span>Prompts {workspace.pi.prompts.length}</span><span>Themes {workspace.pi.themes.length}</span><span className={workspace.pi.extensionsEnabled ? 'workspace-capability-enabled' : 'workspace-capability-gated'}>Extensions {workspace.pi.extensionsEnabled ? '开' : '关'}</span></div>}
           <div id="workspace-view-panel" className="workspace-view-panel" role="tabpanel" aria-labelledby={showingSessions ? 'workspace-tab-sessions' : 'workspace-tab-files'} tabIndex={0}>
             {showingSessions ? (
               <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onNewSession={onNewSession} />
@@ -413,6 +573,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
                     <MagnifyingGlass size={14} />
                     <input value={filter} onChange={(event) => onFilterChange(event.target.value)} placeholder="筛选文件" aria-label="过滤 .pi 文件" />
                   </label>
+                  <button type="button" className="workspace-refresh-button" onClick={onRefreshWorkspace} aria-label="刷新项目资源" title="刷新项目资源"><ArrowsClockwise size={14} /></button>
                 </div>
                 <div className="workspace-tree" aria-label="Pi 项目文件树">
                   <FileTree node={tree} depth={0} query={filter.trim().toLocaleLowerCase()} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />
@@ -447,6 +608,7 @@ export default function App() {
   const [resourceDocument, setResourceDocument] = useState<AgentResourceDocument | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceError, setResourceError] = useState('');
+  const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const resourceRequestRef = useRef(0);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
   const sessions = sessionRecords;
@@ -455,11 +617,21 @@ export default function App() {
     setCollapsedPaths(new Set(collectCollapsedFolders(fileTree)));
   }, [fileTree]);
 
-  useEffect(() => {
-    fetch('/api/v1/agent/workspace').then(async (response) => {
+  async function refreshWorkspace() {
+    setWorkspaceRefreshing(true);
+    try {
+      const response = await fetch('/api/v1/agent/workspace', { cache: 'no-store' });
       if (!response.ok) throw new Error('workspace unavailable');
-      return response.json() as Promise<WorkspaceSnapshot>;
-    }).then(setWorkspace).catch(() => undefined);
+      setWorkspace(await response.json() as WorkspaceSnapshot);
+    } catch {
+      // Keep the last known workspace snapshot when the API is restarting.
+    } finally {
+      setWorkspaceRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshWorkspace();
   }, []);
 
   useEffect(() => {
@@ -705,7 +877,7 @@ export default function App() {
           </div>
         </section>}
       </main>
-      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} />
+      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} />
       {error && <div className="error-toast" role="alert"><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></div>}
     </div>
   );

@@ -1,0 +1,19 @@
+{
+  "sessionDir": ".pi/sessions",
+  "defaultThinkingLevel": "minimal",
+  "enableSkillCommands": true,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 2,
+    "baseDelayMs": 1000
+  },
+  "markdown": {
+    "codeBlockIndent": " "
+  },
+  "theme": "pi-workbench-neutral"
+}

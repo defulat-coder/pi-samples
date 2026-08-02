@@ -26,7 +26,7 @@
 
 - Use `@earendil-works/pi-coding-agent` SDK through `packages/pi-agent`; the Web app must not import the Pi SDK.
 - Create sessions with `createAgentSession()` and the configured `ModelRuntime`; persist Web sessions with Pi's `SessionManager` JSONL files under the project `.pi/sessions/` directory (use `SessionManager.inMemory()` only for tests).
-- Construct/reload `DefaultResourceLoader` with the project `cwd`; official project context includes `.pi/skills`, `.pi/prompts`, and `AGENTS.md`. `.pi/knowledge` is this project's custom Markdown bundle and must be read through `search_knowledge`, not assumed to be auto-loaded by Pi.
+- Construct/reload `DefaultResourceLoader` with the project `cwd`; official project resources include `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, `.pi/skills`, `.pi/prompts`, `.pi/themes`, `.pi/extensions`, and `AGENTS.md`. Project extensions execute host code and are opt-in through `PI_PROJECT_EXTENSIONS_ENABLED`; `.pi/knowledge` is this project's custom Markdown bundle and must be read through `search_knowledge`, not assumed to be auto-loaded by Pi.
 - Subscribe before calling `session.prompt()`. Forward `message_update` deltas (`text_delta`, `thinking_delta`, `toolcall_*`), tool events (`tool_execution_start/update/end`), and lifecycle/retry events; unsubscribe and dispose sessions on close.
 - Keep the configured `thinkingLevel` observable. Do not assume a provider emits thinking deltas when thinking is disabled or unsupported.
 - Official Pi built-ins include write-capable tools. This project intentionally exposes only `read` plus the project custom `search_knowledge` tool; keep both read-only and let Pi choose when to call them.

@@ -9,7 +9,7 @@ import { PiFileSessionStore } from '@pi-workbench/pi-agent';
 describe('Pi Workbench API', () => {
   const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-file-sessions-'));
   const sessions = new PiFileSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
-  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', PI_AGENT_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
+  const app = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
 
   before(async () => app.ready());
   after(async () => { await app.close(); sessions.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
@@ -37,6 +37,9 @@ describe('Pi Workbench API', () => {
     assert.equal(response.json().tools.policy, 'read-only');
     assert.equal(response.json().metrics.turn, 1);
     assert.equal(response.json().metrics.tokenUsage.source, 'estimated');
+    assert.equal(response.json().metrics.tokenUsage.cacheRead, 0);
+    assert.equal(response.json().metrics.eventCounts.local_fallback, 1);
+    assert.equal(response.json().metrics.settled, true);
   });
 
   it('streams fallback text and a terminal response over SSE', async () => {
@@ -93,6 +96,12 @@ describe('Pi Workbench API', () => {
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.includes('pi-workbench')));
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path === '.pi/README.md'));
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.startsWith('.pi/sessions/')));
+    assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/settings.json' && resource.kind === 'settings'));
+    assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/APPEND_SYSTEM.md' && resource.kind === 'system'));
+    assert.equal(response.json().pi.extensionsEnabled, false);
+    assert.ok(response.json().pi.skills.some((skill: { name: string }) => skill.name === 'pi-session-observability'));
+    assert.ok(response.json().pi.prompts.some((prompt: { name: string }) => prompt.name === 'inspect-pi'));
+    assert.ok(response.json().pi.themes.some((theme: { name: string }) => theme.name === 'pi-workbench-neutral'));
     assert.deepEqual(response.json().tools, { enabled: ['read', 'search_knowledge'], policy: 'read-only' });
     assert.equal(response.json().data.kind, 'local-sqlite');
   });

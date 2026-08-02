@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPiAgentSession, getPiProjectRoot } from './index.js';
+import { createPiAgentSession, getPiProjectRoot, loadPiResourceSnapshot } from './index.js';
 
 describe('Pi workspace tools', () => {
   it('registers knowledge search as a Pi decision tool instead of pre-routing the request', async () => {
@@ -21,5 +21,14 @@ describe('Pi workspace tools', () => {
     } finally {
       runtime.close();
     }
+  });
+
+  it('discovers the official project resource types without enabling extensions', async () => {
+    const snapshot = await loadPiResourceSnapshot(getPiProjectRoot(), { projectExtensions: false });
+    assert.equal(snapshot.extensionsEnabled, false);
+    assert.ok(snapshot.skills.some((skill) => skill.name === 'pi-session-observability'));
+    assert.ok(snapshot.prompts.some((prompt) => prompt.name === 'inspect-pi'));
+    assert.ok(snapshot.themes.some((theme) => theme.name === 'pi-workbench-neutral'));
+    assert.ok(snapshot.appendSystemPrompts.some((prompt) => prompt.path === '.pi/APPEND_SYSTEM.md'));
   });
 });

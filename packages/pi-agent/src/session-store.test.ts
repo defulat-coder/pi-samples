@@ -25,7 +25,7 @@ function response(sessionId: string) {
     events: [],
     tools: { enabled: ['read'], policy: 'read-only' as const },
     model: { enabled: false, providerConfigured: false },
-    metrics: { turn: 1, executionRounds: 1, startedAt: timestamp, completedAt: timestamp, durationMs: 2, eventCount: 0, toolCallCount: 0, inputChars: 4, outputChars: 4, thinkingChars: 0, tokenUsage: { input: 1, output: 1, total: 2, source: 'estimated' as const } },
+    metrics: { turn: 1, executionRounds: 1, startedAt: timestamp, completedAt: timestamp, durationMs: 2, eventCount: 0, eventCounts: {}, eventCategoryCounts: {}, toolCallCount: 0, toolResultCount: 0, toolErrorCount: 0, toolMetrics: [], retryCount: 0, retries: [], compactionCount: 0, compactions: [], queueUpdateCount: 0, settled: true, inputChars: 4, outputChars: 4, thinkingChars: 0, tokenUsage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, source: 'estimated' as const } },
     latencyMs: 2,
     createdAt: timestamp,
   };

@@ -8,6 +8,8 @@ const schema = Type.Object({
   HOST: Type.String({ default: '127.0.0.1' }),
   WEB_ORIGIN: Type.String({ default: 'http://localhost:5173' }),
   PI_AGENT_ENABLED: Type.Boolean({ default: false }),
+  /** Project extensions execute host TypeScript and stay opt-in by default. */
+  PI_PROJECT_EXTENSIONS_ENABLED: Type.Boolean({ default: false }),
   PI_MODEL_PROVIDER: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
   PI_MODEL: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
   PI_THINKING_LEVEL: Type.Optional(Type.Union([

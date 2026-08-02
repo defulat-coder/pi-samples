@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import {
   SessionManager,
@@ -8,7 +8,7 @@ import {
   type SessionInfo,
   type SessionMessageEntry,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessionRecord } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessionRecord, AgentTokenUsage } from '@pi-workbench/contracts';
 
 export const PI_WORKBENCH_TURN_ENTRY = 'pi-workbench.turn';
 export const PI_WORKBENCH_FEEDBACK_ENTRY = 'pi-workbench.feedback';
@@ -83,23 +83,69 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function usageFromPersisted(usage: unknown, source: AgentTokenUsage['source'] = 'provider'): AgentTokenUsage {
+  const value = usage && typeof usage === 'object' ? usage as { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown; cacheWrite1h?: unknown; reasoning?: unknown; totalTokens?: unknown; cost?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown; total?: unknown } } : undefined;
+  const input = isFiniteNumber(value?.input) ? value.input : 0;
+  const output = isFiniteNumber(value?.output) ? value.output : 0;
+  const cacheRead = isFiniteNumber(value?.cacheRead) ? value.cacheRead : 0;
+  const cacheWrite = isFiniteNumber(value?.cacheWrite) ? value.cacheWrite : 0;
+  const total = isFiniteNumber(value?.totalTokens) ? value.totalTokens : input + output + cacheRead + cacheWrite;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    ...(isFiniteNumber(value?.cacheWrite1h) ? { cacheWrite1h: value.cacheWrite1h } : {}),
+    ...(isFiniteNumber(value?.reasoning) ? { reasoning: value.reasoning } : {}),
+    total,
+    cost: {
+      input: isFiniteNumber(value?.cost?.input) ? value.cost.input : 0,
+      output: isFiniteNumber(value?.cost?.output) ? value.cost.output : 0,
+      cacheRead: isFiniteNumber(value?.cost?.cacheRead) ? value.cost.cacheRead : 0,
+      cacheWrite: isFiniteNumber(value?.cost?.cacheWrite) ? value.cost.cacheWrite : 0,
+      total: isFiniteNumber(value?.cost?.total) ? value.cost.total : 0,
+    },
+    source,
+  };
+}
+
+function unavailableUsage(): AgentTokenUsage {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, source: 'unavailable' };
+}
+
 function responseWithLegacyMetrics(response: AgentChatResponse, turn: number): AgentChatResponse {
-  if (response.metrics) return response;
   const toolCallCount = response.decision?.toolCalls?.length ?? 0;
+  const current = response.metrics;
   return {
     ...response,
     metrics: {
-      turn: Math.max(1, turn),
-      executionRounds: Math.max(1, toolCallCount + 1),
-      startedAt: response.createdAt,
-      completedAt: response.createdAt,
-      durationMs: response.latencyMs ?? 0,
-      eventCount: response.events?.length ?? 0,
-      toolCallCount,
-      inputChars: 0,
-      outputChars: response.answer?.length ?? 0,
-      thinkingChars: 0,
-      tokenUsage: { input: 0, output: 0, total: 0, source: 'unavailable' },
+      turn: Math.max(1, current?.turn ?? turn),
+      executionRounds: current?.executionRounds ?? Math.max(1, toolCallCount + 1),
+      startedAt: current?.startedAt ?? response.createdAt,
+      completedAt: current?.completedAt ?? response.createdAt,
+      durationMs: current?.durationMs ?? response.latencyMs ?? 0,
+      eventCount: current?.eventCount ?? response.events?.length ?? 0,
+      eventCounts: current?.eventCounts ?? {},
+      eventCategoryCounts: current?.eventCategoryCounts ?? {},
+      toolCallCount: current?.toolCallCount ?? toolCallCount,
+      toolResultCount: current?.toolResultCount ?? 0,
+      toolErrorCount: current?.toolErrorCount ?? 0,
+      toolMetrics: current?.toolMetrics ?? [],
+      retryCount: current?.retryCount ?? 0,
+      retries: current?.retries ?? [],
+      compactionCount: current?.compactionCount ?? 0,
+      compactions: current?.compactions ?? [],
+      queueUpdateCount: current?.queueUpdateCount ?? 0,
+      settled: current?.settled ?? true,
+      inputChars: current?.inputChars ?? 0,
+      outputChars: current?.outputChars ?? response.answer?.length ?? 0,
+      thinkingChars: current?.thinkingChars ?? 0,
+      tokenUsage: current?.tokenUsage ? usageFromPersisted(current.tokenUsage, current.tokenUsage.source) : unavailableUsage(),
+      contextUsage: current?.contextUsage,
+      sessionTotals: current?.sessionTotals,
+      stopReason: current?.stopReason,
+      rawStopReason: current?.rawStopReason,
+      errorMessage: current?.errorMessage,
     },
   };
 }
@@ -152,6 +198,7 @@ function createFallbackUserMessage(text: string): UserMessage {
 function responseFromPiMessage(sessionId: string, userText: string, userTimestamp: number, assistant: AssistantMessage, turn: number, thinkingText: string, toolCalls: string[]): AgentChatResponse {
   const usage = assistant.usage;
   const hasUsage = isFiniteNumber(usage?.input) && isFiniteNumber(usage?.output) && isFiniteNumber(usage?.totalTokens);
+  const tokenUsage = hasUsage ? usageFromPersisted(usage) : unavailableUsage();
   const startedAt = new Date(userTimestamp).toISOString();
   const completedAt = new Date(assistant.timestamp).toISOString();
   const durationMs = Math.max(0, assistant.timestamp - userTimestamp);
@@ -165,7 +212,7 @@ function responseFromPiMessage(sessionId: string, userText: string, userTimestam
     resources: [],
     events: [],
     tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
-    model: { enabled: true, providerConfigured: true, provider: assistant.provider, model: assistant.model, thinkingLevel: undefined },
+    model: { enabled: true, providerConfigured: true, ...(assistant.api ? { api: assistant.api } : {}), provider: assistant.provider, model: assistant.model, ...(assistant.responseModel ? { responseModel: assistant.responseModel } : {}), ...(assistant.responseId ? { responseId: assistant.responseId } : {}), thinkingLevel: undefined },
     metrics: {
       turn: Math.max(1, turn),
       executionRounds: Math.max(1, toolCalls.length + 1),
@@ -173,11 +220,25 @@ function responseFromPiMessage(sessionId: string, userText: string, userTimestam
       completedAt,
       durationMs,
       eventCount: 0,
+      eventCounts: {},
+      eventCategoryCounts: {},
       toolCallCount: toolCalls.length,
+      toolResultCount: 0,
+      toolErrorCount: 0,
+      toolMetrics: [],
+      retryCount: 0,
+      retries: [],
+      compactionCount: 0,
+      compactions: [],
+      queueUpdateCount: 0,
+      settled: true,
       inputChars: userText.length,
       outputChars: textFromContent(assistant.content).length,
       thinkingChars: thinkingText.length,
-      tokenUsage: hasUsage ? { input: usage.input, output: usage.output, total: usage.totalTokens, source: 'provider' } : { input: 0, output: 0, total: 0, source: 'unavailable' },
+      tokenUsage,
+      stopReason: assistant.stopReason,
+      rawStopReason: assistant.rawStopReason,
+      errorMessage: assistant.errorMessage,
     },
     latencyMs: durationMs,
     createdAt: completedAt,
@@ -194,7 +255,7 @@ function responseWithSessionUsage(response: AgentChatResponse, userText: string,
       inputChars: userText.length,
       outputChars: textFromContent(assistant.content).length,
       thinkingChars: thinkingText.length,
-      tokenUsage: { input: usage.input, output: usage.output, total: usage.totalTokens, source: 'provider' },
+      tokenUsage: usageFromPersisted(usage),
     },
   };
 }
@@ -253,7 +314,14 @@ function projectEntries(sessionId: string, entries: SessionEntry[]): AgentSessio
 
 export function getPiSessionDir(cwd = getProjectRoot()): string {
   const configured = process.env.PI_SESSION_DIR?.trim();
-  return configured ? resolve(cwd, configured) : resolve(cwd, '.pi/sessions');
+  if (configured) return resolve(cwd, configured);
+  try {
+    const settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as { sessionDir?: unknown };
+    if (typeof settings.sessionDir === 'string' && settings.sessionDir.trim()) return resolve(cwd, settings.sessionDir.trim());
+  } catch {
+    // The official default remains .pi/sessions when settings are absent or invalid.
+  }
+  return resolve(cwd, '.pi/sessions');
 }
 
 export interface PiFileSessionStoreOptions {

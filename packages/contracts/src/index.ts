@@ -73,7 +73,7 @@ export type AgentChatRoute = 'workspace' | 'knowledge';
 
 export interface AgentResourceSummary {
   path: string;
-  kind: 'skill' | 'prompt' | 'knowledge' | 'session' | 'file';
+  kind: 'skill' | 'prompt' | 'knowledge' | 'session' | 'extension' | 'theme' | 'settings' | 'system' | 'file';
   title: string;
   status: 'active' | 'draft' | 'deprecated';
 }
@@ -83,6 +83,41 @@ export interface AgentResourceDocument {
   content: string;
 }
 
+export interface PiResourceDiagnostic {
+  type: 'warning' | 'error' | 'collision';
+  message: string;
+  path?: string;
+}
+
+export interface PiRuntimeResourceSnapshot {
+  /** Web embeds the SDK with a trusted local cwd; this is not a sandbox signal. */
+  projectTrusted: boolean;
+  /** Extensions stay opt-in in the Web gateway because they execute host code. */
+  extensionsEnabled: boolean;
+  extensions: Array<{
+    path: string;
+    commandNames: string[];
+    toolNames: string[];
+  }>;
+  skills: Array<{
+    name: string;
+    description: string;
+    path: string;
+    disableModelInvocation: boolean;
+  }>;
+  prompts: Array<{
+    name: string;
+    description: string;
+    argumentHint?: string;
+    path: string;
+  }>;
+  themes: Array<{ name: string; path?: string }>;
+  contextFiles: Array<{ path: string }>;
+  systemPrompt?: { path: string };
+  appendSystemPrompts: Array<{ path: string }>;
+  diagnostics: PiResourceDiagnostic[];
+}
+
 export interface AgentEventSummary {
   type: string;
   label: string;
@@ -90,6 +125,10 @@ export interface AgentEventSummary {
   /** Optional compact diagnostics for the inspector; never the full raw event. */
   detail?: string;
   category?: 'lifecycle' | 'message' | 'tool' | 'thinking' | 'error';
+  sequence?: number;
+  timestamp?: string;
+  elapsedMs?: number;
+  durationMs?: number;
 }
 
 export interface AgentDecision {
@@ -101,12 +140,88 @@ export interface AgentDecision {
 
 export type AgentFeedback = 'like' | 'dislike';
 
+export interface AgentTokenCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
 export interface AgentTokenUsage {
   input: number;
   output: number;
   total: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Anthropic-only one-hour cache write subset, when reported by the provider. */
+  cacheWrite1h?: number;
+  /** Reasoning tokens are a subset of output, not an additional total. */
+  reasoning?: number;
+  cost: AgentTokenCost;
   /** `estimated` is used until a provider exposes an authoritative usage payload. */
   source: 'provider' | 'estimated' | 'unavailable';
+}
+
+export interface AgentContextUsage {
+  /** Estimated context tokens; null means the runtime cannot currently provide it. */
+  tokens: number | null;
+  contextWindow: number;
+  /** Percentage of the context window; null when tokens is unknown. */
+  percent: number | null;
+}
+
+export interface AgentToolMetric {
+  toolCallId?: string;
+  toolName: string;
+  status: 'running' | 'completed' | 'error';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  inputChars: number;
+  outputChars: number;
+  errorMessage?: string;
+  tokenUsage?: AgentTokenUsage;
+}
+
+export interface AgentRetryMetric {
+  kind: 'agent' | 'summarization';
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+  finalError?: string;
+}
+
+export interface AgentCompactionMetric {
+  reason: 'manual' | 'threshold' | 'overflow';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  aborted: boolean;
+  willRetry: boolean;
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+  summaryChars?: number;
+  tokenUsage?: AgentTokenUsage;
+  errorMessage?: string;
+}
+
+export interface AgentSessionTotals {
+  sessionFile?: string;
+  sessionId: string;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+  tokenUsage: AgentTokenUsage;
+  cost: number;
+  contextUsage?: AgentContextUsage;
 }
 
 export interface AgentTurnMetrics {
@@ -118,11 +233,27 @@ export interface AgentTurnMetrics {
   completedAt: string;
   durationMs: number;
   eventCount: number;
+  eventCounts: Record<string, number>;
+  eventCategoryCounts: Record<string, number>;
   toolCallCount: number;
+  toolResultCount: number;
+  toolErrorCount: number;
+  toolMetrics: AgentToolMetric[];
+  retryCount: number;
+  retries: AgentRetryMetric[];
+  compactionCount: number;
+  compactions: AgentCompactionMetric[];
+  queueUpdateCount: number;
+  settled: boolean;
   inputChars: number;
   outputChars: number;
   thinkingChars: number;
   tokenUsage: AgentTokenUsage;
+  contextUsage?: AgentContextUsage;
+  sessionTotals?: AgentSessionTotals;
+  stopReason?: string;
+  rawStopReason?: string;
+  errorMessage?: string;
 }
 
 export interface AgentChatRequest {
@@ -148,8 +279,11 @@ export interface AgentChatResponse {
   model: {
     enabled: boolean;
     providerConfigured: boolean;
+    api?: string;
     provider?: string;
     model?: string;
+    responseModel?: string;
+    responseId?: string;
     thinkingLevel?: string;
   };
   metrics: AgentTurnMetrics;
