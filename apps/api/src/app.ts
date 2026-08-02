@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentChatRequest, AgentChatStreamEvent, WorkspaceRecordQuery } from '@pi-workbench/contracts';
+import type { AgentChatRequest, AgentChatStreamEvent, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
 import { askPiAgent, getPiModelStatus } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
@@ -21,6 +23,24 @@ function workspaceResources() {
     { path: '.pi/prompts/agent-chat.md', kind: 'prompt' as const, title: '智能体对话提示词', status: 'active' as const },
     ...loadKnowledgeBundle().map((concept) => ({ path: concept.path, kind: 'knowledge' as const, title: concept.title, status: concept.status })),
   ];
+}
+
+function readAgentResource(path: string): AgentResourceDocument | undefined {
+  const resource = workspaceResources().find((item) => item.path === path) as AgentResourceSummary | undefined;
+  if (!resource) return undefined;
+
+  const projectRoots = [resolve(process.cwd()), resolve(process.cwd(), '..'), resolve(process.cwd(), '../..')];
+  for (const projectRoot of projectRoots) {
+    const absolutePath = resolve(projectRoot, resource.path);
+    const relativePath = relative(projectRoot, absolutePath);
+    if (relativePath.startsWith(`..${sep}`) || relativePath === '..' || relativePath.includes(`${sep}..${sep}`)) continue;
+    try {
+      return { resource, content: readFileSync(absolutePath, 'utf8') };
+    } catch {
+      // The API can run from the repository root or from apps/api in tests.
+    }
+  }
+  return undefined;
 }
 
 export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
@@ -51,6 +71,12 @@ export function buildApp(config: AppConfig = loadConfig()): FastifyInstance {
       model: getPiModelStatus(config.PI_AGENT_ENABLED),
       data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
     }));
+
+    v1.get<{ Querystring: { path: string } }>('/agent/resource', { schema: { querystring: Type.Object({ path: Type.String({ minLength: 1, maxLength: 400 }) }) } }, async (request, reply) => {
+      const document = readAgentResource(request.query.path);
+      if (!document) return reply.code(404).send({ error: 'NotFound', message: '项目文件不存在或不在只读资源范围内' });
+      return document;
+    });
 
     v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request) => {
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;

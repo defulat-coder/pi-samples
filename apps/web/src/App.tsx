@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentResourceSummary } from '@pi-workbench/contracts';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentResourceDocument, AgentResourceSummary } from '@pi-workbench/contracts';
 import {
   ArrowUpRight,
   CaretDown,
@@ -247,6 +247,24 @@ function UserMessage({ message }: { message: UserMessageItem }) {
   return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>你</strong><span>刚刚</span></div><p>{message.text}</p></div></article>;
 }
 
+function ResourceViewer({ document, loading, error, onClose }: { document: AgentResourceDocument | null; loading: boolean; error: string; onClose: () => void }) {
+  return <section className="resource-viewer" aria-label="项目文件预览">
+    <header className="resource-viewer-header">
+      <button type="button" className="resource-viewer-close" onClick={onClose} aria-label="返回聊天" title="返回聊天"><CaretLeft size={16} /></button>
+      <div className="resource-viewer-heading">
+        <strong>{document?.resource.title ?? '项目文件'}</strong>
+        <span>{document?.resource.path ?? '正在读取文件内容'}</span>
+      </div>
+      <span className="resource-viewer-kind">{document ? fileKindLabel(document.resource) : 'MD'}</span>
+    </header>
+    <div className="resource-viewer-scroll">
+      {loading && <div className="resource-viewer-state"><strong>正在读取文件</strong><span>只读内容即将显示在这里。</span></div>}
+      {!loading && error && <div className="resource-viewer-state resource-viewer-error"><strong>文件读取失败</strong><span>{error}</span><button type="button" onClick={onClose}>返回聊天</button></div>}
+      {!loading && !error && document && <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{document.content}</Markdown></article>}
+    </div>
+  </section>;
+}
+
 function SessionList({ sessions, currentSessionId, pending, onSelect }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void }) {
   return <div className="workspace-session-list" aria-label="会话列表"><div className="workspace-list-caption"><span>会话列表</span><span>共 {sessions.length} 个</span></div>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{session.id} · {messageCount} 次提问</small></span><span className="session-row-state">{isCurrent ? '当前' : '已保存'}</span></button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</div>;
 }
@@ -334,6 +352,10 @@ export default function App() {
   const [showThinking, setShowThinking] = useState(true);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [error, setError] = useState('');
+  const [resourceDocument, setResourceDocument] = useState<AgentResourceDocument | null>(null);
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceError, setResourceError] = useState('');
+  const resourceRequestRef = useRef(0);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
   const sessions = useMemo(() => [{ id: sessionId, messages }, ...sessionHistory.filter((session) => session.id !== sessionId)], [messages, sessionHistory, sessionId]);
 
@@ -357,6 +379,7 @@ export default function App() {
     setSessionId(newSessionId());
     setMessages([]);
     setError('');
+    closeResourceViewer();
   }
 
   function selectSession(nextSessionId: string) {
@@ -367,6 +390,7 @@ export default function App() {
     setSessionId(target.id);
     setMessages(target.messages);
     setError('');
+    closeResourceViewer();
   }
 
   function togglePath(path: string) {
@@ -380,6 +404,37 @@ export default function App() {
   function openWorkspace(view: WorkspaceView) {
     setWorkspaceView(view);
     setWorkspaceOpen(true);
+  }
+
+  async function openResource(path: string) {
+    const requestId = resourceRequestRef.current + 1;
+    resourceRequestRef.current = requestId;
+    setSelectedResource(path);
+    setResourceDocument(null);
+    setResourceError('');
+    setResourceLoading(true);
+    try {
+      const response = await fetch(`/api/v1/agent/resource?path=${encodeURIComponent(path)}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        throw new Error(payload?.message ?? '项目文件暂时无法读取');
+      }
+      const document = await response.json() as AgentResourceDocument;
+      if (requestId !== resourceRequestRef.current) return;
+      setResourceDocument(document);
+    } catch (requestError) {
+      if (requestId !== resourceRequestRef.current) return;
+      setResourceError(requestError instanceof Error ? requestError.message : '项目文件暂时无法读取');
+    } finally {
+      if (requestId === resourceRequestRef.current) setResourceLoading(false);
+    }
+  }
+
+  function closeResourceViewer() {
+    resourceRequestRef.current += 1;
+    setResourceDocument(null);
+    setResourceLoading(false);
+    setResourceError('');
   }
 
   async function send(message = prompt) {
@@ -441,7 +496,7 @@ export default function App() {
   return (
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
       <main className="session-panel">
-        <section className="conversation-stage">
+        {resourceDocument || resourceLoading || resourceError ? <ResourceViewer document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <section className="conversation-stage">
           <div className="conversation-scroll">
             {messages.length === 0 ? (
               <div className="welcome-state">
@@ -471,9 +526,9 @@ export default function App() {
             </div>
             <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>
           </div>
-        </section>
+        </section>}
       </main>
-      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={setSelectedResource} onSelectSession={selectSession} onNewSession={resetSession} />
+      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} />
       {error && <div className="error-toast" role="alert"><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></div>}
     </div>
   );

@@ -52,6 +52,16 @@ describe('Pi Workbench API', () => {
     assert.equal(response.json().data.kind, 'local-sqlite');
   });
 
+  it('reads an allowlisted project resource without exposing arbitrary paths', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/agent/resource?path=.pi%2Fknowledge%2Fagent%2Fsession-lifecycle.md' });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().resource.path, '.pi/knowledge/agent/session-lifecycle.md');
+    assert.match(response.json().content, /session/i);
+
+    const blocked = await app.inject({ method: 'GET', url: '/api/v1/agent/resource?path=..%2F.env' });
+    assert.equal(blocked.statusCode, 404);
+  });
+
   it('exposes the local OKF-compatible knowledge bundle', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/knowledge' });
     assert.equal(response.statusCode, 200);

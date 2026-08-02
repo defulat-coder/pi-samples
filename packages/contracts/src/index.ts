@@ -78,6 +78,11 @@ export interface AgentResourceSummary {
   status: 'active' | 'draft' | 'deprecated';
 }
 
+export interface AgentResourceDocument {
+  resource: AgentResourceSummary;
+  content: string;
+}
+
 export interface AgentEventSummary {
   type: string;
   label: string;
