@@ -25,7 +25,7 @@ import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { X } from '@phosphor-icons/react/dist/icons/X';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { applyAgentStreamEvent, createLiveTurnProcess, isVisibleProcessEvent } from './stream-process.js';
+import { applyAgentStreamEvent, buildToolActivities, createLiveTurnProcess, isVisibleProcessEvent, type ToolActivity } from './stream-process.js';
 
 type UserMessageItem = Extract<AgentSessionMessage, { kind: 'user' }>;
 type ThinkingMessageItem = Extract<AgentSessionMessage, { kind: 'thinking' }>;
@@ -349,16 +349,40 @@ function SourceList({ response, onOpenResource }: { response: AgentChatResponse;
 }
 
 function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   if (!message.text) return null;
   const isWorking = message.status === 'streaming';
-  return <section className="agent-turn-thinking" aria-label="思考过程" aria-busy={isWorking} aria-live={isWorking ? 'polite' : undefined}><details className="thinking-trace" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span className="thinking-trace-title"><i className={isWorking ? 'thinking-trace-dot thinking-trace-dot-active' : 'thinking-trace-dot'} aria-hidden="true" />思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
+  return <section className="agent-turn-thinking" aria-label="思考过程" aria-busy={isWorking} aria-live={isWorking ? 'polite' : undefined}><details className="thinking-trace" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span className="thinking-trace-title"><i className={isWorking ? 'thinking-trace-dot thinking-trace-dot-active' : 'thinking-trace-dot'} aria-hidden="true" />{isWorking ? '正在思考…' : '已思考'}</span><small>{isWorking ? '' : `${message.text.length} 字符`}<CaretRight size={12} aria-hidden="true" /></small></summary><pre>{message.text}</pre></details></section>;
 }
 
-function AgentProcessTimeline({ events, isWorking }: { events: AgentEventSummary[]; isWorking: boolean }) {
-  const [open, setOpen] = useState(true);
-  if (!events.length) return null;
-  return <details className="agent-process" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span><i className={isWorking ? 'agent-process-dot agent-process-dot-active' : 'agent-process-dot'} aria-hidden="true" />工具与思考过程</span><small>{isWorking ? `进行中 · ${events.length} 个事件` : `${events.length} 个事件`}</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-process-list" aria-live={isWorking ? 'polite' : undefined}>{events.map((event, index) => <details className={event.category === 'error' ? 'agent-process-event agent-process-event-error' : `agent-process-event agent-process-event-${event.category ?? 'tool'}`} key={`${event.sequence ?? index}-${event.type}`}><summary><span className="agent-process-event-type">{event.type}</span><strong>{event.label}</strong>{event.toolName && <code>{event.toolName}</code>}<small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : event.durationMs !== undefined ? formatDuration(event.durationMs) : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>)}</div></details>;
+function toolActivityTitle(toolName: string) {
+  const labels: Record<string, string> = { search_knowledge: '搜索项目知识', read: '读取文件', query_business_data: '查询业务数据' };
+  return labels[toolName] ?? `使用 ${toolName}`;
+}
+
+function toolActivityDescription(activity: ToolActivity) {
+  if (!activity.input) return '';
+  try {
+    const value = JSON.parse(activity.input) as Record<string, unknown>;
+    const description = value.query ?? value.path ?? value.file_path ?? value.prompt;
+    if (typeof description === 'string') return description;
+  } catch {
+    // Keep non-JSON tool input available only in the expanded details.
+  }
+  return '';
+}
+
+function ToolActivityBlock({ activity }: { activity: ToolActivity }) {
+  const [open, setOpen] = useState(false);
+  const description = toolActivityDescription(activity);
+  const statusLabel = activity.status === 'running' ? '运行中' : activity.status === 'error' ? '失败' : '完成';
+  return <details className={`tool-activity tool-activity-${activity.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span className="tool-activity-status" aria-hidden="true">{activity.status === 'completed' ? <Check size={13} weight="bold" /> : activity.status === 'error' ? <WarningCircle size={13} weight="fill" /> : <i />}</span><span className="tool-activity-copy"><strong>{toolActivityTitle(activity.toolName)}</strong>{description && <small>{description}</small>}</span><span className="tool-activity-meta">{statusLabel}{activity.durationMs !== undefined ? ` · ${formatDuration(activity.durationMs)}` : ''}</span><CaretRight className="tool-activity-caret" size={13} aria-hidden="true" /></summary><div className="tool-activity-details">{activity.input && <div><span>输入</span><pre>{activity.input}</pre></div>}{activity.output && <div><span>结果</span><pre>{activity.output}</pre></div>}</div></details>;
+}
+
+function ToolActivityList({ events, isWorking }: { events: AgentEventSummary[]; isWorking: boolean }) {
+  const activities = useMemo(() => buildToolActivities(events), [events]);
+  if (!activities.length) return null;
+  return <section className="tool-activity-list" aria-label="工具调用" aria-live={isWorking ? 'polite' : undefined}>{activities.map((activity) => <ToolActivityBlock activity={activity} key={activity.id} />)}</section>;
 }
 
 function formatDuration(durationMs: number) {
@@ -446,7 +470,7 @@ function AgentTurn({ thinking, assistant, copiedMessageId, feedbackPending, onCo
   const response = assistant?.response;
   const isWorking = !response;
   const events = response?.events.length ? response.events.filter(isVisibleProcessEvent) : assistant?.streamEvents ?? [];
-  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <AgentProcessTimeline events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
+  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <ToolActivityList events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
