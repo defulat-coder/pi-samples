@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AgentThinkingLevel, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AgentThinkingLevel, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight';
 import { ArrowUpRight } from '@phosphor-icons/react/dist/icons/ArrowUpRight';
@@ -29,12 +29,13 @@ import { applyAgentStreamEvent, buildToolActivities, createLiveTurnProcess, isVi
 
 type UserMessageItem = Extract<AgentSessionMessage, { kind: 'user' }>;
 type ThinkingMessageItem = Extract<AgentSessionMessage, { kind: 'thinking' }>;
-type AssistantMessageItem = Extract<AgentSessionMessage, { kind: 'assistant' }> & { streamEvents?: AgentEventSummary[] };
+type AssistantMessageItem = Extract<AgentSessionMessage, { kind: 'assistant' }> & { streamEvents?: AgentEventSummary[]; agentId?: WorkbenchAgentId };
 
 /** The stream's semantic output stays split into sibling UI items. */
 type ConversationItem = AgentSessionMessage;
 
 type WorkspaceSnapshot = {
+  agents: WorkbenchAgentDefinition[];
   resources: AgentResourceSummary[];
   tools: { enabled: string[]; policy: 'read-only' };
   model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string };
@@ -65,7 +66,13 @@ const fallbackResources: AgentResourceSummary[] = [
   { path: '.pi/knowledge/agent/local-fallback.md', kind: 'knowledge', title: '本地降级模式', status: 'active' },
 ];
 
+const fallbackAgents: WorkbenchAgentDefinition[] = [
+  { id: 'knowledge', name: '知识库问答', description: '基于项目文件和 Markdown 知识库提供可引用的回答。', capabilityLabel: '项目知识 · 只读', tools: ['read', 'search_knowledge'], welcomeTitle: '你好，我是知识库问答智能体', welcomeDescription: '从项目文件、知识库或 Pi 运行机制开始提问。', suggestions: ['解释当前项目的 Pi Session 生命周期', '这个智能体能调用哪些工具？', '如何开发一个新的只读工具？'] },
+  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？'] },
+];
+
 const fallbackWorkspace: WorkspaceSnapshot = {
+  agents: fallbackAgents,
   resources: fallbackResources,
   tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
   model: { enabled: false, providerConfigured: false, provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'off' },
@@ -78,9 +85,9 @@ function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function emptySessionRecord(position = 0): SessionRecord {
+function emptySessionRecord(agentId: WorkbenchAgentId, position = 0): SessionRecord {
   const now = new Date().toISOString();
-  return { id: newSessionId(), position, createdAt: now, updatedAt: now, messages: [] };
+  return { id: newSessionId(), agentId, position, createdAt: now, updatedAt: now, messages: [] };
 }
 
 function sortSessionRecords(records: SessionRecord[]) {
@@ -103,7 +110,7 @@ function conversationTime(value?: string) {
 }
 
 function routeLabel(route: AgentChatResponse['route']) {
-  return route === 'knowledge' ? '知识库' : '工作区';
+  return route === 'business-data' ? '经营数据' : route === 'knowledge' ? '知识库' : '工作区';
 }
 
 function responseSourceLabel(source: AgentChatResponse['source']) {
@@ -127,7 +134,7 @@ function markdownBody(content: string) {
 
 function parseStreamPayload(eventName: string, data: string): AgentChatStreamEvent {
   const payload = JSON.parse(data) as Record<string, unknown>;
-  if (eventName === 'start') return { type: 'start', sessionId: String(payload.sessionId), model: payload.model as AgentChatResponse['model'] };
+  if (eventName === 'start') return { type: 'start', agentId: payload.agentId === 'business-data' ? 'business-data' : 'knowledge', sessionId: String(payload.sessionId), model: payload.model as AgentChatResponse['model'] };
   if (eventName === 'event') return { type: 'event', event: payload.event as AgentEventSummary };
   if (eventName === 'text_delta') return { type: 'text_delta', delta: String(payload.delta ?? '') };
   if (eventName === 'thinking_delta') return { type: 'thinking_delta', delta: String(payload.delta ?? '') };
@@ -174,8 +181,8 @@ async function consumeAgentStream(response: Response, onEvent: (event: AgentChat
   return finalResponse;
 }
 
-async function fetchSessionRecords(): Promise<SessionRecord[]> {
-  const response = await fetch('/api/v1/agent/sessions');
+async function fetchSessionRecords(agentId: WorkbenchAgentId): Promise<SessionRecord[]> {
+  const response = await fetch(`/api/v1/agent/sessions?agentId=${encodeURIComponent(agentId)}`);
   if (!response.ok) throw new Error('会话列表暂时无法读取');
   const payload = await response.json() as AgentSessionListResponse;
   return sortSessionRecords(payload.items);
@@ -343,7 +350,7 @@ function SourceList({ response, onOpenResource }: { response: AgentChatResponse;
   if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
   return <div className="source-list">{response.sources.map((source) => {
     const canOpen = source.kind === 'knowledge' && source.ref.startsWith('.pi/');
-    const content = <><span className="source-kind">MD</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span>{canOpen && <CaretRight size={13} aria-hidden="true" />}</>;
+    const content = <><span className="source-kind">{source.kind === 'database' ? 'DB' : 'MD'}</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span>{canOpen && <CaretRight size={13} aria-hidden="true" />}</>;
     return canOpen ? <button type="button" className="source-row source-row-action" key={source.ref} onClick={() => onOpenResource(source.ref.split('#')[0]!)} aria-label={`打开来源：${resourceTitle(source.title)}`}>{content}</button> : <div className="source-row" key={source.ref}>{content}</div>;
   })}</div>;
 }
@@ -470,7 +477,8 @@ function AgentTurn({ thinking, assistant, copiedMessageId, feedbackPending, onCo
   const response = assistant?.response;
   const isWorking = !response;
   const events = response?.events.length ? response.events.filter(isVisibleProcessEvent) : assistant?.streamEvents ?? [];
-  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <ToolActivityList events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
+  const agentName = (response?.agentId ?? assistant?.agentId) === 'business-data' ? '经营分析智能体' : '知识库问答智能体';
+  return <article className="agent-turn" aria-label={`${agentName}回合`}><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>{agentName}</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <ToolActivityList events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
@@ -698,7 +706,14 @@ function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSessi
   </nav>;
 }
 
-function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
+function AgentSelector({ agents, currentAgentId, pending, onSelect }: { agents: WorkbenchAgentDefinition[]; currentAgentId: WorkbenchAgentId; pending: boolean; onSelect: (agentId: WorkbenchAgentId) => void }) {
+  return <section className="agent-selector" aria-label="业务智能体"><div className="agent-selector-label"><span>业务智能体</span><small>{agents.length}</small></div><div className="agent-selector-list" role="listbox" aria-label="选择智能体">{agents.map((agent) => {
+    const selected = agent.id === currentAgentId;
+    return <button type="button" role="option" aria-selected={selected} className={selected ? 'agent-selector-item agent-selector-item-active' : 'agent-selector-item'} key={agent.id} onClick={() => onSelect(agent.id)} disabled={pending && !selected}><span className="agent-selector-mark" aria-hidden="true">π</span><span><strong>{agent.name}</strong><small>{agent.capabilityLabel}</small></span>{selected && <Check size={13} weight="bold" aria-hidden="true" />}</button>;
+  })}</div></section>;
+}
+
+function WorkspacePanel({ workspace, agents, currentAgentId, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onSelectAgent, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; agents: WorkbenchAgentDefinition[]; currentAgentId: WorkbenchAgentId; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onSelectAgent: (agentId: WorkbenchAgentId) => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
   const showingSessions = view === 'sessions';
   const normalizedFilter = filter.trim().toLocaleLowerCase();
   const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
@@ -751,6 +766,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
               </div>
             </div>
           </header>
+          <AgentSelector agents={agents} currentAgentId={currentAgentId} pending={pending} onSelect={onSelectAgent} />
           <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="horizontal">
             <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
@@ -794,6 +810,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
 
 function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: () => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(fallbackWorkspace);
+  const [agentId, setAgentId] = useState<WorkbenchAgentId>('knowledge');
   const [sessionId, setSessionId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<ConversationItem[]>([]);
@@ -819,6 +836,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const followConversationRef = useRef(true);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
+  const agents = workspace.agents?.length ? workspace.agents : fallbackAgents;
+  const currentAgent = agents.find((agent) => agent.id === agentId) ?? fallbackAgents[0]!;
   const sessions = useMemo(() => sortSessionRecords(sessionRecords), [sessionRecords]);
   const currentSession = sessionRecords.find((session) => session.id === sessionId);
 
@@ -855,9 +874,9 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     let active = true;
     const loadSessions = async () => {
       try {
-        let records = await fetchSessionRecords();
+        let records = await fetchSessionRecords('knowledge');
         if (!records.length) {
-          const draft = emptySessionRecord();
+          const draft = emptySessionRecord('knowledge');
           records = [draft];
           setDraftSessionIds(new Set([draft.id]));
         }
@@ -869,7 +888,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
         setMessages(initial.messages);
       } catch {
         if (!active) return;
-        const draft = emptySessionRecord();
+        const draft = emptySessionRecord('knowledge');
         setSessionRecords([draft]);
         setDraftSessionIds(new Set([draft.id]));
         setSessionId(draft.id);
@@ -881,6 +900,40 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     void loadSessions();
     return () => { active = false; };
   }, []);
+
+  async function selectAgent(nextAgentId: WorkbenchAgentId) {
+    if (pending || nextAgentId === agentId) return;
+    setSessionsReady(false);
+    setError('');
+    closeResourceViewer();
+    try {
+      let records = await fetchSessionRecords(nextAgentId);
+      if (!records.length) {
+        const draft = emptySessionRecord(nextAgentId);
+        records = [draft];
+        setDraftSessionIds(new Set([draft.id]));
+      } else {
+        setDraftSessionIds(new Set());
+      }
+      const initial = records[0]!;
+      followConversationRef.current = true;
+      setAgentId(nextAgentId);
+      setSessionRecords(records);
+      setSessionId(initial.id);
+      setMessages(initial.messages);
+      setWorkspaceView('sessions');
+    } catch (requestError) {
+      const draft = emptySessionRecord(nextAgentId);
+      setAgentId(nextAgentId);
+      setSessionRecords([draft]);
+      setDraftSessionIds(new Set([draft.id]));
+      setSessionId(draft.id);
+      setMessages([]);
+      setError(requestError instanceof Error ? requestError.message : '智能体会话暂时无法读取');
+    } finally {
+      setSessionsReady(true);
+    }
+  }
 
   async function syncSession(id: string) {
     const wasDraft = draftSessionIds.has(id);
@@ -933,7 +986,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       closeResourceViewer();
       return;
     }
-    const record = emptySessionRecord(sessionRecords.length);
+    const record = emptySessionRecord(agentId, sessionRecords.length);
     setDraftSessionIds((current) => new Set(current).add(record.id));
     setSessionRecords((current) => [record, ...current]);
     followConversationRef.current = true;
@@ -959,7 +1012,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       let remaining = sessionRecords.filter((session) => session.id !== id);
       setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (!remaining.length) {
-        const draft = emptySessionRecord();
+        const draft = emptySessionRecord(agentId);
         remaining = [draft];
         setDraftSessionIds(new Set([draft.id]));
       }
@@ -1044,7 +1097,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const optimisticUser: UserMessageItem = { id: userId, kind: 'user', text, turnId: assistantId, createdAt };
     setPrompt('');
     setError('');
-    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false }]);
+    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false, agentId } as AssistantMessageItem]);
     setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === sessionId ? { ...session, updatedAt: createdAt, messages: [...session.messages, optimisticUser] } : session)));
     setPending(true);
     let streamedProcess = createLiveTurnProcess();
@@ -1053,7 +1106,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
       setMessages((current) => current.map((item) => {
         if (item.id === thinkingId && item.kind === 'thinking') return { ...item, text: streamedProcess.thinking };
-        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedProcess.answer, streamEvents: streamedProcess.events };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedProcess.answer, streamEvents: streamedProcess.events, agentId };
         return item;
       }));
     };
@@ -1065,7 +1118,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
     };
     try {
-      const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
+      const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, agentId, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
       if (!response.ok) throw new Error('智能体网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
         streamedProcess = applyAgentStreamEvent(streamedProcess, event);
@@ -1090,10 +1143,10 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
 
   return (
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
-      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
+      <WorkspacePanel workspace={workspace} agents={agents} currentAgentId={agentId} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onSelectAgent={(nextAgentId) => { void selectAgent(nextAgentId); }} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
       <main className="session-panel">
         <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: 'easeIn' } }}>
-          <header className="conversation-header"><div><strong>{currentSession ? sessionTitle(currentSession) : 'Pi 会话'}</strong><span>{currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />只读上下文</span></header>
+          <header className="conversation-header"><div><strong>{currentAgent.name}</strong><span>{currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentAgent.capabilityLabel}</span></header>
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
             const node = event.currentTarget;
             followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
@@ -1101,10 +1154,10 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
             {messages.length === 0 ? (
               <div className="welcome-state">
                 <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
-                <h1>你好，我是 Pi</h1>
-                <p>从项目文件、知识库或 Agent 运行机制开始提问。</p>
+                <h1>{currentAgent.welcomeTitle}</h1>
+                <p>{currentAgent.welcomeDescription}</p>
                 <div className="welcome-suggestions" aria-label="建议问题">
-                  {['解释当前项目的 Pi Session 生命周期', '这个 Agent 能调用哪些工具？', '如何开发一个新的只读工具？'].map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
+                  {currentAgent.suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
                 </div>
               </div>
             ) : (
@@ -1115,7 +1168,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
           </div>
           <div className="composer-wrap">
             <div className="composer">
-              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? '向项目提问…' : '正在加载会话…'} aria-label="向项目提问" rows={1} disabled={!sessionsReady || pending} />
+              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentAgent.name}提问…` : '正在加载会话…'} aria-label={`向${currentAgent.name}提问`} rows={1} disabled={!sessionsReady || pending} />
               <div className="composer-toolbar">
                 <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
                 <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>

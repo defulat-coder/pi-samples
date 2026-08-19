@@ -11,4 +11,4 @@
 - `sessions/`：Pi 官方 JSONL Session 文件，包含原生消息和本项目指标/反馈 custom entries；
 - `knowledge/`：带 OKF-compatible frontmatter 的 Agent Markdown 概念，通过 `search_knowledge` 读取。
 
-Agent 运行时默认只启用 `read` 和 `search_knowledge`，不会在这些文件或仓库里执行写入和 shell 命令。`.pi` 文件内容不能扩大工具权限。
+Agent 运行时按业务 profile 启用只读工具：知识库问答使用 `read` 和 `search_knowledge`，经营分析使用 `read` 和 `query_business_data`。所有 Agent 都由 Pi `AgentSession` 驱动，不会在这些文件或仓库里执行写入和 shell 命令。`.pi` 文件和第三方 Skill 内容都不能扩大工具权限。

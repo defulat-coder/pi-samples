@@ -4,9 +4,9 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
-import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry } from '@pi-workbench/pi-agent';
+import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkbenchAgentId, WorkspaceRecordQuery } from '@pi-workbench/contracts';
+import { businessDataStore, loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
+import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry, workbenchAgents } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { createFeishuAuth } from './auth.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -21,6 +21,7 @@ const WorkspaceRecordQuerySchema = Type.Object({
 
 const AgentChatRequestSchema = Type.Object({
   message: Type.String({ minLength: 1, maxLength: 2000 }),
+  agentId: Type.Optional(Type.Union([Type.Literal('knowledge'), Type.Literal('business-data')])),
   sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   thinkingLevel: Type.Optional(Type.Union([
@@ -34,6 +35,8 @@ const AgentChatRequestSchema = Type.Object({
   ])),
   debug: Type.Optional(Type.Boolean()),
 });
+
+const AgentIdSchema = Type.Union([Type.Literal('knowledge'), Type.Literal('business-data')]);
 
 type AppDependencies = { sessionStore?: PiFileSessionStore };
 
@@ -146,19 +149,26 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
     v1.get('/agent/workspace', async () => ({
       resources: workspaceResources(),
-      tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' as const },
+      agents: workbenchAgents,
+      tools: { enabled: [...new Set(workbenchAgents.flatMap((agent) => agent.tools))], policy: 'read-only' as const },
       model: getPiModelStatus(config.PI_AGENT_ENABLED),
       pi: await loadPiResourceSnapshot(projectRoot(), { projectExtensions: config.PI_PROJECT_EXTENSIONS_ENABLED }),
       data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
       sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
     }));
 
-    v1.get('/agent/sessions', async () => {
-      const items = await sessions.listSessions();
+    v1.get('/agent/agents', async () => ({ items: workbenchAgents, total: workbenchAgents.length }));
+
+    v1.get<{ Querystring: { agentId?: WorkbenchAgentId } }>('/agent/sessions', { schema: { querystring: Type.Object({ agentId: Type.Optional(AgentIdSchema) }) } }, async (request) => {
+      const items = await sessions.listSessions(request.query.agentId);
       return { items, total: items.length };
     });
 
-    v1.post('/agent/sessions', async () => sessions.createSession());
+    v1.post<{ Body: { agentId?: WorkbenchAgentId } | undefined }>('/agent/sessions', async (request, reply) => {
+      const agentId = request.body?.agentId ?? 'knowledge';
+      if (agentId !== 'knowledge' && agentId !== 'business-data') return reply.code(400).send({ error: 'ValidationError', message: '未知的智能体' });
+      return sessions.createSession(undefined, agentId);
+    });
 
     v1.get<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
       const session = await sessions.getSession(request.params.id);
@@ -179,7 +189,8 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
     v1.delete<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
       if (!await sessions.getSession(request.params.id)) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
-      await piSessionRegistry.close(request.params.id);
+      const session = await sessions.getSession(request.params.id);
+      await piSessionRegistry.close(session?.agentId ?? 'knowledge', request.params.id);
       await sessions.deleteSession(request.params.id);
       return reply.code(204).send();
     });
@@ -201,21 +212,33 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return document;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: AgentChatRequestSchema } }, async (request) => {
+    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: AgentChatRequestSchema } }, async (request, reply) => {
+      const agentId = request.body.agentId ?? 'knowledge';
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
-      await sessions.ensureSession(sessionId);
+      try {
+        await sessions.ensureSession(sessionId, agentId);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') return reply.code(409).send({ error: 'AgentSessionMismatch', message: '该会话属于另一个智能体，不能切换能力后继续使用。' });
+        throw error;
+      }
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-      const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
+      const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { queryBusinessData: (query) => businessDataStore.query(query) }) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
       if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
       else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
       return response;
     });
 
     v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: AgentChatRequestSchema } }, async (request, reply) => {
+      const agentId = request.body.agentId ?? 'knowledge';
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
-      await sessions.ensureSession(sessionId);
+      try {
+        await sessions.ensureSession(sessionId, agentId);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') return reply.code(409).send({ error: 'AgentSessionMismatch', message: '该会话属于另一个智能体，不能切换能力后继续使用。' });
+        throw error;
+      }
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
       const raw = reply.raw;
       let clientClosed = false;
@@ -239,10 +262,10 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       };
 
       const thinkingLevel = request.body.thinkingLevel ?? getPiModelStatus(config.PI_AGENT_ENABLED).thinkingLevel;
-      send('start', { sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
+      send('start', { agentId, sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
       try {
         let sawTextDelta = false;
-        const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, {
+        const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { queryBusinessData: (query) => businessDataStore.query(query) }) }, {
           turnNumber,
           thinkingLevel,
           onEventSummary: (event) => send('event', { event }),

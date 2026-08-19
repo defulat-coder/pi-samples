@@ -31,4 +31,44 @@ describe('Pi workspace tools', () => {
     assert.ok(snapshot.themes.some((theme) => theme.name === 'pi-workbench-neutral'));
     assert.ok(snapshot.appendSystemPrompts.some((prompt) => prompt.path === '.pi/APPEND_SYSTEM.md'));
   });
+
+  it('creates a second Pi AgentSession with only the business analysis capability set', async () => {
+    let observedGroupBy = '';
+    let observedMetrics: string[] = [];
+    const runtime = await createPiAgentSession({
+      cwd: getPiProjectRoot(),
+      agentId: 'business-data',
+      persistSession: false,
+      queryBusinessData: async (query) => {
+        observedGroupBy = query.groupBy ?? '';
+        observedMetrics = query.metrics;
+        return {
+        queryId: 'business-test',
+        catalogVersion: 'sales-demo-v1',
+        dataset: '电商经营演示数据',
+        asOf: '2026-08-18',
+        timeWindow: { from: '2026-07-20', to: '2026-08-19', timezone: 'Asia/Shanghai' },
+        query: { metrics: query.metrics, groupBy: query.groupBy ?? 'none', period: query.period ?? 'last_30_days', orderBy: query.orderBy ?? query.metrics[0]!, order: query.order ?? 'desc', limit: query.limit ?? 10 },
+        metricDefinitions: [{ id: 'net_sales', name: '退款后销售额', unit: '元', definition: 'GMV 扣除退款', formula: 'SUM(gross-refund)', owner: '经营分析组', grain: '日', timeField: 'sale_date' }],
+        rows: [{ dimension: '华东', netSales: 100 }],
+        rowCount: 1,
+        freshness: '演示数据',
+          limitations: ['演示'],
+        };
+      },
+    });
+
+    try {
+      assert.deepEqual(runtime.session.getActiveToolNames().sort(), ['query_business_data', 'read']);
+      assert.equal(runtime.session.getToolDefinition('search_knowledge'), undefined);
+      const tool = runtime.session.getToolDefinition('query_business_data');
+      assert.ok(tool);
+      const result = await tool.execute('business-call', { analysis: 'regional_performance_30d' }, undefined, undefined, undefined as never);
+      assert.match(result.content[0]?.type === 'text' ? result.content[0].text : '', /华东/);
+      assert.equal(observedGroupBy, 'region');
+      assert.deepEqual(observedMetrics, ['net_sales', 'order_count', 'average_order_value']);
+    } finally {
+      runtime.close();
+    }
+  });
 });

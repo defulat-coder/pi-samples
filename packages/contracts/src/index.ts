@@ -85,7 +85,58 @@ export interface QuerySource {
   fields?: string[];
 }
 
-export type AgentChatRoute = 'workspace' | 'knowledge';
+export type WorkbenchAgentId = 'knowledge' | 'business-data';
+export type AgentChatRoute = 'workspace' | 'knowledge' | 'business-data';
+
+export interface WorkbenchAgentDefinition {
+  id: WorkbenchAgentId;
+  name: string;
+  description: string;
+  capabilityLabel: string;
+  tools: string[];
+  welcomeTitle: string;
+  welcomeDescription: string;
+  suggestions: string[];
+}
+
+export type BusinessMetric = 'gross_sales' | 'net_sales' | 'order_count' | 'average_order_value' | 'refund_rate';
+export type BusinessDimension = 'none' | 'region' | 'channel' | 'category' | 'month';
+export type BusinessPeriod = 'last_7_days' | 'last_30_days' | 'last_90_days' | 'all';
+
+export interface BusinessQueryRequest {
+  metrics: BusinessMetric[];
+  groupBy?: BusinessDimension;
+  period?: BusinessPeriod;
+  region?: '华东' | '华南' | '华北' | '西部';
+  channel?: '直营网店' | '平台电商' | '直播';
+  category?: '数码家电' | '家居生活' | '美妆个护' | '食品饮料';
+  orderBy?: BusinessMetric;
+  order?: 'asc' | 'desc';
+  limit?: number;
+}
+
+export interface BusinessQueryResult {
+  queryId: string;
+  catalogVersion: 'sales-demo-v1';
+  dataset: '电商经营演示数据';
+  asOf: string;
+  timeWindow: { from: string; to: string; timezone: 'Asia/Shanghai' };
+  query: Required<Pick<BusinessQueryRequest, 'metrics' | 'groupBy' | 'period' | 'order' | 'limit'>> & Pick<BusinessQueryRequest, 'region' | 'channel' | 'category'> & { orderBy: BusinessMetric };
+  metricDefinitions: Array<{
+    id: BusinessMetric;
+    name: string;
+    unit: '元' | '单' | '%';
+    definition: string;
+    formula: string;
+    owner: string;
+    grain: '日';
+    timeField: 'sale_date';
+  }>;
+  rows: Array<Record<string, string | number>>;
+  rowCount: number;
+  freshness: string;
+  limitations: string[];
+}
 
 /** Thinking is an explicit per-request capability, never inferred from the user message. */
 export type AgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -277,6 +328,7 @@ export interface AgentTurnMetrics {
 
 export interface AgentChatRequest {
   message: string;
+  agentId?: WorkbenchAgentId;
   sessionId?: string;
   turnId?: string;
   thinkingLevel?: AgentThinkingLevel;
@@ -286,6 +338,7 @@ export interface AgentChatRequest {
 export interface AgentChatResponse {
   answer: string;
   source: 'local-fallback' | 'pi-coding-agent';
+  agentId: WorkbenchAgentId;
   sessionId: string;
   route: AgentChatRoute;
   decision: AgentDecision;
@@ -318,6 +371,7 @@ export type AgentSessionMessage =
 
 export interface AgentSessionRecord {
   id: string;
+  agentId: WorkbenchAgentId;
   title?: string;
   position: number;
   createdAt: string;
@@ -332,7 +386,7 @@ export interface AgentSessionListResponse {
 
 /** Payloads transported by the POST /agent/chat/stream SSE endpoint. */
 export type AgentChatStreamEvent =
-  | { type: 'start'; sessionId: string; model: AgentChatResponse['model'] }
+  | { type: 'start'; agentId: WorkbenchAgentId; sessionId: string; model: AgentChatResponse['model'] }
   | { type: 'event'; event: AgentEventSummary }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }

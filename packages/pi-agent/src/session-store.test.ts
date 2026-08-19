@@ -17,6 +17,7 @@ function response(sessionId: string) {
   return {
     answer: '文件回答',
     source: 'local-fallback' as const,
+    agentId: 'knowledge' as const,
     sessionId,
     route: 'workspace' as const,
     decision: { decidedBy: 'fallback' as const, toolCalls: [] },
@@ -38,6 +39,7 @@ describe('Pi JSONL session store', () => {
     const store = new PiFileSessionStore({ cwd: root, sessionDir: join(root, '.pi', 'sessions') });
     const created = await store.createSession('session-file');
     assert.equal(created.id, 'session-file');
+    assert.equal(created.agentId, 'knowledge');
     const file = join(root, '.pi', 'sessions');
     const sessionFile = (await import('node:fs/promises')).readdir(file).then((items) => join(file, items[0]!));
     assert.equal(existsSync(file), true);
@@ -64,6 +66,19 @@ describe('Pi JSONL session store', () => {
     assert.equal((await reopened.getSession(created.id))?.messages.find((message): message is Extract<typeof message, { kind: 'assistant' }> => message.id === assistant!.id && message.kind === 'assistant')?.feedback, 'like');
     assert.equal(await reopened.deleteSession(created.id), true);
     assert.equal((await reopened.listSessions()).length, 0);
+  });
+
+  it('binds a session to one business Agent and filters session lists', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-file-session-agents-'));
+    roots.push(root);
+    const store = new PiFileSessionStore({ cwd: root, sessionDir: join(root, '.pi', 'sessions') });
+    const knowledge = await store.createSession('session-knowledge', 'knowledge');
+    const business = await store.createSession('session-business', 'business-data');
+
+    assert.equal(knowledge.agentId, 'knowledge');
+    assert.equal(business.agentId, 'business-data');
+    assert.deepEqual((await store.listSessions('business-data')).map((session) => session.id), ['session-business']);
+    await assert.rejects(() => store.ensureSession('session-business', 'knowledge'), /AGENT_SESSION_MISMATCH/);
   });
 
   it('keeps the original browser input separate from Pi internal prompt context', async () => {

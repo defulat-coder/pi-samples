@@ -64,6 +64,7 @@ describe('Pi Workbench API', () => {
     const response = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: 'Pi session 生命周期是什么？', sessionId: 'test-session' } });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().route, 'knowledge');
+    assert.equal(response.json().agentId, 'knowledge');
     assert.match(response.json().sources[0].ref, /\.pi\/knowledge/);
     assert.deepEqual(response.json().decision, { decidedBy: 'fallback', toolCalls: [] });
     assert.equal(response.json().tools.policy, 'read-only');
@@ -121,6 +122,31 @@ describe('Pi Workbench API', () => {
     assert.equal(detail.json().messages[0].text, '记录第一个会话');
   });
 
+  it('lists two Pi business Agents and isolates their sessions', async () => {
+    const catalog = await app.inject({ method: 'GET', url: '/api/v1/agent/agents' });
+    assert.deepEqual(catalog.json().items.map((agent: { id: string }) => agent.id), ['knowledge', 'business-data']);
+    assert.ok(catalog.json().items.every((agent: { tools: string[] }) => agent.tools.every((tool) => ['read', 'search_knowledge', 'query_business_data'].includes(tool))));
+
+    const business = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions', payload: { agentId: 'business-data' } });
+    assert.equal(business.statusCode, 200);
+    assert.equal(business.json().agentId, 'business-data');
+    const businessId = business.json().id as string;
+
+    const businessSessions = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions?agentId=business-data' });
+    assert.ok(businessSessions.json().items.some((session: { id: string }) => session.id === businessId));
+    assert.ok(businessSessions.json().items.every((session: { agentId: string }) => session.agentId === 'business-data'));
+
+    const mismatch = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '解释项目', agentId: 'knowledge', sessionId: businessId } });
+    assert.equal(mismatch.statusCode, 409);
+    assert.equal(mismatch.json().error, 'AgentSessionMismatch');
+
+    const fallback = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '近30天各区域销售额', agentId: 'business-data', sessionId: businessId } });
+    assert.equal(fallback.statusCode, 200);
+    assert.equal(fallback.json().agentId, 'business-data');
+    assert.equal(fallback.json().route, 'business-data');
+    assert.deepEqual(fallback.json().tools.enabled, ['read', 'query_business_data']);
+  });
+
   it('persists assistant feedback without changing session order', async () => {
     const created = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
     const sessionId = created.json().id as string;
@@ -161,7 +187,8 @@ describe('Pi Workbench API', () => {
     assert.ok(response.json().pi.skills.some((skill: { name: string }) => skill.name === 'pi-session-observability'));
     assert.ok(response.json().pi.prompts.some((prompt: { name: string }) => prompt.name === 'inspect-pi'));
     assert.ok(response.json().pi.themes.some((theme: { name: string }) => theme.name === 'pi-workbench-neutral'));
-    assert.deepEqual(response.json().tools, { enabled: ['read', 'search_knowledge'], policy: 'read-only' });
+    assert.deepEqual(response.json().tools, { enabled: ['read', 'search_knowledge', 'query_business_data'], policy: 'read-only' });
+    assert.deepEqual(response.json().agents.map((agent: { id: string }) => agent.id), ['knowledge', 'business-data']);
     assert.equal(response.json().data.kind, 'local-sqlite');
   });
 

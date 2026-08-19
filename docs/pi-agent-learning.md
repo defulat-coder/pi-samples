@@ -5,10 +5,11 @@ Pi Workbench 的核心不是 CLI，也不是业务后台，而是一个由 Web �
 ## 一次 Web 问答的完整生命周期
 
 ```text
-浏览器 Agent Playground
-  -> POST /api/v1/agent/chat/stream (SSE)
+浏览器选择业务 Agent
+  -> POST /api/v1/agent/chat/stream (agentId + sessionId + SSE)
   -> Fastify Agent Gateway
-  -> 在项目 .pi/sessions/ 创建/复用 Pi JSONL session，并注入只读工具
+  -> 校验 JSONL Session 的不可变 agentId binding
+  -> 在项目 .pi/sessions/ 创建/复用 Pi JSONL session，并按 Agent profile 注入只读工具
   -> DefaultResourceLoader 加载 .pi/
   -> session.prompt(原始用户消息)
   -> Pi 自己决定：直接回答，或调用 search_knowledge / read
@@ -65,7 +66,7 @@ API 是安全边界和编排入口：
 
 Session 历史不再进入 SQLite：`SessionManager` 使用官方 JSONL 树结构保存用户消息、assistant 消息、tool result、thinking、模型 usage 等；本项目的回答指标和点赞/点踩作为 `custom` entry 写入同一个 JSONL 文件，不会进入 LLM context。`.pi/sessions/` 已加入 `.gitignore`，避免把用户对话和模型输出提交到仓库。
 
-Pi 不直接写文件、执行 shell 或修改外部数据。它在只读工具边界内自行决定是否检索，并组织答案。
+Pi 不直接写文件、执行 shell 或修改外部数据。知识库问答 profile 使用 `read/search_knowledge`；经营分析 profile 加载开源 `business-intelligence` Skill，并使用 `read/query_business_data` 查询本地认证语义目录。两者都在自己的只读工具边界内自行决策并组织答案。
 
 ## 证据边界
 

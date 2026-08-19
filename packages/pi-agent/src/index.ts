@@ -10,17 +10,19 @@ import {
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentThinkingLevel, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentThinkingLevel, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, BusinessQueryRequest, BusinessQueryResult, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { getPiSessionDir } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
 export type KnowledgeSearch = (query: string) => QuerySource[] | Promise<QuerySource[]>;
+export type BusinessQuery = (query: BusinessQueryRequest) => BusinessQueryResult | Promise<BusinessQueryResult>;
 export type PiThinkingLevel = AgentThinkingLevel;
 
 export interface PiAgentSessionOptions {
   cwd?: string;
+  agentId?: WorkbenchAgentId;
   sessionId?: string;
   sessionDir?: string;
   /** Unit tests can opt into Pi's in-memory manager; Web sessions persist by default. */
@@ -32,6 +34,8 @@ export interface PiAgentSessionOptions {
   projectExtensions?: boolean;
   /** Read-only knowledge consumer exposed to Pi as a tool. Pi decides when to invoke it. */
   searchKnowledge?: KnowledgeSearch;
+  /** Certified read-only business query consumer. Pi decides when to invoke it. */
+  queryBusinessData?: BusinessQuery;
 }
 
 export interface PiModelConfig {
@@ -114,16 +118,15 @@ export interface AgentTurnResult {
   observation: AgentObservation;
 }
 
-const systemPrompt = `你是一个运行在 Pi Workbench 中的通用 Agent。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。对于普通知识问答，优先调用一次 search_knowledge 并直接使用返回的章节摘要；只有摘要不足以回答精确细节时才调用 read。`;
+const knowledgeSystemPrompt = `你是 Pi Workbench 的知识库问答智能体。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。需要项目知识时优先调用 search_knowledge，只有摘要不足时再调用 read。`;
+const businessDataSystemPrompt = `你是 Pi Workbench 的经营分析智能体，仍由 Pi AgentSession 驱动。遵循已加载的 business-intelligence Skill：使用统一 KPI 口径和语义层，并按“结论、业务含义、建议”组织洞察。你的业务数据能力只有只读 query_business_data；read 只用于加载受信任的 Skill，不要读取其他项目文件，不要调用 search_knowledge，不要生成 SQL，也不要猜测数据。query_business_data 是认证分析目录，每个用户问题最多调用一次，并选择最匹配的 analysis ID：regional_performance_30d（区域排名）、channel_efficiency_30d（渠道效率）、live_category_refund_30d（直播品类退款）、monthly_gmv_trend_90d（月度 GMV 趋势）。遇到“营收”“收入”等未认证口径时先说明歧义并请用户在 GMV 与退款后销售额中选择。回答必须带上指标定义、时间范围、数据新鲜度和演示数据限制。不得修改数据库或代表用户执行外部动作。`;
 
 function projectExtensionsEnabled(explicit?: boolean): boolean {
   return explicit ?? process.env.PI_PROJECT_EXTENSIONS_ENABLED === 'true';
 }
 
-function projectAppendPrompt(cwd: string): string[] | undefined {
-  // APPEND_SYSTEM.md is the file-first source for the same safety policy. Keep
-  // the inline prompt as a fallback for isolated tests or a cwd without .pi.
-  return existsSync(resolve(cwd, '.pi', 'APPEND_SYSTEM.md')) ? undefined : [systemPrompt];
+function agentSystemPrompt(agentId: WorkbenchAgentId): string {
+  return agentId === 'business-data' ? businessDataSystemPrompt : knowledgeSystemPrompt;
 }
 
 export interface PiAgentSession {
@@ -135,10 +138,40 @@ export interface PiAgentSession {
 }
 
 export interface PiWorkspaceContext {
+  agentId: WorkbenchAgentId;
   sessionId: string;
   resources: AgentResourceSummary[];
   /** The API supplies the capability; Pi decides whether to invoke it. */
   searchKnowledge?: KnowledgeSearch;
+  /** The API supplies the capability; Pi decides whether to invoke it. */
+  queryBusinessData?: BusinessQuery;
+}
+
+export const workbenchAgents: WorkbenchAgentDefinition[] = [
+  {
+    id: 'knowledge',
+    name: '知识库问答',
+    description: '基于项目文件和 Markdown 知识库提供可引用的回答。',
+    capabilityLabel: '项目知识 · 只读',
+    tools: ['read', 'search_knowledge'],
+    welcomeTitle: '你好，我是知识库问答智能体',
+    welcomeDescription: '从项目文件、知识库或 Pi 运行机制开始提问。',
+    suggestions: ['解释当前项目的 Pi Session 生命周期', '这个智能体能调用哪些工具？', '如何开发一个新的只读工具？'],
+  },
+  {
+    id: 'business-data',
+    name: '经营分析智能体',
+    description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。',
+    capabilityLabel: '经营问数 · 只读',
+    tools: ['read', 'query_business_data'],
+    welcomeTitle: '你好，我是经营分析智能体',
+    welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。',
+    suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？'],
+  },
+];
+
+export function getWorkbenchAgent(agentId: WorkbenchAgentId): WorkbenchAgentDefinition {
+  return workbenchAgents.find((agent) => agent.id === agentId) ?? workbenchAgents[0]!;
 }
 
 export function getPiProjectRoot(): string {
@@ -365,6 +398,7 @@ function observationCategory(eventType: string, summary?: AgentEventSummary): st
 
 export async function createPiAgentSession(options: PiAgentSessionOptions = {}): Promise<PiAgentSession> {
   const cwd = options.cwd ?? getPiProjectRoot();
+  const agentId = options.agentId ?? 'knowledge';
   const turnState: PiTurnState = { sources: [], toolCalls: [] };
   const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
   const modelConfig = getPiModelConfig(options, cwd);
@@ -375,7 +409,9 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
-    appendSystemPrompt: projectAppendPrompt(cwd),
+    additionalSkillPaths: agentId === 'business-data' ? [resolve(cwd, '.agents/skills/business-intelligence')] : [],
+    appendSystemPromptOverride: () => [agentSystemPrompt(agentId)],
+    skillsOverride: (base) => ({ ...base, skills: base.skills.filter((skill) => agentId === 'business-data' ? skill.name === 'business-intelligence' : skill.name !== 'business-intelligence') }),
     noExtensions: !projectExtensionsEnabled(options.projectExtensions),
     // Themes are inert in the Web UI but remain part of the Pi resource graph.
     noThemes: false,
@@ -392,14 +428,16 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
     sessionManager = existing ? SessionManager.open(existing.path, sessionDir, cwd) : SessionManager.create(cwd, sessionDir, options.sessionId ? { id: options.sessionId } : undefined);
   }
 
+  const businessTool = agentId === 'business-data' && options.queryBusinessData ? createBusinessQueryTool(options.queryBusinessData, turnState) : undefined;
+  const knowledgeTool = agentId === 'knowledge' && options.searchKnowledge ? createKnowledgeSearchTool(options.searchKnowledge, turnState) : undefined;
   const { session } = await createAgentSession({
     cwd,
     sessionManager,
     modelRuntime,
     resourceLoader,
     model,
-    tools: ['read', ...(options.searchKnowledge ? ['search_knowledge'] : [])],
-    customTools: options.searchKnowledge ? [createKnowledgeSearchTool(options.searchKnowledge, turnState)] : [],
+    tools: agentId === 'business-data' ? ['read', ...(businessTool ? ['query_business_data'] : [])] : ['read', ...(knowledgeTool ? ['search_knowledge'] : [])],
+    customTools: [knowledgeTool, businessTool].filter((tool): tool is NonNullable<typeof tool> => Boolean(tool)),
     thinkingLevel: getPiThinkingLevel(options.thinkingLevel, cwd),
   });
 
@@ -426,6 +464,9 @@ function buildResourceCatalog(resources: AgentResourceSummary[]): string {
 }
 
 function buildWorkspacePrompt(prompt: string, context: PiWorkspaceContext): string {
+  if (context.agentId === 'business-data') {
+    return `${prompt}\n\n你当前是经营分析智能体。请自己判断是否需要调用只读 query_business_data；应用层没有替你解析指标、维度或筛选条件。只使用工具返回的认证结果，不要生成或展示 SQL。`;
+  }
   return `${prompt}\n\n这是一个 Pi Agent 验证工作台。项目资源目录摘要如下（只包含元数据，不包含全部知识正文）：${buildResourceCatalog(context.resources)}\n\n请先由你判断如何回答：如果需要知识内容，调用只读 search_knowledge 工具，再根据返回的章节摘要决定是否调用 read 读取完整 Markdown；如果不需要知识库就直接回答。不要假设应用层已经替你选择了路由，也不要把工具能力当成已经执行的证据。回答中保留实际使用的文件来源。`;
 }
 
@@ -447,6 +488,42 @@ function createKnowledgeSearchTool(searchKnowledge: KnowledgeSearch, state: PiTu
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ sources }, null, 2) }],
         details: { count: sources.length, retrievalMs: Number((performance.now() - startedAt).toFixed(2)), sources },
+      };
+    },
+  });
+}
+
+function createBusinessQueryTool(queryBusinessData: BusinessQuery, state: PiTurnState) {
+  const analyses: Record<string, BusinessQueryRequest> = {
+    regional_performance_30d: { metrics: ['net_sales', 'order_count', 'average_order_value'], groupBy: 'region', period: 'last_30_days', orderBy: 'net_sales' },
+    channel_efficiency_30d: { metrics: ['net_sales', 'average_order_value', 'refund_rate'], groupBy: 'channel', period: 'last_30_days', orderBy: 'net_sales' },
+    live_category_refund_30d: { metrics: ['refund_rate', 'net_sales'], groupBy: 'category', period: 'last_30_days', channel: '直播', orderBy: 'refund_rate' },
+    monthly_gmv_trend_90d: { metrics: ['gross_sales', 'order_count'], groupBy: 'month', period: 'last_90_days', orderBy: 'gross_sales', order: 'asc' },
+  };
+  return defineTool({
+    name: 'query_business_data',
+    label: 'Query business data',
+    description: 'Run exactly one certified e-commerce analysis. Choose regional_performance_30d for regional sales/order rankings, channel_efficiency_30d for channel sales/AOV/refund comparisons, live_category_refund_30d for refund ranking of categories in live commerce, or monthly_gmv_trend_90d for the 90-day monthly GMV trend. Never call the tool more than once for one user question.',
+    promptSnippet: 'query_business_data: choose one certified analysis ID and call once',
+    promptGuidelines: ['Choose exactly one analysis ID from the catalog.', 'Do not call the tool repeatedly or construct filters yourself.', 'Report the returned metric definitions, time window, freshness and demo-data limitation.', 'Ask for clarification when none of the four analyses matches.'],
+    parameters: Type.Object({
+      analysis: Type.Union([Type.Literal('regional_performance_30d'), Type.Literal('channel_efficiency_30d'), Type.Literal('live_category_refund_30d'), Type.Literal('monthly_gmv_trend_90d')]),
+    }),
+    executionMode: 'sequential' as const,
+    async execute(_toolCallId, params) {
+      const startedAt = performance.now();
+      const result = await queryBusinessData(analyses[params.analysis]!);
+      const source: QuerySource = {
+        kind: 'database',
+        title: result.dataset,
+        ref: `business-data://${result.catalogVersion}/${result.queryId}`,
+        excerpt: `${result.metricDefinitions.map((item) => item.name).join('、')} · ${result.timeWindow.from} 至 ${result.timeWindow.to} · ${result.rowCount} 行`,
+        fields: result.rows[0] ? Object.keys(result.rows[0]) : [],
+      };
+      state.sources.push(source);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        details: { queryId: result.queryId, catalogVersion: result.catalogVersion, rowCount: result.rowCount, timeWindow: result.timeWindow, queryMs: Number((performance.now() - startedAt).toFixed(2)) },
       };
     },
   });
@@ -578,7 +655,7 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
     if (event.type === 'queue_update') queueUpdateCount += 1;
     if (event.type === 'tool_execution_start') {
       const key = event.toolCallId;
-      if (!runtime.turnState.toolCalls.includes(event.toolName)) runtime.turnState.toolCalls.push(event.toolName);
+      runtime.turnState.toolCalls.push(event.toolName);
       toolMetrics.set(key, { toolCallId: key, toolName: event.toolName, status: 'running', startedAt: nowIso(), inputChars: serializedLength(event.args), outputChars: 0 });
     }
     if (event.type === 'tool_execution_update') {
@@ -660,27 +737,29 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
   }
 }
 
-/** Keeps one Pi session per Web session id so the conversation page can make multiple turns. */
+/** Keeps one Pi session per Agent/session pair so business contexts never share a runtime. */
 export class PiSessionRegistry {
   private readonly sessions = new Map<string, Promise<PiAgentSession>>();
 
-  private getOrCreate(sessionId: string, options: PiAgentSessionOptions = {}): Promise<PiAgentSession> {
-    const existing = this.sessions.get(sessionId);
+  private getOrCreate(agentId: WorkbenchAgentId, sessionId: string, options: PiAgentSessionOptions = {}): Promise<PiAgentSession> {
+    const key = `${agentId}:${sessionId}`;
+    const existing = this.sessions.get(key);
     if (existing) return existing;
-    const created = createPiAgentSession({ ...options, sessionId, persistSession: true });
-    this.sessions.set(sessionId, created);
+    const created = createPiAgentSession({ ...options, agentId, sessionId, persistSession: true });
+    this.sessions.set(key, created);
     return created;
   }
 
-  async run(sessionId: string, prompt: string, options: AgentTurnOptions = {}, sessionOptions: PiAgentSessionOptions = {}): Promise<AgentTurnResult> {
-    const runtime = await this.getOrCreate(sessionId, sessionOptions);
+  async run(agentId: WorkbenchAgentId, sessionId: string, prompt: string, options: AgentTurnOptions = {}, sessionOptions: PiAgentSessionOptions = {}): Promise<AgentTurnResult> {
+    const runtime = await this.getOrCreate(agentId, sessionId, sessionOptions);
     if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
     return collectPiTurn(runtime, prompt, options);
   }
 
-  async close(sessionId: string): Promise<void> {
-    const runtime = this.sessions.get(sessionId);
-    this.sessions.delete(sessionId);
+  async close(agentId: WorkbenchAgentId, sessionId: string): Promise<void> {
+    const key = `${agentId}:${sessionId}`;
+    const runtime = this.sessions.get(key);
+    this.sessions.delete(key);
     if (runtime) (await runtime).close();
   }
 
@@ -703,6 +782,7 @@ export function getPiModelStatus(enabled = process.env.PI_AGENT_ENABLED === 'tru
 }
 
 function availableTools(context: PiWorkspaceContext): string[] {
+  if (context.agentId === 'business-data') return ['read', ...(context.queryBusinessData ? ['query_business_data'] : [])];
   return context.searchKnowledge ? ['read', 'search_knowledge'] : ['read'];
 }
 
@@ -765,7 +845,7 @@ function createTurnMetrics(input: {
 
 async function workspaceFallback(message: string, context: PiWorkspaceContext, extra?: string, startedAt = Date.now(), turnNumber?: number, thinkingLevel = getPiThinkingLevel()): Promise<AgentChatResponse> {
   let sources: QuerySource[] = [];
-  if (context.searchKnowledge) {
+  if (context.agentId === 'knowledge' && context.searchKnowledge) {
     try {
       sources = await context.searchKnowledge(message);
     } catch {
@@ -776,7 +856,9 @@ async function workspaceFallback(message: string, context: PiWorkspaceContext, e
   const normalized = message.toLowerCase();
   let answer: string;
 
-  if (knowledge.length) {
+  if (context.agentId === 'business-data') {
+    answer = '经营分析智能体已经就绪，但当前 Pi 模型未启用。请配置 provider key 并设置 PI_AGENT_ENABLED=true；启用后由 Pi 自己解析问题并调用只读 query_business_data，应用层不会替它预路由。';
+  } else if (knowledge.length) {
     answer = `我从 ${knowledge.map((source) => source.ref).join('、')} 找到这些证据：\n\n${knowledge.map((source) => `${source.title}：${source.excerpt}`).join('\n')}\n\n这是本地确定性检索结果。开启 Pi 后，模型会基于同一组资源组织更完整的回答。`;
   } else if (/工具|权限|只读|read/.test(normalized)) {
     answer = '当前工作台只开放 read 和 search_knowledge 工具。Agent 可以读取或搜索项目资源，但不能写文件、执行命令或修改外部数据。';
@@ -793,8 +875,9 @@ async function workspaceFallback(message: string, context: PiWorkspaceContext, e
   return {
     answer: finalAnswer,
     source: 'local-fallback',
+    agentId: context.agentId,
     sessionId: context.sessionId,
-    route: sources.length ? 'knowledge' : 'workspace',
+    route: context.agentId === 'business-data' ? 'business-data' : sources.length ? 'knowledge' : 'workspace',
     sources,
     resources: context.resources,
     events,
@@ -822,7 +905,7 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
   }
 
   try {
-    const result = await piSessionRegistry.run(context.sessionId, buildWorkspacePrompt(message, context), options, { searchKnowledge: context.searchKnowledge, thinkingLevel });
+    const result = await piSessionRegistry.run(context.agentId, context.sessionId, buildWorkspacePrompt(message, context), options, { agentId: context.agentId, searchKnowledge: context.searchKnowledge, queryBusinessData: context.queryBusinessData, thinkingLevel });
     if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。', startedAt, options.turnNumber, thinkingLevel), options), latencyMs: Date.now() - startedAt };
     const assistant = result.observation.assistant;
     const providerUsage = assistant?.usage ? usageFromPi(assistant.usage) : undefined;
@@ -831,8 +914,9 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
     return {
       answer: result.answer,
       source: 'pi-coding-agent',
+      agentId: context.agentId,
       sessionId: context.sessionId,
-      route: result.sources.length ? 'knowledge' : 'workspace',
+      route: context.agentId === 'business-data' ? 'business-data' : result.sources.length ? 'knowledge' : 'workspace',
       decision: { decidedBy: 'pi', toolCalls: result.toolCalls },
       sources: result.sources,
       resources: context.resources,

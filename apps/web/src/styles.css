@@ -324,6 +324,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .workspace-brand-copy strong, .workspace-brand-copy span { display: block; }
 .workspace-brand-copy strong { color: var(--text); font-size: 16px; font-weight: 650; letter-spacing: -.04em; }
 .workspace-brand-copy span { margin-top: 2px; color: var(--subtle); font-size: var(--font-caption); }
+.agent-selector { display: grid; gap: 7px; padding: 10px 12px 11px; background: var(--page); }
+.agent-selector-label { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; color: var(--subtle); font-size: var(--font-caption); }
+.agent-selector-label small { min-width: 20px; text-align: right; font-family: var(--mono); }
+.agent-selector-list { display: grid; gap: 4px; }
+.agent-selector-item { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; min-height: 48px; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid transparent; border-radius: 9px; color: var(--muted); background: transparent; text-align: left; transition: color .18s ease, border-color .18s ease, background .18s ease; }
+.agent-selector-item:hover:not(:disabled) { color: var(--text); background: var(--surface); }
+.agent-selector-item-active { border-color: var(--accent-border); color: var(--accent-strong); background: var(--accent-soft); }
+.agent-selector-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--accent-strong); background: var(--surface); font-family: Georgia, serif; font-size: 15px; font-weight: 700; }
+.agent-selector-item > span:nth-child(2) { min-width: 0; }
+.agent-selector-item strong, .agent-selector-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-selector-item strong { color: inherit; font-size: 12px; font-weight: 650; }
+.agent-selector-item small { margin-top: 3px; color: var(--subtle); font-size: var(--font-caption); }
+.agent-selector-item > svg { color: var(--accent-strong); }
 .workspace-account-footer { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; gap: 9px; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: var(--surface); }
 .workspace-account-avatar { display: grid; width: 28px; height: 28px; flex: 0 0 28px; place-items: center; border-radius: 8px; color: var(--accent-strong); background: var(--accent-soft); font-size: 12px; font-weight: 650; }
 .workspace-account-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }

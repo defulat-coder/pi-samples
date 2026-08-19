@@ -8,11 +8,12 @@ import {
   type SessionInfo,
   type SessionMessageEntry,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessionRecord, AgentTokenUsage } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessionRecord, AgentTokenUsage, WorkbenchAgentId } from '@pi-workbench/contracts';
 
 export const PI_WORKBENCH_TURN_ENTRY = 'pi-workbench.turn';
 export const PI_WORKBENCH_FEEDBACK_ENTRY = 'pi-workbench.feedback';
 export const PI_WORKBENCH_SESSION_TITLE_ENTRY = 'pi-workbench.session-title';
+export const PI_WORKBENCH_AGENT_ENTRY = 'pi-workbench.agent';
 
 function getProjectRoot(): string {
   if (existsSync(resolve(process.cwd(), '.pi'))) return process.cwd();
@@ -39,6 +40,10 @@ type FeedbackEntryData = {
 
 type SessionTitleEntryData = {
   title: string;
+};
+
+type AgentEntryData = {
+  agentId: WorkbenchAgentId;
 };
 
 type MessageEntry = SessionMessageEntry;
@@ -185,6 +190,12 @@ function sessionTitleFromEntries(entries: SessionEntry[]): string | undefined {
   return undefined;
 }
 
+function agentIdFromEntries(entries: SessionEntry[]): WorkbenchAgentId {
+  const entry = entries.find((item) => item.type === 'custom' && item.customType === PI_WORKBENCH_AGENT_ENTRY && item.data && typeof item.data === 'object');
+  const agentId = entry?.type === 'custom' ? (entry.data as Partial<AgentEntryData>).agentId : undefined;
+  return agentId === 'business-data' ? agentId : 'knowledge';
+}
+
 function latestTurnEntry(entries: SessionEntry[], turnId: string): TurnEntryData | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const data = parseTurnEntry(entries[index]!);
@@ -210,7 +221,7 @@ function createFallbackUserMessage(text: string): UserMessage {
   return { role: 'user', content: text, timestamp: Date.now() };
 }
 
-function responseFromPiMessage(sessionId: string, userText: string, userTimestamp: number, assistant: AssistantMessage, turn: number, thinkingText: string, toolCalls: string[]): AgentChatResponse {
+function responseFromPiMessage(agentId: WorkbenchAgentId, sessionId: string, userText: string, userTimestamp: number, assistant: AssistantMessage, turn: number, thinkingText: string, toolCalls: string[]): AgentChatResponse {
   const usage = assistant.usage;
   const hasUsage = isFiniteNumber(usage?.input) && isFiniteNumber(usage?.output) && isFiniteNumber(usage?.totalTokens);
   const tokenUsage = hasUsage ? usageFromPersisted(usage) : unavailableUsage();
@@ -220,13 +231,14 @@ function responseFromPiMessage(sessionId: string, userText: string, userTimestam
   return {
     answer: textFromContent(assistant.content),
     source: 'pi-coding-agent',
+    agentId,
     sessionId,
-    route: 'workspace',
+    route: agentId === 'business-data' ? 'business-data' : 'workspace',
     decision: { decidedBy: 'pi', toolCalls },
     sources: [],
     resources: [],
     events: [],
-    tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
+    tools: { enabled: agentId === 'business-data' ? ['read', 'query_business_data'] : ['read', 'search_knowledge'], policy: 'read-only' },
     model: { enabled: true, providerConfigured: true, ...(assistant.api ? { api: assistant.api } : {}), provider: assistant.provider, model: assistant.model, ...(assistant.responseModel ? { responseModel: assistant.responseModel } : {}), ...(assistant.responseId ? { responseId: assistant.responseId } : {}), thinkingLevel: undefined },
     metrics: {
       turn: Math.max(1, turn),
@@ -275,7 +287,7 @@ function responseWithSessionUsage(response: AgentChatResponse, userText: string,
   };
 }
 
-function projectEntries(sessionId: string, entries: SessionEntry[]): AgentSessionMessage[] {
+function projectEntries(agentId: WorkbenchAgentId, sessionId: string, entries: SessionEntry[]): AgentSessionMessage[] {
   const turnEntries = entries.map(parseTurnEntry).filter((entry): entry is TurnEntryData => Boolean(entry));
   const turnByUser = new Map(turnEntries.filter((entry) => entry.userEntryId).map((entry) => [entry.userEntryId!, entry]));
   const turnByAssistant = new Map(turnEntries.flatMap((entry) => entry.assistantEntryIds.map((id) => [id, entry] as const)));
@@ -301,7 +313,7 @@ function projectEntries(sessionId: string, entries: SessionEntry[]): AgentSessio
     if (active.answer || metadata?.response || active.assistant) {
       const assistantId = metadata?.assistantEntryIds.at(-1) ?? active.assistantEntryIds.at(-1) ?? `assistant_${active.userEntryId}`;
       const toolCalls = active.assistant ? toolCallsFromAssistant(active.assistant) : [];
-      const response = metadata?.response ? responseWithLegacyMetrics(metadata.response, turnNumber) : active.assistant ? responseFromPiMessage(sessionId, userText, active.userTimestamp, active.assistant, turnNumber, active.thinking, toolCalls) : undefined;
+      const response = metadata?.response ? { ...responseWithLegacyMetrics(metadata.response, turnNumber), agentId } : active.assistant ? responseFromPiMessage(agentId, sessionId, userText, active.userTimestamp, active.assistant, turnNumber, active.thinking, toolCalls) : undefined;
       const feedback = feedbackByMessage.get(assistantId);
       if (response) messages.push({ id: assistantId, kind: 'assistant', turnId, text: active.answer || response.answer, response, createdAt: assistantCreatedAt ?? response.createdAt, persisted: true, ...(feedback ? { feedback } : {}) });
     }
@@ -360,25 +372,33 @@ export class PiFileSessionStore {
     this.sessionDir = resolve(this.cwd, options.sessionDir ?? getPiSessionDir(this.cwd));
   }
 
-  async listSessions(): Promise<AgentSessionRecord[]> {
+  async listSessions(agentId?: WorkbenchAgentId): Promise<AgentSessionRecord[]> {
     const infos = await this.sortedInfos();
-    return Promise.all(infos.map((info, index) => this.recordFromInfo(info, index)));
+    const records = await Promise.all(infos.map((info, index) => this.recordFromInfo(info, index)));
+    return agentId ? records.filter((record) => record.agentId === agentId) : records;
   }
 
-  async createSession(id = `session_${randomUUID().slice(0, 8)}`): Promise<AgentSessionRecord> {
+  async createSession(id = `session_${randomUUID().slice(0, 8)}`, agentId: WorkbenchAgentId = 'knowledge'): Promise<AgentSessionRecord> {
     const existing = await this.findInfo(id);
-    if (existing) return this.recordFromInfo(existing, await this.positionOf(id));
+    if (existing) {
+      const record = await this.recordFromInfo(existing, await this.positionOf(id));
+      if (record.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
+      return record;
+    }
     const manager = SessionManager.create(this.cwd, this.sessionDir, { id });
     const file = manager.getSessionFile();
     const header = manager.getHeader();
     if (!file || !header) throw new Error('Pi session file could not be initialized');
     mkdirSync(this.sessionDir, { recursive: true });
     if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
+    SessionManager.open(file, this.sessionDir, this.cwd).appendCustomEntry(PI_WORKBENCH_AGENT_ENTRY, { agentId } satisfies AgentEntryData);
     return this.recordFromInfo({ path: file, id: header.id, cwd: header.cwd, created: new Date(header.timestamp), modified: new Date(header.timestamp), messageCount: 0, firstMessage: '(no messages)', allMessagesText: '' }, await this.positionOf(id));
   }
 
-  async ensureSession(id: string): Promise<AgentSessionRecord> {
-    return (await this.getSession(id)) ?? this.createSession(id);
+  async ensureSession(id: string, agentId: WorkbenchAgentId = 'knowledge'): Promise<AgentSessionRecord> {
+    const existing = await this.getSession(id);
+    if (existing && existing.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
+    return existing ?? this.createSession(id, agentId);
   }
 
   async getSession(id: string): Promise<AgentSessionRecord | undefined> {
@@ -461,7 +481,8 @@ export class PiFileSessionStore {
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
     const entries = manager.getEntries();
     const title = sessionTitleFromEntries(entries);
-    return { id: info.id, ...(title ? { title } : {}), position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(info.id, entries) };
+    const agentId = agentIdFromEntries(entries);
+    return { id: info.id, agentId, ...(title ? { title } : {}), position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(agentId, info.id, entries) };
   }
 }
 
