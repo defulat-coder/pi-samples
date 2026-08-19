@@ -74,6 +74,19 @@ describe('Pi Workbench API', () => {
     assert.equal(response.json().metrics.settled, true);
   });
 
+  it('accepts explicit page-controlled thinking modes', async () => {
+    const off = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '关闭思考', sessionId: 'thinking-off', thinkingLevel: 'off' } });
+    assert.equal(off.statusCode, 200);
+    assert.equal(off.json().model.thinkingLevel, 'off');
+
+    const minimal = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '开启思考', sessionId: 'thinking-minimal', thinkingLevel: 'minimal' } });
+    assert.equal(minimal.statusCode, 200);
+    assert.equal(minimal.json().model.thinkingLevel, 'minimal');
+
+    const invalid = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '非法思考级别', sessionId: 'thinking-invalid', thinkingLevel: 'auto' } });
+    assert.equal(invalid.statusCode, 400);
+  });
+
   it('streams fallback text and a terminal response over SSE', async () => {
     const response = await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: 'Pi session 生命周期是什么？', sessionId: 'stream-test-session' } });
     assert.equal(response.statusCode, 200);
@@ -120,6 +133,19 @@ describe('Pi Workbench API', () => {
     const cleared = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}/messages/${assistant!.id}/feedback`, payload: { feedback: null } });
     assert.equal(cleared.statusCode, 200);
     assert.equal(cleared.json().messages.find((message: { id: string }) => message.id === assistant!.id).feedback, undefined);
+  });
+
+  it('renames and deletes persisted sessions', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+    const sessionId = created.json().id as string;
+    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}`, payload: { title: '项目架构讨论' } });
+    assert.equal(renamed.statusCode, 200);
+    assert.equal(renamed.json().title, '项目架构讨论');
+
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/agent/sessions/${sessionId}` });
+    assert.equal(removed.statusCode, 204);
+    const missing = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${sessionId}` });
+    assert.equal(missing.statusCode, 404);
   });
 
   it('exposes the Pi workspace runtime contract', async () => {

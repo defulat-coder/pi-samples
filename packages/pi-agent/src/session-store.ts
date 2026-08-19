@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import {
   SessionManager,
@@ -12,6 +12,7 @@ import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessio
 
 export const PI_WORKBENCH_TURN_ENTRY = 'pi-workbench.turn';
 export const PI_WORKBENCH_FEEDBACK_ENTRY = 'pi-workbench.feedback';
+export const PI_WORKBENCH_SESSION_TITLE_ENTRY = 'pi-workbench.session-title';
 
 function getProjectRoot(): string {
   if (existsSync(resolve(process.cwd(), '.pi'))) return process.cwd();
@@ -34,6 +35,10 @@ type TurnEntryData = {
 type FeedbackEntryData = {
   messageId: string;
   feedback: AgentFeedback | null;
+};
+
+type SessionTitleEntryData = {
+  title: string;
 };
 
 type MessageEntry = SessionMessageEntry;
@@ -170,6 +175,16 @@ function parseFeedbackEntry(entry: SessionEntry): FeedbackEntryData | undefined 
   return { messageId: data.messageId, feedback: data.feedback };
 }
 
+function sessionTitleFromEntries(entries: SessionEntry[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.type !== 'custom' || entry.customType !== PI_WORKBENCH_SESSION_TITLE_ENTRY || !entry.data || typeof entry.data !== 'object') continue;
+    const title = (entry.data as Partial<SessionTitleEntryData>).title?.trim();
+    if (title) return title;
+  }
+  return undefined;
+}
+
 function latestTurnEntry(entries: SessionEntry[], turnId: string): TurnEntryData | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const data = parseTurnEntry(entries[index]!);
@@ -279,14 +294,16 @@ function projectEntries(sessionId: string, entries: SessionEntry[]): AgentSessio
     const metadata = turnByUser.get(active.userEntryId) ?? active.assistantEntryIds.map((id) => turnByAssistant.get(id)).find((entry): entry is TurnEntryData => Boolean(entry));
     const turnId = metadata?.turnId ?? `turn_${current.userEntryId}`;
     const userText = displayUserText(active.userText, metadata?.userText);
-    messages.push({ id: active.userEntryId, kind: 'user', text: userText, turnId });
-    if (active.thinking) messages.push({ id: `thinking_${active.userEntryId}`, kind: 'thinking', turnId, text: active.thinking, status: 'complete' });
+    const userCreatedAt = new Date(active.userTimestamp).toISOString();
+    const assistantCreatedAt = active.assistant ? new Date(active.assistant.timestamp).toISOString() : metadata?.response.createdAt;
+    messages.push({ id: active.userEntryId, kind: 'user', text: userText, turnId, createdAt: userCreatedAt });
+    if (active.thinking) messages.push({ id: `thinking_${active.userEntryId}`, kind: 'thinking', turnId, text: active.thinking, status: 'complete', createdAt: assistantCreatedAt });
     if (active.answer || metadata?.response || active.assistant) {
       const assistantId = metadata?.assistantEntryIds.at(-1) ?? active.assistantEntryIds.at(-1) ?? `assistant_${active.userEntryId}`;
       const toolCalls = active.assistant ? toolCallsFromAssistant(active.assistant) : [];
       const response = metadata?.response ? responseWithLegacyMetrics(metadata.response, turnNumber) : active.assistant ? responseFromPiMessage(sessionId, userText, active.userTimestamp, active.assistant, turnNumber, active.thinking, toolCalls) : undefined;
       const feedback = feedbackByMessage.get(assistantId);
-      if (response) messages.push({ id: assistantId, kind: 'assistant', turnId, text: active.answer || response.answer, response, ...(feedback ? { feedback } : {}) });
+      if (response) messages.push({ id: assistantId, kind: 'assistant', turnId, text: active.answer || response.answer, response, createdAt: assistantCreatedAt ?? response.createdAt, persisted: true, ...(feedback ? { feedback } : {}) });
     }
     current = undefined;
   };
@@ -402,6 +419,21 @@ export class PiFileSessionStore {
     return this.getSession(sessionId);
   }
 
+  async setSessionTitle(sessionId: string, title: string): Promise<AgentSessionRecord | undefined> {
+    const info = await this.findInfo(sessionId);
+    if (!info) return undefined;
+    const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
+    manager.appendCustomEntry(PI_WORKBENCH_SESSION_TITLE_ENTRY, { title: title.trim() } satisfies SessionTitleEntryData);
+    return this.getSession(sessionId);
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const info = await this.findInfo(sessionId);
+    if (!info) return false;
+    rmSync(info.path);
+    return true;
+  }
+
   close(): void {
     // SessionManager owns append-only files and has no close operation.
   }
@@ -427,7 +459,9 @@ export class PiFileSessionStore {
 
   private async recordFromInfo(info: SessionInfo, position: number): Promise<AgentSessionRecord> {
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
-    return { id: info.id, position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(info.id, manager.getEntries()) };
+    const entries = manager.getEntries();
+    const title = sessionTitleFromEntries(entries);
+    return { id: info.id, ...(title ? { title } : {}), position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(info.id, entries) };
   }
 }
 

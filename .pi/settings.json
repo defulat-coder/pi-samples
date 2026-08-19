@@ -1,6 +1,6 @@
 {
   "sessionDir": ".pi/sessions",
-  "defaultThinkingLevel": "minimal",
+  "defaultThinkingLevel": "off",
   "enableSkillCommands": true,
   "compaction": {
     "enabled": true,

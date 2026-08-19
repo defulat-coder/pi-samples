@@ -10,14 +10,14 @@ import {
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentThinkingLevel, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource } from '@pi-workbench/contracts';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { getPiSessionDir } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
 export type KnowledgeSearch = (query: string) => QuerySource[] | Promise<QuerySource[]>;
-export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type PiThinkingLevel = AgentThinkingLevel;
 
 export interface PiAgentSessionOptions {
   cwd?: string;
@@ -96,6 +96,8 @@ type AgentObservation = {
 export interface AgentTurnOptions {
   /** Position of this request in the persisted Web session. */
   turnNumber?: number;
+  /** Explicit per-turn thinking mode selected by the Web client. */
+  thinkingLevel?: PiThinkingLevel;
   onEvent?: (event: AgentSessionEvent) => void;
   onEventSummary?: (event: AgentEventSummary) => void;
   onTextDelta?: (delta: string) => void;
@@ -255,9 +257,9 @@ function getPiThinkingLevel(level?: PiThinkingLevel, cwd = getPiProjectRoot()): 
     const settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as { defaultThinkingLevel?: unknown };
     if (typeof settings.defaultThinkingLevel === 'string' && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.defaultThinkingLevel)) return settings.defaultThinkingLevel as PiThinkingLevel;
   } catch {
-    // Keep the low-latency project default when settings are absent or invalid.
+    // Keep the no-thinking project default when settings are absent or invalid.
   }
-  return 'minimal';
+  return 'off';
 }
 
 function finiteNumber(value: unknown, fallback = 0): number {
@@ -671,7 +673,9 @@ export class PiSessionRegistry {
   }
 
   async run(sessionId: string, prompt: string, options: AgentTurnOptions = {}, sessionOptions: PiAgentSessionOptions = {}): Promise<AgentTurnResult> {
-    return collectPiTurn(await this.getOrCreate(sessionId, sessionOptions), prompt, options);
+    const runtime = await this.getOrCreate(sessionId, sessionOptions);
+    if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
+    return collectPiTurn(runtime, prompt, options);
   }
 
   async close(sessionId: string): Promise<void> {
@@ -759,7 +763,7 @@ function createTurnMetrics(input: {
   };
 }
 
-async function workspaceFallback(message: string, context: PiWorkspaceContext, extra?: string, startedAt = Date.now(), turnNumber?: number): Promise<AgentChatResponse> {
+async function workspaceFallback(message: string, context: PiWorkspaceContext, extra?: string, startedAt = Date.now(), turnNumber?: number, thinkingLevel = getPiThinkingLevel()): Promise<AgentChatResponse> {
   let sources: QuerySource[] = [];
   if (context.searchKnowledge) {
     try {
@@ -796,7 +800,7 @@ async function workspaceFallback(message: string, context: PiWorkspaceContext, e
     events,
     decision: { decidedBy: 'fallback', toolCalls: [] },
     tools: { enabled: availableTools(context), policy: 'read-only' },
-    model: getPiModelStatus(),
+    model: { ...getPiModelStatus(), thinkingLevel },
     latencyMs: 0,
     createdAt: new Date().toISOString(),
     metrics: createTurnMetrics({ message, answer: finalAnswer, thinkingText: '', events, eventCounts: { local_fallback: 1 }, toolCalls: [], startedAt, turnNumber }),
@@ -811,18 +815,19 @@ function notifyFallback(response: AgentChatResponse, options: AgentTurnOptions):
 
 export async function askPiAgent(message: string, context: PiWorkspaceContext, options: AgentTurnOptions = {}): Promise<AgentChatResponse> {
   const startedAt = Date.now();
+  const thinkingLevel = options.thinkingLevel ?? getPiThinkingLevel();
   if (process.env.PI_AGENT_ENABLED !== 'true') {
-    const response = notifyFallback(await workspaceFallback(message, context, undefined, startedAt, options.turnNumber), options);
+    const response = notifyFallback(await workspaceFallback(message, context, undefined, startedAt, options.turnNumber, thinkingLevel), options);
     return { ...response, latencyMs: Date.now() - startedAt };
   }
 
   try {
-    const result = await piSessionRegistry.run(context.sessionId, buildWorkspacePrompt(message, context), options, { searchKnowledge: context.searchKnowledge });
-    if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。', startedAt, options.turnNumber), options), latencyMs: Date.now() - startedAt };
+    const result = await piSessionRegistry.run(context.sessionId, buildWorkspacePrompt(message, context), options, { searchKnowledge: context.searchKnowledge, thinkingLevel });
+    if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。', startedAt, options.turnNumber, thinkingLevel), options), latencyMs: Date.now() - startedAt };
     const assistant = result.observation.assistant;
     const providerUsage = assistant?.usage ? usageFromPi(assistant.usage) : undefined;
     const metrics = createTurnMetrics({ message, answer: result.answer, thinkingText: result.thinkingText, events: result.events, eventCounts: result.eventCounts, toolCalls: result.toolCalls, startedAt, turnNumber: options.turnNumber, observation: result.observation, tokenUsage: providerUsage, assistant });
-    const modelStatus = getPiModelStatus();
+    const modelStatus = { ...getPiModelStatus(), thinkingLevel };
     return {
       answer: result.answer,
       source: 'pi-coding-agent',
@@ -846,6 +851,6 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
       metrics,
     };
   } catch (error) {
-    return { ...notifyFallback(await workspaceFallback(message, context, `Pi 暂时不可用，已切换到本地降级回答（${error instanceof Error ? error.message : '未知错误'}）。`, startedAt, options.turnNumber), options), latencyMs: Date.now() - startedAt };
+    return { ...notifyFallback(await workspaceFallback(message, context, `Pi 暂时不可用，已切换到本地降级回答（${error instanceof Error ? error.message : '未知错误'}）。`, startedAt, options.turnNumber, thinkingLevel), options), latencyMs: Date.now() - startedAt };
   }
 }

@@ -1,27 +1,28 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
-import {
-  ArrowRight,
-  ArrowUpRight,
-  ArrowsClockwise,
-  Buildings,
-  CaretDown,
-  CaretLeft,
-  CaretRight,
-  Check,
-  ChatCircle,
-  Copy,
-  Folder,
-  FolderOpen,
-  MagnifyingGlass,
-  Plus,
-  SignOut,
-  ShieldCheck,
-  ThumbsDown,
-  ThumbsUp,
-  WarningCircle,
-  X,
-} from '@phosphor-icons/react';
+import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AgentThinkingLevel, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
+import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight';
+import { ArrowUpRight } from '@phosphor-icons/react/dist/icons/ArrowUpRight';
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise';
+import { Buildings } from '@phosphor-icons/react/dist/icons/Buildings';
+import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
+import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft';
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight';
+import { Check } from '@phosphor-icons/react/dist/icons/Check';
+import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle';
+import { Copy } from '@phosphor-icons/react/dist/icons/Copy';
+import { Folder } from '@phosphor-icons/react/dist/icons/Folder';
+import { FolderOpen } from '@phosphor-icons/react/dist/icons/FolderOpen';
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
+import { ShieldCheck } from '@phosphor-icons/react/dist/icons/ShieldCheck';
+import { SignOut } from '@phosphor-icons/react/dist/icons/SignOut';
+import { ThumbsDown } from '@phosphor-icons/react/dist/icons/ThumbsDown';
+import { ThumbsUp } from '@phosphor-icons/react/dist/icons/ThumbsUp';
+import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
+import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
+import { X } from '@phosphor-icons/react/dist/icons/X';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -66,16 +67,38 @@ const fallbackResources: AgentResourceSummary[] = [
 const fallbackWorkspace: WorkspaceSnapshot = {
   resources: fallbackResources,
   tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
-  model: { enabled: false, providerConfigured: false, provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'low' },
+  model: { enabled: false, providerConfigured: false, provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'off' },
 };
+
+const enabledThinkingLevel: AgentThinkingLevel = 'minimal';
+const motionEase = [0.22, 0.61, 0.36, 1] as const;
 
 function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function sessionTitle(messages: ConversationItem[]) {
-  const firstUserMessage = messages.find((message): message is UserMessageItem => message.kind === 'user')?.text.trim();
+function emptySessionRecord(position = 0): SessionRecord {
+  const now = new Date().toISOString();
+  return { id: newSessionId(), position, createdAt: now, updatedAt: now, messages: [] };
+}
+
+function sortSessionRecords(records: SessionRecord[]) {
+  return [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt));
+}
+
+function sessionTitle(session: Pick<SessionRecord, 'title' | 'messages'>) {
+  if (session.title?.trim()) return session.title.trim();
+  const firstUserMessage = session.messages.find((message): message is UserMessageItem => message.kind === 'user')?.text.trim();
   return firstUserMessage ? firstUserMessage.slice(0, 34) : '新对话';
+}
+
+function conversationTime(value?: string) {
+  if (!value) return '刚刚';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '刚刚';
+  const today = new Date();
+  const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
+  return new Intl.DateTimeFormat('zh-CN', sameDay ? { hour: '2-digit', minute: '2-digit' } : { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function routeLabel(route: AgentChatResponse['route']) {
@@ -95,6 +118,10 @@ function resourceTitle(title: string) {
     .replace(/\bSkill\b/g, '技能')
     .replace(/\bPrompt\b/g, '提示词')
     .replace(/\bKnowledge\b/g, '知识');
+}
+
+function markdownBody(content: string) {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 }
 
 function parseStreamPayload(eventName: string, data: string): AgentChatStreamEvent {
@@ -150,13 +177,7 @@ async function fetchSessionRecords(): Promise<SessionRecord[]> {
   const response = await fetch('/api/v1/agent/sessions');
   if (!response.ok) throw new Error('会话列表暂时无法读取');
   const payload = await response.json() as AgentSessionListResponse;
-  return payload.items;
-}
-
-async function createSessionRecord(): Promise<SessionRecord> {
-  const response = await fetch('/api/v1/agent/sessions', { method: 'POST' });
-  if (!response.ok) throw new Error('新建会话失败');
-  return response.json() as Promise<SessionRecord>;
+  return sortSessionRecords(payload.items);
 }
 
 async function fetchSessionRecord(id: string): Promise<SessionRecord> {
@@ -165,10 +186,33 @@ async function fetchSessionRecord(id: string): Promise<SessionRecord> {
   return response.json() as Promise<SessionRecord>;
 }
 
+async function renameSessionRecord(id: string, title: string): Promise<SessionRecord> {
+  const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+  if (!response.ok) throw new Error('会话名称暂时无法保存');
+  return response.json() as Promise<SessionRecord>;
+}
+
+async function deleteSessionRecord(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) throw new Error('会话暂时无法删除');
+}
+
 async function fetchAuthStatus(): Promise<AuthStatusResponse> {
   const response = await fetch('/api/v1/auth/status', { credentials: 'include', cache: 'no-store' });
   if (!response.ok) throw new Error('登录服务暂时无法连接');
   return response.json() as Promise<AuthStatusResponse>;
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const helper = document.createElement('textarea');
+  helper.value = text;
+  helper.style.position = 'fixed';
+  helper.style.opacity = '0';
+  document.body.appendChild(helper);
+  helper.select();
+  document.execCommand('copy');
+  helper.remove();
 }
 
 function authErrorLabel(error: string) {
@@ -287,16 +331,20 @@ const FileTree = memo(function FileTree({ node, depth, query, collapsedPaths, se
   const indentStyle = { '--tree-depth': depth } as CSSProperties;
   if (node.kind === 'file' && node.resource) {
     const isSelected = selectedResource === node.path;
-    return <button type="button" className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={indentStyle} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
+    return <button type="button" role="treeitem" aria-level={depth + 1} className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={indentStyle} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
   }
 
   const isOpen = Boolean(query) || !collapsedPaths.has(node.path);
-  return <div className="tree-node"><button type="button" className="tree-row tree-folder" style={indentStyle} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small className="tree-folder-count" aria-label={`${node.fileCount} 个文件`}>{node.fileCount}</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} query={query} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
+  return <div className="tree-node"><button type="button" role="treeitem" aria-level={depth + 1} className="tree-row tree-folder" style={indentStyle} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small className="tree-folder-count" aria-label={`${node.fileCount} 个文件`}>{node.fileCount}</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children" role="group">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} query={query} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
 });
 
-function SourceList({ response }: { response: AgentChatResponse }) {
+function SourceList({ response, onOpenResource }: { response: AgentChatResponse; onOpenResource: (path: string) => void }) {
   if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
-  return <div className="source-list">{response.sources.map((source) => <div className="source-row" key={source.ref}><span className="source-kind">MD</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span></div>)}</div>;
+  return <div className="source-list">{response.sources.map((source) => {
+    const canOpen = source.kind === 'knowledge' && source.ref.startsWith('.pi/');
+    const content = <><span className="source-kind">MD</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span>{canOpen && <CaretRight size={13} aria-hidden="true" />}</>;
+    return canOpen ? <button type="button" className="source-row source-row-action" key={source.ref} onClick={() => onOpenResource(source.ref.split('#')[0]!)} aria-label={`打开来源：${resourceTitle(source.title)}`}>{content}</button> : <div className="source-row" key={source.ref}>{content}</div>;
+  })}</div>;
 }
 
 function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
@@ -306,9 +354,10 @@ function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
 }
 
 function AgentToolEvents({ events, toolCalls, toolMetrics }: { events: AgentEventSummary[]; toolCalls: string[]; toolMetrics: NonNullable<NonNullable<AgentChatResponse['metrics']>['toolMetrics']> }) {
-  const visibleEvents = events.filter((event) => event.category === 'tool' || event.category === 'error');
-  if (!visibleEvents.length && !toolCalls.length && !toolMetrics.length) return null;
-  return <section className="agent-tool-events" aria-label="工具调用"><div className="agent-content-label">工具调用</div>{visibleEvents.length ? visibleEvents.map((event, index) => <details className={event.category === 'error' ? 'agent-tool-event agent-tool-event-error' : 'agent-tool-event'} key={`${event.type}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /> <span>{event.label}</span>{event.toolName && <code>{event.toolName}</code>}<small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>) : toolCalls.map((toolName, index) => <div className="agent-tool-event agent-tool-event-compact" key={`${toolName}-${index}`}><span className="agent-tool-event-status" aria-hidden="true" /><span>调用工具</span><code>{toolName}</code></div>)}{toolMetrics.length > 0 && <details className="agent-tool-metrics"><summary>工具执行指标 <small>{toolMetrics.length} 次</small></summary><div className="agent-tool-metric-list">{toolMetrics.map((metric, index) => <div className={metric.status === 'error' ? 'agent-tool-metric agent-tool-metric-error' : 'agent-tool-metric'} key={`${metric.toolCallId ?? metric.toolName}-${index}`}><strong>{metric.toolName}</strong><span>{metric.status === 'error' ? '失败' : '完成'}</span><small>{metric.durationMs !== undefined ? formatDuration(metric.durationMs) : '—'} · 输入 {metric.inputChars.toLocaleString('zh-CN')} 字符 · 输出 {metric.outputChars.toLocaleString('zh-CN')} 字符</small></div>)}</div></details>}</section>;
+  const errorEvents = events.filter((event) => event.category === 'error');
+  const uniqueTools = [...new Set(toolCalls)];
+  if (!errorEvents.length && !uniqueTools.length && !toolMetrics.length) return null;
+  return <section className="agent-tool-events" aria-label="工具调用"><div className="agent-content-label">工具调用</div>{toolMetrics.length ? toolMetrics.map((metric, index) => <details className={metric.status === 'error' ? 'agent-tool-event agent-tool-event-error' : 'agent-tool-event'} key={`${metric.toolCallId ?? metric.toolName}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /><code>{metric.toolName}</code><span>{metric.status === 'error' ? '失败' : metric.status === 'running' ? '运行中' : '完成'}</span><small>{metric.durationMs !== undefined ? formatDuration(metric.durationMs) : '—'}</small></summary><div className="agent-tool-event-detail">输入 {metric.inputChars.toLocaleString('zh-CN')} 字符 · 输出 {metric.outputChars.toLocaleString('zh-CN')} 字符{metric.errorMessage ? ` · ${metric.errorMessage}` : ''}</div></details>) : uniqueTools.map((toolName) => <div className="agent-tool-event agent-tool-event-compact" key={toolName}><span className="agent-tool-event-status" aria-hidden="true" /><code>{toolName}</code><span>已调用</span></div>)}{errorEvents.map((event, index) => <details className="agent-tool-event agent-tool-event-error" key={`${event.type}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /><span>{event.label}</span><small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>)}</section>;
 }
 
 function formatDuration(durationMs: number) {
@@ -332,20 +381,11 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
   const contextLabel = metrics.contextUsage?.tokens === null || metrics.contextUsage?.tokens === undefined ? '未知' : `${metrics.contextUsage.tokens.toLocaleString('zh-CN')} / ${metrics.contextUsage.contextWindow.toLocaleString('zh-CN')}`;
   const sessionTotals = metrics.sessionTotals;
   return <section className="agent-metrics" aria-label="执行指标">
-    <div className="agent-metrics-summary" role="list" aria-label="执行指标摘要">
-      <span role="listitem"><strong>第 {metrics.turn} 轮</strong></span>
-      <span role="listitem">执行 {metrics.executionRounds} 轮</span>
-      <span role="listitem">耗时 {formatDuration(metrics.durationMs)}</span>
-      <span role="listitem">Token {tokenLabel}</span>
-      <span role="listitem">工具 {metrics.toolCallCount}/{metrics.toolResultCount}</span>
-      <span role="listitem">重试 {metrics.retryCount}</span>
-      <span role="listitem">压缩 {metrics.compactionCount}</span>
-      <span role="listitem">上下文 {contextLabel}</span>
-      <span role="listitem">事件 {metrics.eventCount}</span>
-    </div>
-    <details className="agent-metrics-details">
-      <summary>全部指标</summary>
       <div className="agent-metrics-grid">
+        <span>执行轮次<strong>{metrics.executionRounds}</strong></span>
+        <span>耗时<strong>{formatDuration(metrics.durationMs)}</strong></span>
+        <span>工具<strong>{metrics.toolCallCount}/{metrics.toolResultCount}</strong></span>
+        <span>上下文<strong>{contextLabel}</strong></span>
         <span>开始时间<strong>{formatMetricTime(metrics.startedAt)}</strong></span>
         <span>完成时间<strong>{formatMetricTime(metrics.completedAt)}</strong></span>
         <span>输入字符<strong>{metrics.inputChars.toLocaleString('zh-CN')}</strong></span>
@@ -375,13 +415,17 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
       {metrics.retries.length > 0 && <div className="agent-metric-list"><span>重试记录</span>{metrics.retries.map((item, index) => <small key={`${item.kind}-${item.attempt}-${index}`}>{item.kind} {item.attempt}/{item.maxAttempts} · {item.success === false ? '失败' : item.success === true ? '成功' : '进行中'} · {item.durationMs !== undefined ? formatDuration(item.durationMs) : '—'}</small>)}</div>}
       {tokens.source === 'estimated' && <small className="agent-metrics-note">当前 Pi 运行时没有返回供应商 usage 字段，Token 按文本长度估算，仅用于观察趋势。</small>}
       {tokens.source === 'unavailable' && <small className="agent-metrics-note">这条历史消息生成时尚未保存 Token usage，因此只展示可回溯的执行指标。</small>}
-    </details>
   </section>;
+}
+
+function AgentRunDetails({ response }: { response: AgentChatResponse }) {
+  const metrics = response.metrics;
+  return <details className="agent-run-details"><summary><span>运行详情</span><small>{formatDuration(metrics.durationMs)} · {metrics.toolCallCount} 个工具 · {metrics.eventCount} 个事件</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-run-details-body"><AgentToolEvents events={response.events} toolCalls={response.decision.toolCalls} toolMetrics={metrics.toolMetrics} /><AgentMetrics response={response} /></div></details>;
 }
 
 function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFeedback }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
   const feedback = message.feedback ?? null;
-  const feedbackReady = Boolean(message.response && message.id.startsWith('message_'));
+  const feedbackReady = Boolean(message.response && message.persisted);
   return <div className="agent-actions" aria-label="回答操作">
     <button type="button" className="agent-action-button" onClick={() => onCopy(message.id, message.text)} disabled={!message.text} aria-label={copiedMessageId === message.id ? '已复制回答' : '复制回答'} title={copiedMessageId === message.id ? '已复制' : '复制'}>{copiedMessageId === message.id ? <Check size={14} weight="bold" /> : <Copy size={14} />}</button>
     <span className="agent-actions-divider" aria-hidden="true" />
@@ -390,29 +434,29 @@ function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFee
   </div>;
 }
 
-function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
+function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const isWorking = !message.response;
-  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <><div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span></div><SourceList response={message.response} /></div><AgentMetrics response={message.response} /></>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</section>;
+  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}{message.response && <AgentRunDetails response={message.response} />}</section>;
 }
 
 type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem };
 
-function AgentTurn({ thinking, assistant, showThinking, copiedMessageId, feedbackPending, onCopy, onFeedback }: { thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; showThinking: boolean; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
+function AgentTurn({ thinking, assistant, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const response = assistant?.response;
   const isWorking = !response;
-  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : '刚刚'}</span></div>{thinking && showThinking && <ThinkingBlock message={thinking} />}{assistant && <AgentToolEvents events={response?.events ?? []} toolCalls={response?.decision.toolCalls ?? []} toolMetrics={response?.metrics.toolMetrics ?? []} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}</div></article>;
+  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
-  return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>你</strong><span>刚刚</span></div><p>{message.text}</p></div></article>;
+  return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>你</strong><span>{conversationTime(message.createdAt)}</span></div><p>{message.text}</p></div></article>;
 }
 
-function ConversationStream({ messages, showThinking, copiedMessageId, feedbackPending, onCopy, onFeedback }: { messages: ConversationItem[]; showThinking: boolean; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
+function ConversationStream({ messages, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { messages: ConversationItem[]; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const nodes: ReactNode[] = [];
   let turn: AgentTurnMessages | null = null;
   const flushTurn = () => {
     if (!turn) return;
-    nodes.push(<AgentTurn key={`agent-turn-${turn.turnId}`} thinking={turn.thinking} assistant={turn.assistant} showThinking={showThinking} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />);
+    nodes.push(<AgentTurn key={`agent-turn-${turn.turnId}`} thinking={turn.thinking} assistant={turn.assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />);
     turn = null;
   };
   for (const message of messages) {
@@ -550,8 +594,8 @@ function SessionJsonlViewer({ document }: { document: AgentResourceDocument }) {
       <div><span>工具结果</span><strong>{toolCount}</strong></div>
       <div><span>Total Token</span><strong>{usage.total.toLocaleString('zh-CN')}</strong></div>
       <div><span>缓存读取</span><strong>{usage.cacheRead.toLocaleString('zh-CN')}</strong></div>
-      <div><span>成本</span><strong>{usage.cost ? usage.cost.toFixed(6) : '0'}</strong></div>
-      {latestContextRecord ? <div><span>当前上下文</span><strong>{jsonNumber(latestContextRecord.tokens).toLocaleString('zh-CN')} / {jsonNumber(latestContextRecord.contextWindow).toLocaleString('zh-CN')}</strong></div> : null}
+      <div><span>成本（USD）</span><strong>{usage.cost ? usage.cost.toFixed(6) : '0'}</strong></div>
+      {latestContextRecord ? <div className="session-jsonl-summary-context"><span>当前上下文</span><strong>{jsonNumber(latestContextRecord.tokens).toLocaleString('zh-CN')} / {jsonNumber(latestContextRecord.contextWindow).toLocaleString('zh-CN')}</strong></div> : null}
     </section>
     <div className="session-jsonl-toolbar">
       <label><MagnifyingGlass size={13} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选 entry、工具或内容" aria-label="筛选 Session 文件" /></label>
@@ -566,29 +610,69 @@ function SessionJsonlViewer({ document }: { document: AgentResourceDocument }) {
 
 function ResourceViewer({ document, loading, error, onClose }: { document: AgentResourceDocument | null; loading: boolean; error: string; onClose: () => void }) {
   const isSession = document?.resource.kind === 'session';
-  const isRawText = document?.resource.path.endsWith('.jsonl');
-  return <section className="resource-viewer" aria-label="项目文件预览" aria-busy={loading}>
+  const isJson = document?.resource.path.endsWith('.json');
+  const isRawText = document?.resource.path.endsWith('.jsonl') || isJson;
+  const [copiedPath, setCopiedPath] = useState(false);
+  let displayContent = document?.content ?? '';
+  if (isJson) {
+    try {
+      displayContent = JSON.stringify(JSON.parse(displayContent), null, 2);
+    } catch {
+      // Preserve malformed JSON verbatim so the user can inspect the source.
+    }
+  }
+  return <motion.section className="resource-viewer" aria-label="项目文件预览" aria-busy={loading} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: -4, transition: { duration: 0.08, ease: 'easeIn' } }}>
     <header className="resource-viewer-header">
       <button type="button" className="resource-viewer-close" onClick={onClose} aria-label="返回聊天" title="返回聊天"><CaretLeft size={16} /></button>
       <div className="resource-viewer-heading">
         <strong>{document?.resource.title ?? '项目文件'}</strong>
         <span>{document?.resource.path ?? '正在读取文件内容'}</span>
       </div>
+      {document && <button type="button" className="resource-viewer-copy" onClick={() => { void copyText(document.resource.path).then(() => { setCopiedPath(true); window.setTimeout(() => setCopiedPath(false), 1600); }).catch(() => setCopiedPath(false)); }} aria-label={copiedPath ? '已复制文件路径' : '复制文件路径'} title={copiedPath ? '已复制' : '复制路径'}>{copiedPath ? <Check size={14} weight="bold" /> : <Copy size={14} />}</button>}
       <span className="resource-viewer-kind">{document ? fileKindLabel(document.resource) : 'MD'}</span>
     </header>
     <div className="resource-viewer-scroll">
       {loading && <div className="resource-viewer-state" role="status"><strong>正在读取文件</strong><span>只读内容即将显示在这里。</span></div>}
       {!loading && error && <div className="resource-viewer-state resource-viewer-error" role="alert"><strong>文件读取失败</strong><span>{error}</span><button type="button" onClick={onClose}>返回聊天</button></div>}
-      {!loading && !error && document && (isSession ? <SessionJsonlViewer document={document} /> : isRawText ? <pre className="resource-viewer-raw">{document.content}</pre> : <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{document.content}</Markdown></article>)}
+      {!loading && !error && document && (isSession ? <SessionJsonlViewer document={document} /> : isRawText ? <pre className="resource-viewer-raw">{displayContent}</pre> : <article className="resource-viewer-body markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{markdownBody(document.content)}</Markdown></article>)}
     </div>
-  </section>;
+  </motion.section>;
 }
 
-function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSession }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void; onNewSession: () => void }) {
-  return <nav className="workspace-session-list" aria-label="会话列表"><button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>{sessions.length ? <div className="session-rows">{sessions.map((session) => { const isCurrent = session.id === currentSessionId; const messageCount = session.messages.filter((message) => message.kind === 'user').length; return <button type="button" className={isCurrent ? 'session-row session-row-current' : 'session-row'} key={session.id} onClick={() => onSelect(session.id)} disabled={pending && !isCurrent} aria-current={isCurrent ? 'page' : undefined} title={sessionTitle(session.messages)}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{sessionTitle(session.messages)}</strong><small>{messageCount ? `${messageCount} 次提问` : '尚未提问'}</small></span>{isCurrent && <span className="session-row-state">当前</span>}</button>; })}</div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}</nav>;
+function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSession, onRename, onDelete }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void; onNewSession: () => void; onRename: (id: string, title: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
+  const [editingId, setEditingId] = useState('');
+  const [draftTitle, setDraftTitle] = useState('');
+  const [savingId, setSavingId] = useState('');
+
+  const saveTitle = async (session: SessionRecord) => {
+    const title = draftTitle.trim();
+    if (!title) return;
+    setSavingId(session.id);
+    try {
+      await onRename(session.id, title);
+      setEditingId('');
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  return <nav className="workspace-session-list" aria-label="会话列表">
+    <button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>
+    {sessions.length ? <div className="session-rows"><AnimatePresence initial={false} mode="popLayout">{sessions.map((session) => {
+      const isCurrent = session.id === currentSessionId;
+      const title = sessionTitle(session);
+      const messageCount = session.messages.filter((message) => message.kind === 'user').length;
+      return <motion.div key={session.id} layout="position" layoutDependency={sessions} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: motionEase, layout: { duration: 0.18, ease: motionEase } }}>
+        {editingId === session.id ? <form className="session-rename" onSubmit={(event) => { event.preventDefault(); void saveTitle(session); }}><input autoFocus value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setEditingId(''); }} aria-label="会话名称" maxLength={80} /><button type="submit" disabled={!draftTitle.trim() || savingId === session.id} aria-label="保存会话名称"><Check size={14} /></button><button type="button" onClick={() => setEditingId('')} aria-label="取消重命名"><X size={14} /></button></form> : <div className={isCurrent ? 'session-row-shell session-row-current' : 'session-row-shell'}>
+          <button type="button" className="session-row" onClick={() => onSelect(session.id)} disabled={pending && !isCurrent} aria-current={isCurrent ? 'page' : undefined} title={title}><span className="session-row-icon"><ChatCircle size={15} weight={isCurrent ? 'fill' : 'duotone'} /></span><span className="session-row-copy"><strong>{title}</strong><small>{messageCount ? `${messageCount} 次提问` : '尚未提问'} · {conversationTime(session.updatedAt)}</small></span>{isCurrent && <span className="session-row-state">当前</span>}</button>
+          <div className="session-row-actions"><button type="button" onClick={() => { setEditingId(session.id); setDraftTitle(title); }} aria-label={`重命名${title}`} title="重命名"><PencilSimple size={13} /></button><button type="button" onClick={() => { if (window.confirm(`删除会话“${title}”？此操作无法撤销。`)) void onDelete(session.id); }} aria-label={`删除${title}`} title="删除"><Trash size={13} /></button></div>
+        </div>}
+      </motion.div>;
+    })}</AnimatePresence></div> : <div className="session-empty"><ChatCircle size={17} /><strong>暂无会话</strong><span>开始对话后，会话会显示在这里。</span></div>}
+  </nav>;
 }
 
-function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRefreshWorkspace: () => void; onLogout: () => void }) {
+function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
   const showingSessions = view === 'sessions';
   const normalizedFilter = filter.trim().toLocaleLowerCase();
   const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
@@ -598,6 +682,31 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
     const nextView = event.key === 'Home' || (event.key === 'ArrowLeft' && showingSessions) || (event.key === 'ArrowRight' && !showingSessions) ? 'sessions' : 'files';
     onViewChange(nextView);
     requestAnimationFrame(() => document.getElementById(`workspace-tab-${nextView}`)?.focus());
+  };
+  const handleTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const current = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="treeitem"]');
+    if (!current) return;
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')];
+    const index = items.indexOf(current);
+    if (index < 0) return;
+    event.preventDefault();
+    if (event.key === 'Home') return items[0]?.focus();
+    if (event.key === 'End') return items.at(-1)?.focus();
+    if (event.key === 'ArrowDown') return items[index + 1]?.focus();
+    if (event.key === 'ArrowUp') return items[index - 1]?.focus();
+    const expanded = current.getAttribute('aria-expanded');
+    if (event.key === 'ArrowRight') {
+      if (expanded === 'false') current.click();
+      else if (expanded === 'true') items[index + 1]?.focus();
+      return;
+    }
+    if (expanded === 'true') return current.click();
+    const level = Number(current.getAttribute('aria-level') ?? 1);
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const candidate = items[cursor]!;
+      if (Number(candidate.getAttribute('aria-level') ?? 1) < level) return candidate.focus();
+    }
   };
   return (
     <aside id="project-workspace" className={open ? 'workspace-panel' : 'workspace-panel workspace-panel-collapsed'} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
@@ -630,7 +739,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
           </nav>
           <div id="workspace-view-panel" className="workspace-view-panel" role="tabpanel" aria-labelledby={showingSessions ? 'workspace-tab-sessions' : 'workspace-tab-files'} tabIndex={0}>
             {showingSessions ? (
-              <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onNewSession={onNewSession} />
+              <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onNewSession={onNewSession} onRename={onRenameSession} onDelete={onDeleteSession} />
             ) : (
               <>
                 <div className="workspace-toolbar">
@@ -640,7 +749,7 @@ function WorkspacePanel({ workspace, sessions, currentSessionId, view, tree, fil
                   </label>
                   <button type="button" className={refreshing ? 'workspace-refresh-button is-refreshing' : 'workspace-refresh-button'} onClick={onRefreshWorkspace} disabled={refreshing} aria-busy={refreshing} aria-label={refreshing ? '正在刷新项目资源' : '刷新项目资源'} title={refreshing ? '正在刷新' : '刷新项目资源'}><ArrowsClockwise size={14} /></button>
                 </div>
-                <div className="workspace-tree" aria-label="Pi 项目文件树">
+                <div className="workspace-tree" role="tree" aria-label="Pi 项目文件树" onKeyDown={handleTreeKeyDown}>
                   {hasMatchingResource ? <FileTree node={tree} depth={0} query={normalizedFilter} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} /> : <div className="workspace-empty-filter" role="status"><MagnifyingGlass size={17} /><strong>没有匹配的文件</strong><span>换个关键词试试，或清空筛选。</span></div>}
                 </div>
               </>
@@ -669,9 +778,9 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('files');
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [sessionRecords, setSessionRecords] = useState<SessionRecord[]>([]);
+  const [draftSessionIds, setDraftSessionIds] = useState<Set<string>>(() => new Set());
   const [sessionsReady, setSessionsReady] = useState(false);
-  const [showThinking, setShowThinking] = useState(true);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState('');
   const [feedbackPending, setFeedbackPending] = useState('');
   const [error, setError] = useState('');
@@ -681,9 +790,11 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const resourceRequestRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const followConversationRef = useRef(true);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
-  const sessions = sessionRecords;
+  const sessions = useMemo(() => sortSessionRecords(sessionRecords), [sessionRecords]);
+  const currentSession = sessionRecords.find((session) => session.id === sessionId);
 
   useEffect(() => {
     setCollapsedPaths(new Set(collectCollapsedFolders(fileTree)));
@@ -719,7 +830,11 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const loadSessions = async () => {
       try {
         let records = await fetchSessionRecords();
-        if (!records.length) records = [await createSessionRecord()];
+        if (!records.length) {
+          const draft = emptySessionRecord();
+          records = [draft];
+          setDraftSessionIds(new Set([draft.id]));
+        }
         if (!active) return;
         const initial = records[0]!;
         followConversationRef.current = true;
@@ -728,10 +843,10 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
         setMessages(initial.messages);
       } catch {
         if (!active) return;
-        const now = new Date().toISOString();
-        const fallbackId = newSessionId();
-        setSessionRecords([{ id: fallbackId, position: 0, createdAt: now, updatedAt: now, messages: [] }]);
-        setSessionId(fallbackId);
+        const draft = emptySessionRecord();
+        setSessionRecords([draft]);
+        setDraftSessionIds(new Set([draft.id]));
+        setSessionId(draft.id);
         setMessages([]);
       } finally {
         if (active) setSessionsReady(true);
@@ -742,10 +857,13 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   }, []);
 
   async function syncSession(id: string) {
+    const wasDraft = draftSessionIds.has(id);
     try {
       const record = await fetchSessionRecord(id);
-      setSessionRecords((current) => current.some((session) => session.id === id) ? current.map((session) => session.id === id ? record : session) : [...current, record]);
+      setSessionRecords((current) => sortSessionRecords(current.some((session) => session.id === id) ? current.map((session) => session.id === id ? record : session) : [...current, record]));
+      setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (id === sessionId) setMessages(record.messages);
+      if (wasDraft) void refreshWorkspace();
     } catch {
       // Keep the streamed UI when persistence is temporarily unavailable.
     }
@@ -754,18 +872,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   async function copyAnswer(messageId: string, text: string) {
     if (!text) return;
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const helper = document.createElement('textarea');
-        helper.value = text;
-        helper.style.position = 'fixed';
-        helper.style.opacity = '0';
-        document.body.appendChild(helper);
-        helper.select();
-        document.execCommand('copy');
-        helper.remove();
-      }
+      await copyText(text);
       setCopiedMessageId(messageId);
       window.setTimeout(() => setCopiedMessageId((current) => current === messageId ? '' : current), 1600);
     } catch {
@@ -774,7 +881,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   }
 
   async function updateFeedback(messageId: string, feedback: AgentFeedback | null) {
-    if (!sessionId || !messageId.startsWith('message_')) return;
+    if (!sessionId) return;
     setFeedbackPending(messageId);
     try {
       const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`, {
@@ -784,7 +891,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       });
       if (!response.ok) throw new Error('回答反馈暂时无法保存');
       const record = await response.json() as SessionRecord;
-      setSessionRecords((current) => current.map((session) => session.id === record.id ? record : session));
+      setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === record.id ? record : session)));
       if (record.id === sessionId) setMessages(record.messages);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '回答反馈暂时无法保存');
@@ -793,21 +900,54 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     }
   }
 
-  async function resetSession() {
+  function resetSession() {
     if (pending || !sessionsReady) return;
-    let record: SessionRecord;
-    try {
-      record = await createSessionRecord();
-    } catch {
-      const now = new Date().toISOString();
-      record = { id: newSessionId(), position: sessionRecords.length, createdAt: now, updatedAt: now, messages: [] };
+    if (currentSession && currentSession.messages.length === 0) {
+      setWorkspaceView('sessions');
+      closeResourceViewer();
+      return;
     }
-    setSessionRecords((current) => [...current, record]);
+    const record = emptySessionRecord(sessionRecords.length);
+    setDraftSessionIds((current) => new Set(current).add(record.id));
+    setSessionRecords((current) => [record, ...current]);
     followConversationRef.current = true;
     setSessionId(record.id);
     setMessages(record.messages);
     setError('');
     closeResourceViewer();
+  }
+
+  async function renameSession(id: string, title: string) {
+    try {
+      const record = draftSessionIds.has(id) ? { ...sessionRecords.find((session) => session.id === id)!, title, updatedAt: new Date().toISOString() } : await renameSessionRecord(id, title);
+      setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === id ? record : session)));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '会话名称暂时无法保存');
+      throw requestError;
+    }
+  }
+
+  async function deleteSession(id: string) {
+    try {
+      if (!draftSessionIds.has(id)) await deleteSessionRecord(id);
+      let remaining = sessionRecords.filter((session) => session.id !== id);
+      setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      if (!remaining.length) {
+        const draft = emptySessionRecord();
+        remaining = [draft];
+        setDraftSessionIds(new Set([draft.id]));
+      }
+      setSessionRecords(remaining);
+      if (id === sessionId) {
+        const next = remaining[0]!;
+        setSessionId(next.id);
+        setMessages(next.messages);
+        closeResourceViewer();
+      }
+      void refreshWorkspace();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '会话暂时无法删除');
+    }
   }
 
   function selectSession(nextSessionId: string) {
@@ -838,6 +978,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const requestId = resourceRequestRef.current + 1;
     resourceRequestRef.current = requestId;
     setSelectedResource(path);
+    setWorkspaceView('files');
+    setWorkspaceOpen(true);
     setResourceDocument(null);
     setResourceError('');
     setResourceLoading(true);
@@ -872,11 +1014,12 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const userId = `${Date.now()}-user`;
     const thinkingId = `${Date.now()}-thinking`;
     const assistantId = `${Date.now()}-assistant`;
-    const optimisticUser: UserMessageItem = { id: userId, kind: 'user', text, turnId: assistantId };
+    const createdAt = new Date().toISOString();
+    const optimisticUser: UserMessageItem = { id: userId, kind: 'user', text, turnId: assistantId, createdAt };
     setPrompt('');
     setError('');
-    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming' }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '' }]);
-    setSessionRecords((current) => current.map((session) => session.id === sessionId ? { ...session, messages: [...session.messages, optimisticUser] } : session));
+    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false }]);
+    setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === sessionId ? { ...session, updatedAt: createdAt, messages: [...session.messages, optimisticUser] } : session)));
     setPending(true);
     let streamedAnswer = '';
     let streamedThinking = '';
@@ -897,7 +1040,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
     };
     try {
-      const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, turnId: assistantId, debug: true }) });
+      const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
       if (!response.ok) throw new Error('智能体网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
         if (event.type === 'text_delta') {
@@ -912,7 +1055,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       cancelStreamFlush();
       setMessages((current) => current.map((item) => {
         if (item.id === thinkingId && item.kind === 'thinking') return { ...item, status: 'complete', text: streamedThinking };
-        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: data.answer, response: data };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: data.answer, response: data, createdAt: data.createdAt };
         return item;
       }));
       await syncSession(sessionId);
@@ -928,8 +1071,10 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
 
   return (
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
+      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
       <main className="session-panel">
-        {resourceDocument || resourceLoading || resourceError ? <ResourceViewer document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <section className="conversation-stage">
+        <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: 'easeIn' } }}>
+          <header className="conversation-header"><div><strong>{currentSession ? sessionTitle(currentSession) : 'Pi 会话'}</strong><span>{currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />只读上下文</span></header>
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
             const node = event.currentTarget;
             followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
@@ -938,34 +1083,33 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
               <div className="welcome-state">
                 <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
                 <h1>你好，我是 Pi</h1>
-                <p>连接本地文件和知识库，开始一次 Pi 会话。</p>
+                <p>从项目文件、知识库或 Agent 运行机制开始提问。</p>
+                <div className="welcome-suggestions" aria-label="建议问题">
+                  {['解释当前项目的 Pi Session 生命周期', '这个 Agent 能调用哪些工具？', '如何开发一个新的只读工具？'].map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
+                </div>
               </div>
             ) : (
               <div className="message-list">
-                <ConversationStream messages={messages} showThinking={showThinking} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={copyAnswer} onFeedback={updateFeedback} />
+                <ConversationStream messages={messages} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={copyAnswer} onFeedback={updateFeedback} onOpenResource={openResource} />
               </div>
             )}
           </div>
           <div className="composer-wrap">
             <div className="composer">
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? '向项目提问…' : '正在加载会话…'} aria-label="向项目提问" rows={1} disabled={!sessionsReady || pending} />
+              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? '向项目提问…' : '正在加载会话…'} aria-label="向项目提问" rows={1} disabled={!sessionsReady || pending} />
               <div className="composer-toolbar">
-                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />项目文件</button>
-                <button type="button" className={showThinking ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setShowThinking((visible) => !visible)} aria-pressed={showThinking} aria-label={showThinking ? '隐藏思考过程' : '显示思考过程'} title={showThinking ? '隐藏思考过程' : '显示思考过程'}>{showThinking ? '隐藏思考' : '显示思考'}</button>
+                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
+                <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>
                 <span className="composer-toolbar-spacer" />
-                <div className="composer-more-wrap">
-                  <button type="button" className={modelMenuOpen ? 'composer-tool-button composer-tool-active' : 'composer-tool-button'} onClick={() => setModelMenuOpen((openState) => !openState)} aria-expanded={modelMenuOpen} aria-controls="model-selection-menu" aria-label={`当前模型 ${workspace.model.model ?? '本地降级'}`} title="查看当前模型" aria-haspopup="dialog"><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span><CaretDown size={12} /></button>
-                  {modelMenuOpen && <div id="model-selection-menu" className="composer-more-menu model-selection-menu" role="dialog" aria-labelledby="model-selection-title"><strong id="model-selection-title">当前模型</strong><span>{workspace.model.model ?? '本地降级模式'}</span><small>{workspace.model.providerConfigured ? '已配置模型密钥' : '本地降级模式'}</small></div>}
-                </div>
+                <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '本地降级'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '当前使用本地降级模式'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span></div>
                 <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
               </div>
             </div>
             <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>
           </div>
-        </section>}
+        </motion.section>}</AnimatePresence>
       </main>
-      <WorkspacePanel workspace={workspace} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
-      {error && <div className="error-toast" role="alert"><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></div>}
+      <AnimatePresence>{error && <motion.div className="error-toast" role="alert" initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.12, ease: 'easeIn' } }}><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></motion.div>}</AnimatePresence>
     </div>
   );
 }
@@ -999,8 +1143,8 @@ export default function App() {
 
   if (authLoading || !authStatus) return <AuthLoadingScreen />;
   if (authStatus.authRequired && !authStatus.authenticated) return <FeishuLoginPage status={authStatus} error={authError} onRetry={() => { setAuthError(''); void loadAuthStatus(); }} />;
-  return <WorkbenchApp authUser={authStatus.user} onLogout={async () => {
+  return <MotionConfig reducedMotion="user"><WorkbenchApp authUser={authStatus.user} onLogout={async () => {
     await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' });
     setAuthStatus((current) => current ? { ...current, authenticated: false, user: undefined } : current);
-  }} />;
+  }} /></MotionConfig>;
 }

@@ -87,6 +87,9 @@ export interface QuerySource {
 
 export type AgentChatRoute = 'workspace' | 'knowledge';
 
+/** Thinking is an explicit per-request capability, never inferred from the user message. */
+export type AgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface AgentResourceSummary {
   path: string;
   kind: 'skill' | 'prompt' | 'knowledge' | 'session' | 'extension' | 'theme' | 'settings' | 'system' | 'file';
@@ -276,6 +279,7 @@ export interface AgentChatRequest {
   message: string;
   sessionId?: string;
   turnId?: string;
+  thinkingLevel?: AgentThinkingLevel;
   debug?: boolean;
 }
 
@@ -300,7 +304,7 @@ export interface AgentChatResponse {
     model?: string;
     responseModel?: string;
     responseId?: string;
-    thinkingLevel?: string;
+    thinkingLevel?: AgentThinkingLevel;
   };
   metrics: AgentTurnMetrics;
   latencyMs: number;
@@ -308,12 +312,13 @@ export interface AgentChatResponse {
 }
 
 export type AgentSessionMessage =
-  | { id: string; kind: 'user'; text: string; turnId?: string }
-  | { id: string; kind: 'thinking'; turnId: string; text: string; status: 'streaming' | 'complete' }
-  | { id: string; kind: 'assistant'; turnId: string; text: string; response?: AgentChatResponse; feedback?: AgentFeedback | null };
+  | { id: string; kind: 'user'; text: string; turnId?: string; createdAt?: string }
+  | { id: string; kind: 'thinking'; turnId: string; text: string; status: 'streaming' | 'complete'; createdAt?: string }
+  | { id: string; kind: 'assistant'; turnId: string; text: string; response?: AgentChatResponse; feedback?: AgentFeedback | null; createdAt?: string; persisted?: boolean };
 
 export interface AgentSessionRecord {
   id: string;
+  title?: string;
   position: number;
   createdAt: string;
   updatedAt: string;

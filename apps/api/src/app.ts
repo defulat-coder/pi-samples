@@ -6,7 +6,7 @@ import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
 import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore } from '@pi-workbench/pi-agent';
+import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { createFeishuAuth } from './auth.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -17,6 +17,22 @@ const WorkspaceRecordQuerySchema = Type.Object({
   search: Type.Optional(Type.String({ maxLength: 200 })),
   kind: Type.Optional(Type.Union([Type.Literal('experiment'), Type.Literal('runbook'), Type.Literal('decision'), Type.Literal('fixture')])),
   status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('draft'), Type.Literal('archived')])),
+});
+
+const AgentChatRequestSchema = Type.Object({
+  message: Type.String({ minLength: 1, maxLength: 2000 }),
+  sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  thinkingLevel: Type.Optional(Type.Union([
+    Type.Literal('off'),
+    Type.Literal('minimal'),
+    Type.Literal('low'),
+    Type.Literal('medium'),
+    Type.Literal('high'),
+    Type.Literal('xhigh'),
+    Type.Literal('max'),
+  ])),
+  debug: Type.Optional(Type.Boolean()),
 });
 
 type AppDependencies = { sessionStore?: PiFileSessionStore };
@@ -150,6 +166,24 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return session;
     });
 
+    v1.patch<{ Params: { id: string }; Body: { title: string } }>('/agent/sessions/:id', {
+      schema: {
+        params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }),
+        body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) }),
+      },
+    }, async (request, reply) => {
+      const session = await sessions.setSessionTitle(request.params.id, request.body.title);
+      if (!session) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
+      return session;
+    });
+
+    v1.delete<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
+      if (!await sessions.getSession(request.params.id)) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
+      await piSessionRegistry.close(request.params.id);
+      await sessions.deleteSession(request.params.id);
+      return reply.code(204).send();
+    });
+
     v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { feedback: AgentFeedback | null } }>('/agent/sessions/:sessionId/messages/:messageId/feedback', {
       schema: {
         params: Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 120 }), messageId: Type.String({ minLength: 1, maxLength: 160 }) }),
@@ -167,18 +201,18 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return document;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request) => {
+    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: AgentChatRequestSchema } }, async (request) => {
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
       await sessions.ensureSession(sessionId);
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-      const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, { turnNumber });
+      const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
       if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
       else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
       return response;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2000 }), sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })), debug: Type.Optional(Type.Boolean()) }) } }, async (request, reply) => {
+    v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: AgentChatRequestSchema } }, async (request, reply) => {
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
       await sessions.ensureSession(sessionId);
@@ -204,11 +238,13 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
         }
       };
 
-      send('start', { sessionId, model: getPiModelStatus(config.PI_AGENT_ENABLED) });
+      const thinkingLevel = request.body.thinkingLevel ?? getPiModelStatus(config.PI_AGENT_ENABLED).thinkingLevel;
+      send('start', { sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
       try {
         let sawTextDelta = false;
         const response = await askPiAgent(request.body.message, { sessionId, resources: workspaceResources(), searchKnowledge }, {
           turnNumber,
+          thinkingLevel,
           onEventSummary: (event) => send('event', { event }),
           onTextDelta: (delta) => { if (delta) { sawTextDelta = true; send('text_delta', { delta }); } },
           onThinkingDelta: (delta) => { if (delta) send('thinking_delta', { delta }); },
