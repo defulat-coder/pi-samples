@@ -40,6 +40,7 @@
 
 ## Project Boundaries
 
+- Do not design or implement for backward compatibility. Prefer current best practices, and do not add compatibility layers or workarounds unless explicitly requested.
 - `apps/api`: request validation, session identity, capability injection, SSE/JSON transport; no semantic pre-routing.
 - `apps/web`: conversation UI and streaming Inspector; no Pi SDK or provider key.
 - `packages/pi-agent`: Agent catalog, session lifecycle, Pi model/runtime setup, capability-specific tool registration, event normalization.
