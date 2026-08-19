@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AgentThinkingLevel, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight';
@@ -26,6 +26,8 @@ import { X } from '@phosphor-icons/react/dist/icons/X';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { applyAgentStreamEvent, buildToolActivities, createLiveTurnProcess, isVisibleProcessEvent, type ToolActivity } from './stream-process.js';
+
+const BusinessPresentationView = lazy(() => import('./business-presentation.js').then((module) => ({ default: module.BusinessPresentationView })));
 
 type UserMessageItem = Extract<AgentSessionMessage, { kind: 'user' }>;
 type ThinkingMessageItem = Extract<AgentSessionMessage, { kind: 'thinking' }>;
@@ -68,7 +70,7 @@ const fallbackResources: AgentResourceSummary[] = [
 
 const fallbackAgents: WorkbenchAgentDefinition[] = [
   { id: 'knowledge', name: '知识库问答', description: '基于项目文件和 Markdown 知识库提供可引用的回答。', capabilityLabel: '项目知识 · 只读', tools: ['read', 'search_knowledge'], welcomeTitle: '你好，我是知识库问答智能体', welcomeDescription: '从项目文件、知识库或 Pi 运行机制开始提问。', suggestions: ['解释当前项目的 Pi Session 生命周期', '这个智能体能调用哪些工具？', '如何开发一个新的只读工具？'] },
-  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？', '查看近一年月度 GMV 和订单趋势'] },
+  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以自由组合区域、渠道、品类和时间维度，查询销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '按月对比各渠道近 90 天退款后销售额趋势', '直播渠道各区域、品类的退款率排名', '查看近一年月度 GMV 和订单趋势'] },
 ];
 
 const fallbackWorkspace: WorkspaceSnapshot = {
@@ -468,7 +470,7 @@ function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFee
 
 function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const isWorking = !message.response;
-  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}{message.response && <AgentRunDetails response={message.response} />}</section>;
+  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.response?.analysis ? <Suspense fallback={<div className="business-presentation-loading">正在准备数据视图…</div>}><BusinessPresentationView analysis={message.response.analysis} /></Suspense> : null}{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}{message.response && <AgentRunDetails response={message.response} />}</section>;
 }
 
 type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem };

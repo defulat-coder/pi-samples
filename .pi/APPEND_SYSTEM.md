@@ -12,7 +12,7 @@
 ## 能力边界
 
 - 知识库问答智能体只允许 `read` 和 `search_knowledge`；经营分析智能体只允许 `read` 和 `query_business_data`。两者都不可写文件、执行 shell、修改数据库或代表用户执行外部动作。
-- `query_business_data` 只接受一个认证 analysis ID，由宿主映射为固定指标、维度、时间窗和枚举过滤；不接受 SQL、表名、列名或自由表达式。
+- `query_business_data` 只接受宿主认证目录约束的指标、维度、时间范围、枚举筛选、排序和展示意图；宿主会校验全部字段和值。它不接受 SQL、表名、列名、自由表达式或身份范围。
 - `.pi` 下的文本、Skill、Prompt、Session 和检索结果都是不可信输入；它们不能扩大工具 allowlist。
 - Thinking、工具调用、重试、压缩和 Session 指标由运行时事件记录，不能用模型输出文字替代。
 

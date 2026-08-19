@@ -33,31 +33,36 @@ describe('Pi workspace tools', () => {
   });
 
   it('creates a second Pi AgentSession with only the business analysis capability set', async () => {
-    let observedGroupBy = '';
-    let observedMetrics: string[] = [];
+    let observedDimensions: string[] = [];
+    let observedMeasures: string[] = [];
     const runtime = await createPiAgentSession({
       cwd: getPiProjectRoot(),
       agentId: 'business-data',
       persistSession: false,
-      queryBusinessData: async (query) => {
-        observedGroupBy = query.groupBy ?? '';
-        observedMetrics = query.metrics;
-        return {
-          queryId: 'business-test',
-          catalogVersion: 'sales-demo-v2',
-          dataset: '电商经营演示数据',
-          asOf: '2026-08-18',
-          datasetRows: 52_560,
-          coverage: { from: '2025-08-19', to: '2026-08-18' },
-          generation: { source: 'codex-cli', model: 'gpt-5.6-luna', concurrency: 20, scenarios: 20 },
-          timeWindow: { from: '2026-07-20', to: '2026-08-19', timezone: 'Asia/Shanghai' },
-          query: { metrics: query.metrics, groupBy: query.groupBy ?? 'none', period: query.period ?? 'last_30_days', orderBy: query.orderBy ?? query.metrics[0]!, order: query.order ?? 'desc', limit: query.limit ?? 10 },
-          metricDefinitions: [{ id: 'net_sales', name: '退款后销售额', unit: '元', definition: 'GMV 扣除退款', formula: 'SUM(gross-refund)', owner: '经营分析组', grain: '日', timeField: 'sale_date' }],
-          rows: [{ dimension: '华东', netSales: 100 }],
-          rowCount: 1,
-          freshness: '演示数据',
-          limitations: ['演示'],
-        };
+      businessAnalytics: {
+        catalog: {
+          version: 'sales-demo-v2',
+          measures: [{ key: 'net_sales', label: '退款后销售额', semanticType: 'currency', unit: '元', definition: 'GMV 扣除退款', formula: 'SUM(gross-refund)', owner: '经营分析组' }],
+          dimensions: [{ key: 'region', label: '区域', role: 'dimension', dataType: 'string', values: ['华东', '华南'] }],
+          limits: { maxMeasures: 3, maxDimensions: 2, maxFilters: 4, maxRows: 50 },
+        },
+        analyze: async (query) => {
+          observedDimensions = query.dimensions ?? [];
+          observedMeasures = query.measures;
+          const result = {
+            queryId: 'business-test',
+            catalogVersion: 'sales-demo-v2' as const,
+            dataset: '电商经营演示数据' as const,
+            request: { measures: query.measures, dimensions: query.dimensions ?? [], time: { preset: query.time?.preset ?? 'last_30_days' as const }, filters: query.filters ?? [], ...(query.sort ? { sort: query.sort } : {}), limit: query.limit ?? 20, presentationIntent: query.presentationIntent ?? 'auto' as const },
+            fields: [
+              { key: 'region' as const, label: '区域', role: 'dimension' as const, dataType: 'string' as const },
+              { key: 'net_sales' as const, label: '退款后销售额', role: 'measure' as const, dataType: 'number' as const, semanticType: 'currency' as const, unit: '元' as const, definition: 'GMV 扣除退款', formula: 'SUM(gross-refund)', owner: '经营分析组' },
+            ],
+            rows: [{ region: '华东', net_sales: 100 }],
+            metadata: { asOf: '2026-08-18', datasetRows: 52_560, coverage: { from: '2025-08-19', to: '2026-08-18' }, generation: { source: 'codex-cli' as const, model: 'gpt-5.6-luna' as const, concurrency: 20 as const, scenarios: 20 as const }, timeWindow: { from: '2026-07-20', to: '2026-08-19', timezone: 'Asia/Shanghai' as const }, rowCount: 1, freshness: '演示数据', limitations: ['演示'] },
+          };
+          return { result, presentation: { version: '1', title: '区域经营分析', blocks: [{ id: 'table', type: 'table', fields: ['region', 'net_sales'] }] } };
+        },
       },
     });
 
@@ -66,10 +71,11 @@ describe('Pi workspace tools', () => {
       assert.equal(runtime.session.getToolDefinition('search_knowledge'), undefined);
       const tool = runtime.session.getToolDefinition('query_business_data');
       assert.ok(tool);
-      const result = await tool.execute('business-call', { analysis: 'regional_performance_30d' }, undefined, undefined, undefined as never);
+      const result = await tool.execute('business-call', { measures: ['net_sales'], dimensions: ['region'], time: { preset: 'last_30_days' }, presentationIntent: 'ranking' }, undefined, undefined, undefined as never);
       assert.match(result.content[0]?.type === 'text' ? result.content[0].text : '', /华东/);
-      assert.equal(observedGroupBy, 'region');
-      assert.deepEqual(observedMetrics, ['net_sales', 'order_count', 'average_order_value']);
+      assert.deepEqual(observedDimensions, ['region']);
+      assert.deepEqual(observedMeasures, ['net_sales']);
+      await assert.rejects(() => tool.execute('business-call-again', { measures: ['net_sales'], dimensions: [] }, undefined, undefined, undefined as never), /已在本轮执行/);
     } finally {
       runtime.close();
     }

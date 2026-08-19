@@ -88,6 +88,7 @@ function readAgentResource(path: string): AgentResourceDocument | undefined {
 }
 
 export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
+  const businessAnalytics = { catalog: businessDataStore.catalog, analyze: (query: Parameters<typeof businessDataStore.analyze>[0]) => businessDataStore.analyze(query) };
   const sessions = dependencies.sessionStore ?? piFileSessionStore;
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
@@ -223,7 +224,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
         throw error;
       }
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-      const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { queryBusinessData: (query) => businessDataStore.query(query) }) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
+      const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { businessAnalytics }) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
       if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
       else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
       return response;
@@ -265,7 +266,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       send('start', { agentId, sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
       try {
         let sawTextDelta = false;
-        const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { queryBusinessData: (query) => businessDataStore.query(query) }) }, {
+        const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { businessAnalytics }) }, {
           turnNumber,
           thinkingLevel,
           onEventSummary: (event) => send('event', { event }),

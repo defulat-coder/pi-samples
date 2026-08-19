@@ -10,14 +10,17 @@ import {
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentThinkingLevel, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, BusinessQueryRequest, BusinessQueryResult, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
+import type { AgentChatResponse, AgentCompactionMetric, AgentContextUsage, AgentEventSummary, AgentResourceSummary, AgentRetryMetric, AgentSessionTotals, AgentThinkingLevel, AgentTokenUsage, AgentToolMetric, AgentTurnMetrics, BusinessAnalysis, BusinessAnalysisRequest, BusinessCatalogSummary, PiResourceDiagnostic, PiRuntimeResourceSnapshot, QuerySource, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { getPiSessionDir } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
 export type KnowledgeSearch = (query: string) => QuerySource[] | Promise<QuerySource[]>;
-export type BusinessQuery = (query: BusinessQueryRequest) => BusinessQueryResult | Promise<BusinessQueryResult>;
+export interface BusinessAnalytics {
+  catalog: BusinessCatalogSummary;
+  analyze: (query: BusinessAnalysisRequest) => BusinessAnalysis | Promise<BusinessAnalysis>;
+}
 export type PiThinkingLevel = AgentThinkingLevel;
 
 export interface PiAgentSessionOptions {
@@ -34,8 +37,8 @@ export interface PiAgentSessionOptions {
   projectExtensions?: boolean;
   /** Read-only knowledge consumer exposed to Pi as a tool. Pi decides when to invoke it. */
   searchKnowledge?: KnowledgeSearch;
-  /** Certified read-only business query consumer. Pi decides when to invoke it. */
-  queryBusinessData?: BusinessQuery;
+  /** Catalog-constrained read-only business analytics module. Pi decides when to invoke it. */
+  businessAnalytics?: BusinessAnalytics;
 }
 
 export interface PiModelConfig {
@@ -52,6 +55,7 @@ export interface PiModelStatus extends PiModelConfig {
 interface PiTurnState {
   sources: QuerySource[];
   toolCalls: string[];
+  businessAnalysis?: BusinessAnalysis;
 }
 
 type PiUsageLike = {
@@ -115,11 +119,12 @@ export interface AgentTurnResult {
   events: AgentEventSummary[];
   sources: QuerySource[];
   toolCalls: string[];
+  businessAnalysis?: BusinessAnalysis;
   observation: AgentObservation;
 }
 
 const knowledgeSystemPrompt = `你是 Pi Workbench 的知识库问答智能体。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。需要项目知识时优先调用 search_knowledge，只有摘要不足时再调用 read。`;
-const businessDataSystemPrompt = `你是 Pi Workbench 的经营分析智能体，仍由 Pi AgentSession 驱动。遵循已加载的 business-intelligence Skill：使用统一 KPI 口径和语义层，并按“结论、业务含义、建议”组织洞察。你的业务数据能力只有只读 query_business_data；read 只用于加载受信任的 Skill，不要读取其他项目文件，不要调用 search_knowledge，不要生成 SQL，也不要猜测数据。query_business_data 是认证分析目录，每个用户问题最多调用一次，并选择最匹配的 analysis ID：regional_performance_30d（区域排名）、channel_efficiency_30d（渠道效率）、live_category_refund_30d（直播品类退款）、monthly_gmv_trend_90d（近 90 天月度趋势）、monthly_gmv_trend_12m（近一年月度趋势）。遇到“营收”“收入”等未认证口径时先说明歧义并请用户在 GMV 与退款后销售额中选择。回答必须带上指标定义、时间范围、数据新鲜度、Luna 生成来源和演示数据限制。不得修改数据库或代表用户执行外部动作。`;
+const businessDataSystemPrompt = `你是 Pi Workbench 的经营分析智能体，仍由 Pi AgentSession 驱动。遵循已加载的 business-intelligence Skill：使用统一 KPI 口径和语义层，并按“结论、业务含义、建议”组织洞察。你的业务数据能力只有只读 query_business_data；read 只用于加载受信任的 Skill，不要读取其他项目文件，不要调用 search_knowledge，不要生成 SQL，也不要猜测数据。query_business_data 接受由宿主认证目录校验的指标、维度、时间范围、枚举筛选、排序和展示意图；每个用户问题最多调用一次。dimensions 是必填数组：需要分组时填写准确维度 ID，不需要分组时显式传空数组。优先把一个问题表达成一次多指标、多维度查询；无法由目录表达时明确说明限制并请求澄清。遇到“营收”“收入”等未认证口径时先说明歧义并请用户在 GMV 与退款后销售额中选择。回答必须带上指标定义、时间范围、数据新鲜度、Luna 生成来源和演示数据限制。不得修改数据库或代表用户执行外部动作。`;
 
 function projectExtensionsEnabled(explicit?: boolean): boolean {
   return explicit ?? process.env.PI_PROJECT_EXTENSIONS_ENABLED === 'true';
@@ -143,8 +148,8 @@ export interface PiWorkspaceContext {
   resources: AgentResourceSummary[];
   /** The API supplies the capability; Pi decides whether to invoke it. */
   searchKnowledge?: KnowledgeSearch;
-  /** The API supplies the capability; Pi decides whether to invoke it. */
-  queryBusinessData?: BusinessQuery;
+  /** The HTTP gateway supplies the module; Pi decides whether to invoke it. */
+  businessAnalytics?: BusinessAnalytics;
 }
 
 export const workbenchAgents: WorkbenchAgentDefinition[] = [
@@ -165,8 +170,8 @@ export const workbenchAgents: WorkbenchAgentDefinition[] = [
     capabilityLabel: '经营问数 · 只读',
     tools: ['read', 'query_business_data'],
     welcomeTitle: '你好，我是经营分析智能体',
-    welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。',
-    suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？', '查看近一年月度 GMV 和订单趋势'],
+    welcomeDescription: '可以自由组合区域、渠道、品类和时间维度，查询销售额、订单量、客单价与退款率。',
+    suggestions: ['近 30 天各区域退款后销售额和订单量排名', '按月对比各渠道近 90 天退款后销售额趋势', '直播渠道各区域、品类的退款率排名', '查看近一年月度 GMV 和订单趋势'],
   },
 ];
 
@@ -428,7 +433,7 @@ export async function createPiAgentSession(options: PiAgentSessionOptions = {}):
     sessionManager = existing ? SessionManager.open(existing.path, sessionDir, cwd) : SessionManager.create(cwd, sessionDir, options.sessionId ? { id: options.sessionId } : undefined);
   }
 
-  const businessTool = agentId === 'business-data' && options.queryBusinessData ? createBusinessQueryTool(options.queryBusinessData, turnState) : undefined;
+  const businessTool = agentId === 'business-data' && options.businessAnalytics ? createBusinessQueryTool(options.businessAnalytics, turnState) : undefined;
   const knowledgeTool = agentId === 'knowledge' && options.searchKnowledge ? createKnowledgeSearchTool(options.searchKnowledge, turnState) : undefined;
   const { session } = await createAgentSession({
     cwd,
@@ -493,38 +498,47 @@ function createKnowledgeSearchTool(searchKnowledge: KnowledgeSearch, state: PiTu
   });
 }
 
-function createBusinessQueryTool(queryBusinessData: BusinessQuery, state: PiTurnState) {
-  const analyses: Record<string, BusinessQueryRequest> = {
-    regional_performance_30d: { metrics: ['net_sales', 'order_count', 'average_order_value'], groupBy: 'region', period: 'last_30_days', orderBy: 'net_sales' },
-    channel_efficiency_30d: { metrics: ['net_sales', 'average_order_value', 'refund_rate'], groupBy: 'channel', period: 'last_30_days', orderBy: 'net_sales' },
-    live_category_refund_30d: { metrics: ['refund_rate', 'net_sales'], groupBy: 'category', period: 'last_30_days', channel: '直播', orderBy: 'refund_rate' },
-    monthly_gmv_trend_90d: { metrics: ['gross_sales', 'order_count'], groupBy: 'month', period: 'last_90_days', orderBy: 'gross_sales', order: 'asc' },
-    monthly_gmv_trend_12m: { metrics: ['gross_sales', 'order_count'], groupBy: 'month', period: 'all', orderBy: 'gross_sales', order: 'asc', limit: 20 },
-  };
+function createBusinessQueryTool(analytics: BusinessAnalytics, state: PiTurnState) {
+  const measures = analytics.catalog.measures.map((item) => `${item.key}（${item.label}）`).join('、');
+  const dimensions = analytics.catalog.dimensions.map((item) => `${item.key}（${item.label}）`).join('、');
+  const filterValues = analytics.catalog.dimensions.filter((item) => item.values?.length).map((item) => `${item.key}: ${item.values!.join('/')}`).join('；');
   return defineTool({
     name: 'query_business_data',
     label: 'Query business data',
-    description: 'Run exactly one certified e-commerce analysis. Choose regional_performance_30d for regional sales/order rankings, channel_efficiency_30d for channel sales/AOV/refund comparisons, live_category_refund_30d for refund ranking of categories in live commerce, monthly_gmv_trend_90d for the 90-day monthly GMV trend, or monthly_gmv_trend_12m for the full one-year trend. Never call the tool more than once for one user question.',
-    promptSnippet: 'query_business_data: choose one certified analysis ID and call once',
-    promptGuidelines: ['Choose exactly one analysis ID from the catalog.', 'Do not call the tool repeatedly or construct filters yourself.', 'Report the returned metric definitions, time window, Luna generation provenance, freshness and demo-data limitation.', 'Ask for clarification when none of the five analyses matches.'],
+    description: `Run one catalog-constrained e-commerce analysis. Measures: ${measures}. Dimensions: ${dimensions}. Allowed filter values: ${filterValues}. Combine up to ${analytics.catalog.limits.maxMeasures} measures and ${analytics.catalog.limits.maxDimensions} dimensions in one call. The dimensions array is required; send [] only for an ungrouped total. Never send SQL, table names or formulas.`,
+    promptSnippet: 'query_business_data: submit one catalog-constrained semantic query',
+    promptGuidelines: ['Call at most once for one user question.', 'Use exact catalog IDs for measures, dimensions and filters.', 'Use presentationIntent=trend for time trends, ranking for ordered categories, comparison for category comparisons, detail for table-first answers, otherwise auto.', 'Report field definitions, time window, Luna generation provenance, freshness and demo-data limitation.', 'Ask for clarification when the requested business concept is absent from the catalog.'],
     parameters: Type.Object({
-      analysis: Type.Union([Type.Literal('regional_performance_30d'), Type.Literal('channel_efficiency_30d'), Type.Literal('live_category_refund_30d'), Type.Literal('monthly_gmv_trend_90d'), Type.Literal('monthly_gmv_trend_12m')]),
+      measures: Type.Array(Type.String({ description: 'Exact certified measure ID' }), { minItems: 1, maxItems: analytics.catalog.limits.maxMeasures }),
+      dimensions: Type.Array(Type.String({ description: 'Exact certified dimension ID; use [] only for an ungrouped total' }), { maxItems: analytics.catalog.limits.maxDimensions }),
+      time: Type.Optional(Type.Object({ preset: Type.Optional(Type.Union([Type.Literal('last_7_days'), Type.Literal('last_30_days'), Type.Literal('last_90_days'), Type.Literal('all')])) })),
+      filters: Type.Optional(Type.Array(Type.Object({
+        field: Type.Union([Type.Literal('region'), Type.Literal('channel'), Type.Literal('category')]),
+        operator: Type.Union([Type.Literal('eq'), Type.Literal('in')]),
+        values: Type.Array(Type.String({ minLength: 1, maxLength: 40 }), { minItems: 1, maxItems: 6 }),
+      }), { maxItems: analytics.catalog.limits.maxFilters })),
+      sort: Type.Optional(Type.Object({ field: Type.String({ description: 'One of the requested measure IDs' }), direction: Type.Union([Type.Literal('asc'), Type.Literal('desc')]) })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: analytics.catalog.limits.maxRows })),
+      presentationIntent: Type.Optional(Type.Union([Type.Literal('auto'), Type.Literal('trend'), Type.Literal('comparison'), Type.Literal('ranking'), Type.Literal('detail')])),
     }),
     executionMode: 'sequential' as const,
     async execute(_toolCallId, params) {
+      if (state.businessAnalysis) throw new Error('query_business_data 已在本轮执行；请使用现有结果回答，不要再次调用');
       const startedAt = performance.now();
-      const result = await queryBusinessData(analyses[params.analysis]!);
+      const analysis = await analytics.analyze(params as BusinessAnalysisRequest);
+      const { result } = analysis;
+      state.businessAnalysis = analysis;
       const source: QuerySource = {
         kind: 'database',
         title: result.dataset,
         ref: `business-data://${result.catalogVersion}/${result.queryId}`,
-        excerpt: `${result.metricDefinitions.map((item) => item.name).join('、')} · ${result.timeWindow.from} 至 ${result.timeWindow.to} · ${result.rowCount} 行`,
-        fields: result.rows[0] ? Object.keys(result.rows[0]) : [],
+        excerpt: `${result.fields.filter((item) => item.role === 'measure').map((item) => item.label).join('、')} · ${result.metadata.timeWindow.from} 至 ${result.metadata.timeWindow.to} · ${result.metadata.rowCount} 行`,
+        fields: result.fields.map((field) => field.key),
       };
       state.sources.push(source);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        details: { queryId: result.queryId, catalogVersion: result.catalogVersion, rowCount: result.rowCount, timeWindow: result.timeWindow, queryMs: Number((performance.now() - startedAt).toFixed(2)) },
+        details: { queryId: result.queryId, catalogVersion: result.catalogVersion, rowCount: result.metadata.rowCount, timeWindow: result.metadata.timeWindow, queryMs: Number((performance.now() - startedAt).toFixed(2)) },
       };
     },
   });
@@ -602,6 +616,7 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
   let settled = false;
   runtime.turnState.sources = [];
   runtime.turnState.toolCalls = [];
+  runtime.turnState.businessAnalysis = undefined;
 
   const nowIso = () => new Date().toISOString();
   const elapsed = () => Math.max(0, Math.round(performance.now() - startedClock));
@@ -714,6 +729,7 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
       events,
       sources: [...runtime.turnState.sources],
       toolCalls: [...runtime.turnState.toolCalls],
+      ...(runtime.turnState.businessAnalysis ? { businessAnalysis: runtime.turnState.businessAnalysis } : {}),
       observation: {
         startedAt,
         completedAt,
@@ -783,7 +799,7 @@ export function getPiModelStatus(enabled = process.env.PI_AGENT_ENABLED === 'tru
 }
 
 function availableTools(context: PiWorkspaceContext): string[] {
-  if (context.agentId === 'business-data') return ['read', ...(context.queryBusinessData ? ['query_business_data'] : [])];
+  if (context.agentId === 'business-data') return ['read', ...(context.businessAnalytics ? ['query_business_data'] : [])];
   return context.searchKnowledge ? ['read', 'search_knowledge'] : ['read'];
 }
 
@@ -906,7 +922,7 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
   }
 
   try {
-    const result = await piSessionRegistry.run(context.agentId, context.sessionId, buildWorkspacePrompt(message, context), options, { agentId: context.agentId, searchKnowledge: context.searchKnowledge, queryBusinessData: context.queryBusinessData, thinkingLevel });
+    const result = await piSessionRegistry.run(context.agentId, context.sessionId, buildWorkspacePrompt(message, context), options, { agentId: context.agentId, searchKnowledge: context.searchKnowledge, businessAnalytics: context.businessAnalytics, thinkingLevel });
     if (!result.answer) return { ...notifyFallback(await workspaceFallback(message, context, 'Pi 没有返回文本，已使用本地降级回答。', startedAt, options.turnNumber, thinkingLevel), options), latencyMs: Date.now() - startedAt };
     const assistant = result.observation.assistant;
     const providerUsage = assistant?.usage ? usageFromPi(assistant.usage) : undefined;
@@ -920,6 +936,7 @@ export async function askPiAgent(message: string, context: PiWorkspaceContext, o
       route: context.agentId === 'business-data' ? 'business-data' : result.sources.length ? 'knowledge' : 'workspace',
       decision: { decidedBy: 'pi', toolCalls: result.toolCalls },
       sources: result.sources,
+      ...(result.businessAnalysis ? { analysis: result.businessAnalysis } : {}),
       resources: context.resources,
       events: result.events,
       tools: { enabled: availableTools(context), policy: 'read-only' },

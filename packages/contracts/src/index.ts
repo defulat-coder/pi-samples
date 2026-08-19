@@ -99,46 +99,86 @@ export interface WorkbenchAgentDefinition {
   suggestions: string[];
 }
 
-export type BusinessMetric = 'gross_sales' | 'net_sales' | 'order_count' | 'average_order_value' | 'refund_rate';
-export type BusinessDimension = 'none' | 'region' | 'channel' | 'category' | 'month';
-export type BusinessPeriod = 'last_7_days' | 'last_30_days' | 'last_90_days' | 'all';
+export type BusinessMeasure = 'gross_sales' | 'net_sales' | 'order_count' | 'average_order_value' | 'refund_rate';
+export type BusinessDimension = 'date' | 'month' | 'region' | 'channel' | 'category';
+export type BusinessFilterField = 'region' | 'channel' | 'category';
+export type BusinessTimePreset = 'last_7_days' | 'last_30_days' | 'last_90_days' | 'all';
+export type BusinessPresentationIntent = 'auto' | 'trend' | 'comparison' | 'ranking' | 'detail';
 
-export interface BusinessQueryRequest {
-  metrics: BusinessMetric[];
-  groupBy?: BusinessDimension;
-  period?: BusinessPeriod;
-  region?: '华东' | '华南' | '华北' | '华中' | '西部' | '东北';
-  channel?: '直营网店' | '平台电商' | '直播' | '内容电商';
-  category?: '数码家电' | '家居生活' | '美妆个护' | '食品饮料' | '服饰鞋包' | '运动户外';
-  orderBy?: BusinessMetric;
-  order?: 'asc' | 'desc';
+export interface BusinessAnalysisRequest {
+  measures: BusinessMeasure[];
+  dimensions?: BusinessDimension[];
+  time?: { preset?: BusinessTimePreset };
+  filters?: Array<{ field: BusinessFilterField; operator: 'eq' | 'in'; values: string[] }>;
+  sort?: { field: BusinessMeasure; direction: 'asc' | 'desc' };
   limit?: number;
+  presentationIntent?: BusinessPresentationIntent;
 }
 
-export interface BusinessQueryResult {
+export interface NormalizedBusinessAnalysisRequest {
+  measures: BusinessMeasure[];
+  dimensions: BusinessDimension[];
+  time: { preset: BusinessTimePreset };
+  filters: Array<{ field: BusinessFilterField; operator: 'eq' | 'in'; values: string[] }>;
+  sort?: { field: BusinessMeasure; direction: 'asc' | 'desc' };
+  limit: number;
+  presentationIntent: BusinessPresentationIntent;
+}
+
+export interface BusinessAnalyticalField {
+  key: BusinessMeasure | BusinessDimension;
+  label: string;
+  role: 'measure' | 'dimension' | 'time';
+  dataType: 'string' | 'number' | 'date';
+  semanticType?: 'currency' | 'percent' | 'count';
+  unit?: '元' | '单' | '%';
+  definition?: string;
+  formula?: string;
+  owner?: string;
+}
+
+export interface BusinessCatalogSummary {
+  version: 'sales-demo-v2';
+  measures: Array<Pick<BusinessAnalyticalField, 'key' | 'label' | 'semanticType' | 'unit' | 'definition' | 'formula' | 'owner'>>;
+  dimensions: Array<Pick<BusinessAnalyticalField, 'key' | 'label' | 'role' | 'dataType'> & { values?: string[] }>;
+  limits: { maxMeasures: 3; maxDimensions: 2; maxFilters: 4; maxRows: 50 };
+}
+
+export interface BusinessAnalyticalResult {
   queryId: string;
-  catalogVersion: 'sales-demo-v1' | 'sales-demo-v2';
+  catalogVersion: 'sales-demo-v2';
   dataset: '电商经营演示数据';
-  asOf: string;
-  datasetRows: number;
-  coverage: { from: string; to: string };
-  generation: { source: 'codex-cli'; model: 'gpt-5.6-luna'; concurrency: 20; scenarios: 20 };
-  timeWindow: { from: string; to: string; timezone: 'Asia/Shanghai' };
-  query: Required<Pick<BusinessQueryRequest, 'metrics' | 'groupBy' | 'period' | 'order' | 'limit'>> & Pick<BusinessQueryRequest, 'region' | 'channel' | 'category'> & { orderBy: BusinessMetric };
-  metricDefinitions: Array<{
-    id: BusinessMetric;
-    name: string;
-    unit: '元' | '单' | '%';
-    definition: string;
-    formula: string;
-    owner: string;
-    grain: '日';
-    timeField: 'sale_date';
-  }>;
+  request: NormalizedBusinessAnalysisRequest;
+  fields: BusinessAnalyticalField[];
   rows: Array<Record<string, string | number>>;
-  rowCount: number;
-  freshness: string;
-  limitations: string[];
+  metadata: {
+    asOf: string;
+    datasetRows: number;
+    coverage: { from: string; to: string };
+    generation: { source: 'codex-cli'; model: 'gpt-5.6-luna'; concurrency: 20; scenarios: 20 };
+    timeWindow: { from: string; to: string; timezone: 'Asia/Shanghai' };
+    rowCount: number;
+    freshness: string;
+    limitations: string[];
+  };
+}
+
+export type BusinessPresentationBlock =
+  | { id: string; type: 'summary'; primaryMeasure: BusinessMeasure; dimensionFields: BusinessDimension[] }
+  | { id: string; type: 'chart'; chart: 'line' | 'bar'; title: string; xField: BusinessDimension; seriesField?: BusinessDimension; yField: BusinessMeasure }
+  | { id: string; type: 'table'; fields: Array<BusinessMeasure | BusinessDimension> }
+  | { id: string; type: 'scope' }
+  | { id: string; type: 'notice' };
+
+export interface BusinessPresentationPlan {
+  version: '1';
+  title: string;
+  blocks: BusinessPresentationBlock[];
+}
+
+export interface BusinessAnalysis {
+  result: BusinessAnalyticalResult;
+  presentation: BusinessPresentationPlan;
 }
 
 /** Thinking is an explicit per-request capability, never inferred from the user message. */
@@ -346,6 +386,7 @@ export interface AgentChatResponse {
   route: AgentChatRoute;
   decision: AgentDecision;
   sources: QuerySource[];
+  analysis?: BusinessAnalysis;
   resources: AgentResourceSummary[];
   events: AgentEventSummary[];
   tools: {

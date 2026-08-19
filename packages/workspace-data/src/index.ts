@@ -1,4 +1,4 @@
-export * from './business-data.js';
+export * from './business/index.js';
 export * from './knowledge.js';
 export * from './seed.js';
 export * from './store.js';

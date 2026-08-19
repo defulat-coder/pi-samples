@@ -59,29 +59,31 @@ Agent Gateway 根据用户显式选择的 `agentId` 注入 profile，不根据�
 
 ## 经营分析语义层
 
-首版采用“认证指标目录”，不做任意 NL2SQL：
+采用“认证语义查询”，不做任意 NL2SQL：
 
 ```text
 用户业务问题
   -> Pi + business-intelligence Skill 理解业务意图
-  -> query_business_data 选择一个认证 analysis ID
-  -> 宿主把 analysis ID 映射为固定指标 / 维度 / 时间窗 / 枚举过滤
-  -> 固定参数化 SQLite 聚合
-  -> 带口径、负责人、时间范围和新鲜度的结果 envelope
+  -> query_business_data 提交一次受约束语义查询
+  -> 宿主校验认证指标 / 维度 / 时间窗 / 枚举过滤 / 排序 / 行数
+  -> 参数化 SQLite 聚合
+  -> 标准 BusinessAnalyticalResult
+  -> 确定性 BusinessPresentationPlan
   -> Pi 输出业务结论、含义与建议
 ```
 
-### 认证分析目录
+每个用户问题最多调用一次工具，但一次调用可组合 1～3 个认证指标、0～2 个维度、一个认证时间范围和最多 4 个枚举筛选。模型只表达语义请求，宿主负责目录校验和参数化查询；模型不能提交 SQL、表名、列名、表达式或身份范围。
 
-| Analysis ID | 业务问题 | 固定查询形态 |
-|---|---|---|
-| `regional_performance_30d` | 近 30 天区域经营排名 | 退款后销售额、订单量、客单价，按区域 |
-| `channel_efficiency_30d` | 近 30 天渠道效率对比 | 退款后销售额、客单价、退款率，按渠道 |
-| `live_category_refund_30d` | 直播渠道品类退款排名 | 退款率、退款后销售额，按品类并过滤直播 |
-| `monthly_gmv_trend_90d` | 近 90 天月度 GMV 趋势 | GMV、订单量，按月份 |
-| `monthly_gmv_trend_12m` | 近一年月度 GMV 趋势 | GMV、订单量，按月份覆盖完整数据集 |
+### 动态渲染层
 
-Pi 只负责从自然语言选择一个 analysis ID，每个用户问题最多调用一次工具。模型不能自由拼指标数组、过滤条件或 SQL，因此业务演示的结果、延迟和成本更稳定。
+经营分析响应同时包含自然语言 `answer` 和可选的 `analysis`。其中 `analysis.result` 是唯一事实源，`analysis.presentation` 只保存与渲染库无关的字段引用和展示意图。Web Adapter 再确定性转换为 json-render Spec，前端只允许 `AnalysisPanel`、`MetricGrid`、`BarChart`、`LineChart`、`DataTable`、`DataScope` 和 `Notice`。
+
+- 时间维度自动使用单序列或多序列折线图；
+- 分类维度自动使用柱状图；双分类维度组合标签；
+- 所有结果都包含通用表格兜底；
+- 图表、表格和数据范围只读取 `analysis.result`，展示计划不携带指标值；
+- Pi 的 Markdown 回答继续承担业务结论、含义和建议；
+- ViewPlan 缺失或 json-render Spec 校验失败时只回退到 Markdown，不影响回答正文。
 
 ### 认证指标
 
@@ -95,14 +97,14 @@ Pi 只负责从自然语言选择一个 analysis ID，每个用户问题最多�
 
 ### 认证维度和筛选
 
-- 维度：区域、渠道、品类、月份；
+- 维度：日期、月份、区域、渠道、品类；
 - 时间窗：近 7 天、近 30 天、近 90 天、全部；
 - 区域：华东、华南、华北、华中、西部、东北；
 - 渠道：直营网店、平台电商、直播、内容电商；
 - 品类：数码家电、家居生活、美妆个护、食品饮料、服饰鞋包、运动户外；
-- 每次最多返回 20 行，指标组合由认证 analysis 固定。
+- 每次最多 3 个指标、2 个维度、4 个筛选和 50 行结果。
 
-工具不接受 SQL、表名、列名、JOIN、表达式或身份范围。动态 SQL 只拼接宿主代码中的固定 allowlist 片段，所有筛选值通过 SQLite 参数绑定。
+工具不接受 SQL、表名、列名、JOIN、表达式或身份范围。动态 SQL 只拼接宿主语义目录中的固定片段，所有筛选值通过 SQLite 参数绑定。
 
 ## 演示数据
 
@@ -114,8 +116,8 @@ Pi 只负责从自然语言选择一个 analysis ID，每个用户问题最多�
 
 1. “近 30 天各区域退款后销售额和订单量排名。”
 2. “对比各渠道近 30 天客单价和退款率。”
-3. “直播渠道哪个品类退款率最高？”
-4. “按月份看近 90 天 GMV 趋势。”
+3. “直播渠道各区域、品类的退款率排名。”
+4. “按月对比各渠道近 90 天退款后销售额趋势。”
 5. “查看近一年月度 GMV 和订单趋势。”
 
 “营收”“收入”等未认证词必须澄清，不能自动映射为 GMV 或退款后销售额。
@@ -162,7 +164,7 @@ Pi 只负责从自然语言选择一个 analysis ID，每个用户问题最多�
 4. API 重启后从 Pi JSONL 恢复 `agentId` 和消息。
 5. 知识 Agent 只有 `read/search_knowledge`。
 6. 经营分析 Agent 只有 `read/query_business_data`，并加载 `business-intelligence` Skill。
-7. 问数工具只执行认证指标与参数化查询。
-8. 工具结果包含指标定义、公式、负责人、粒度、时间窗、新鲜度和限制。
-9. 业务演示问题能走完 Pi tool call、SQLite 查询、SSE 和 Markdown 回答。
+7. 问数工具只执行认证语义请求与参数化查询，可组合多指标和最多两个维度。
+8. 工具结果包含字段角色、指标定义、公式、负责人、时间窗、新鲜度和限制。
+9. 业务演示问题能走完 Pi tool call、SQLite 查询、ViewPlan、json-render、SSE 和 Markdown 回答。
 10. PC 视口完成选择、会话切换、问数、重启恢复和错误状态验证。

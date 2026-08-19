@@ -163,6 +163,50 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .tool-activity-details > div > span { display: block; margin-bottom: 4px; color: var(--subtle); font-size: 10px; }
 .tool-activity-details pre { max-height: 220px; padding: 9px 10px; margin: 0; overflow: auto; border-radius: 7px; color: var(--muted); background: var(--surface-muted); font-family: var(--mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-turn-answer { min-width: 0; }
+.business-presentation { margin: 2px 0 24px; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); }
+.business-presentation-header { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; padding: 15px 0 13px; }
+.business-presentation-header > span { grid-column: 1 / -1; color: var(--accent-strong); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.business-presentation-header strong { color: var(--text); font-size: 18px; font-weight: 680; letter-spacing: -.025em; }
+.business-presentation-header small { align-self: end; color: var(--subtle); font-family: var(--mono); font-size: var(--font-caption); }
+.business-presentation-body { display: grid; gap: 18px; padding-bottom: 18px; }
+.business-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.business-metric { display: grid; min-width: 0; gap: 4px; padding: 12px 14px; }
+.business-metric + .business-metric { border-left: 1px solid var(--line); }
+.business-metric span, .business-metric small { overflow: hidden; color: var(--subtle); font-size: var(--font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.business-metric strong { overflow: hidden; color: var(--text); font-size: 20px; font-weight: 680; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
+.business-chart { min-width: 0; padding: 14px; margin: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.business-chart figcaption { margin-bottom: 14px; color: var(--text); font-size: 12px; font-weight: 650; }
+.business-bars { display: grid; gap: 9px; }
+.business-bar-row { display: grid; grid-template-columns: minmax(64px, 110px) minmax(120px, 1fr) minmax(100px, auto); align-items: center; gap: 10px; color: var(--muted); font-size: var(--font-caption); }
+.business-bar-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.business-bar-row > div { height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-muted); }
+.business-bar-row i { display: block; height: 100%; border-radius: inherit; background: var(--accent-strong); }
+.business-bar-row strong { color: var(--text); font-family: var(--mono); font-size: var(--font-caption); font-weight: 550; text-align: right; }
+.business-line-chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
+.business-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: -5px 0 10px; color: var(--subtle); font-size: var(--font-caption); }
+.business-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.business-chart-legend i { width: 14px; height: 3px; border-radius: 999px; }
+.business-line-chart svg line { stroke: var(--line-strong); stroke-width: 1; }
+.business-line-chart svg polyline { fill: none; stroke: var(--accent-strong); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.business-line-chart svg circle { fill: var(--surface); stroke: var(--accent-strong); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.business-line-labels { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 5px; margin-top: 8px; }
+.business-line-labels span { display: grid; gap: 2px; color: var(--subtle); font-family: var(--mono); font-size: 9px; text-align: center; }
+.business-line-labels small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.business-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.business-table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: var(--font-caption); }
+.business-table th, .business-table td { padding: 9px 11px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.business-table th:first-child, .business-table td:first-child { text-align: left; }
+.business-table th { color: var(--subtle); background: var(--surface-muted); font-weight: 600; }
+.business-table td { color: var(--muted); font-family: var(--mono); }
+.business-table tbody tr:last-child td { border-bottom: 0; }
+.business-data-scope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--line); }
+.business-data-scope div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.business-data-scope div:nth-child(odd) { padding-right: 18px; }
+.business-data-scope div:nth-child(even) { padding-left: 18px; border-left: 1px solid var(--line); }
+.business-data-scope dt { color: var(--subtle); font-size: var(--font-caption); }
+.business-data-scope dd { min-width: 0; margin: 0; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: var(--font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.business-notice { padding: 9px 11px; margin: 0; border-left: 2px solid var(--warning); color: var(--warning); background: var(--warning-soft); font-size: var(--font-caption); line-height: 1.55; }
+.business-presentation-loading { padding: 14px 0; color: var(--subtle); font-size: var(--font-caption); }
 .message-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .message-meta strong { color: var(--text); font-size: 13px; font-weight: 650; }
 .message-meta span { color: var(--subtle); font-size: var(--font-caption); }
@@ -430,6 +474,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .composer-wrap { padding-right: 24px; padding-left: 24px; }
   .message-list { padding-right: 4vw; padding-left: 4vw; }
   .session-jsonl-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .business-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .business-metric:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
+  .business-metric:nth-child(4) { border-top: 1px solid var(--line); }
+  .business-data-scope { grid-template-columns: 1fr; }
+  .business-data-scope div:nth-child(n) { padding-right: 0; padding-left: 0; border-left: 0; }
 }
 
 @media (max-width: 900px) {
