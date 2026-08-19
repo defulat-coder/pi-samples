@@ -107,9 +107,9 @@ export interface BusinessQueryRequest {
   metrics: BusinessMetric[];
   groupBy?: BusinessDimension;
   period?: BusinessPeriod;
-  region?: '华东' | '华南' | '华北' | '西部';
-  channel?: '直营网店' | '平台电商' | '直播';
-  category?: '数码家电' | '家居生活' | '美妆个护' | '食品饮料';
+  region?: '华东' | '华南' | '华北' | '华中' | '西部' | '东北';
+  channel?: '直营网店' | '平台电商' | '直播' | '内容电商';
+  category?: '数码家电' | '家居生活' | '美妆个护' | '食品饮料' | '服饰鞋包' | '运动户外';
   orderBy?: BusinessMetric;
   order?: 'asc' | 'desc';
   limit?: number;
@@ -117,9 +117,12 @@ export interface BusinessQueryRequest {
 
 export interface BusinessQueryResult {
   queryId: string;
-  catalogVersion: 'sales-demo-v1';
+  catalogVersion: 'sales-demo-v1' | 'sales-demo-v2';
   dataset: '电商经营演示数据';
   asOf: string;
+  datasetRows: number;
+  coverage: { from: string; to: string };
+  generation: { source: 'codex-cli'; model: 'gpt-5.6-luna'; concurrency: 20; scenarios: 20 };
   timeWindow: { from: string; to: string; timezone: 'Asia/Shanghai' };
   query: Required<Pick<BusinessQueryRequest, 'metrics' | 'groupBy' | 'period' | 'order' | 'limit'>> & Pick<BusinessQueryRequest, 'region' | 'channel' | 'category'> & { orderBy: BusinessMetric };
   metricDefinitions: Array<{

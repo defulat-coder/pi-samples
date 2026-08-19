@@ -119,7 +119,7 @@ export interface AgentTurnResult {
 }
 
 const knowledgeSystemPrompt = `你是 Pi Workbench 的知识库问答智能体。你只能根据项目资源和工具返回的证据回答问题，不得编造文件内容或工具结果。你只能使用只读 read 和 search_knowledge 工具，不能修改文件、执行命令、写入数据库或代表用户采取外部行动。回答要说明依据；如果资源中没有答案，明确说不知道，并建议用户提供更多上下文。需要项目知识时优先调用 search_knowledge，只有摘要不足时再调用 read。`;
-const businessDataSystemPrompt = `你是 Pi Workbench 的经营分析智能体，仍由 Pi AgentSession 驱动。遵循已加载的 business-intelligence Skill：使用统一 KPI 口径和语义层，并按“结论、业务含义、建议”组织洞察。你的业务数据能力只有只读 query_business_data；read 只用于加载受信任的 Skill，不要读取其他项目文件，不要调用 search_knowledge，不要生成 SQL，也不要猜测数据。query_business_data 是认证分析目录，每个用户问题最多调用一次，并选择最匹配的 analysis ID：regional_performance_30d（区域排名）、channel_efficiency_30d（渠道效率）、live_category_refund_30d（直播品类退款）、monthly_gmv_trend_90d（月度 GMV 趋势）。遇到“营收”“收入”等未认证口径时先说明歧义并请用户在 GMV 与退款后销售额中选择。回答必须带上指标定义、时间范围、数据新鲜度和演示数据限制。不得修改数据库或代表用户执行外部动作。`;
+const businessDataSystemPrompt = `你是 Pi Workbench 的经营分析智能体，仍由 Pi AgentSession 驱动。遵循已加载的 business-intelligence Skill：使用统一 KPI 口径和语义层，并按“结论、业务含义、建议”组织洞察。你的业务数据能力只有只读 query_business_data；read 只用于加载受信任的 Skill，不要读取其他项目文件，不要调用 search_knowledge，不要生成 SQL，也不要猜测数据。query_business_data 是认证分析目录，每个用户问题最多调用一次，并选择最匹配的 analysis ID：regional_performance_30d（区域排名）、channel_efficiency_30d（渠道效率）、live_category_refund_30d（直播品类退款）、monthly_gmv_trend_90d（近 90 天月度趋势）、monthly_gmv_trend_12m（近一年月度趋势）。遇到“营收”“收入”等未认证口径时先说明歧义并请用户在 GMV 与退款后销售额中选择。回答必须带上指标定义、时间范围、数据新鲜度、Luna 生成来源和演示数据限制。不得修改数据库或代表用户执行外部动作。`;
 
 function projectExtensionsEnabled(explicit?: boolean): boolean {
   return explicit ?? process.env.PI_PROJECT_EXTENSIONS_ENABLED === 'true';
@@ -166,7 +166,7 @@ export const workbenchAgents: WorkbenchAgentDefinition[] = [
     tools: ['read', 'query_business_data'],
     welcomeTitle: '你好，我是经营分析智能体',
     welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。',
-    suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？'],
+    suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？', '查看近一年月度 GMV 和订单趋势'],
   },
 ];
 
@@ -499,15 +499,16 @@ function createBusinessQueryTool(queryBusinessData: BusinessQuery, state: PiTurn
     channel_efficiency_30d: { metrics: ['net_sales', 'average_order_value', 'refund_rate'], groupBy: 'channel', period: 'last_30_days', orderBy: 'net_sales' },
     live_category_refund_30d: { metrics: ['refund_rate', 'net_sales'], groupBy: 'category', period: 'last_30_days', channel: '直播', orderBy: 'refund_rate' },
     monthly_gmv_trend_90d: { metrics: ['gross_sales', 'order_count'], groupBy: 'month', period: 'last_90_days', orderBy: 'gross_sales', order: 'asc' },
+    monthly_gmv_trend_12m: { metrics: ['gross_sales', 'order_count'], groupBy: 'month', period: 'all', orderBy: 'gross_sales', order: 'asc', limit: 20 },
   };
   return defineTool({
     name: 'query_business_data',
     label: 'Query business data',
-    description: 'Run exactly one certified e-commerce analysis. Choose regional_performance_30d for regional sales/order rankings, channel_efficiency_30d for channel sales/AOV/refund comparisons, live_category_refund_30d for refund ranking of categories in live commerce, or monthly_gmv_trend_90d for the 90-day monthly GMV trend. Never call the tool more than once for one user question.',
+    description: 'Run exactly one certified e-commerce analysis. Choose regional_performance_30d for regional sales/order rankings, channel_efficiency_30d for channel sales/AOV/refund comparisons, live_category_refund_30d for refund ranking of categories in live commerce, monthly_gmv_trend_90d for the 90-day monthly GMV trend, or monthly_gmv_trend_12m for the full one-year trend. Never call the tool more than once for one user question.',
     promptSnippet: 'query_business_data: choose one certified analysis ID and call once',
-    promptGuidelines: ['Choose exactly one analysis ID from the catalog.', 'Do not call the tool repeatedly or construct filters yourself.', 'Report the returned metric definitions, time window, freshness and demo-data limitation.', 'Ask for clarification when none of the four analyses matches.'],
+    promptGuidelines: ['Choose exactly one analysis ID from the catalog.', 'Do not call the tool repeatedly or construct filters yourself.', 'Report the returned metric definitions, time window, Luna generation provenance, freshness and demo-data limitation.', 'Ask for clarification when none of the five analyses matches.'],
     parameters: Type.Object({
-      analysis: Type.Union([Type.Literal('regional_performance_30d'), Type.Literal('channel_efficiency_30d'), Type.Literal('live_category_refund_30d'), Type.Literal('monthly_gmv_trend_90d')]),
+      analysis: Type.Union([Type.Literal('regional_performance_30d'), Type.Literal('channel_efficiency_30d'), Type.Literal('live_category_refund_30d'), Type.Literal('monthly_gmv_trend_90d'), Type.Literal('monthly_gmv_trend_12m')]),
     }),
     executionMode: 'sequential' as const,
     async execute(_toolCallId, params) {

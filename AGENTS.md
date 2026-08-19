@@ -17,6 +17,7 @@
 | Build | `pnpm build` |
 | Test | `pnpm test` |
 | Lint | `pnpm lint` |
+| Generate Luna business scenarios | `pnpm business:data:generate:luna` |
 | Project Skills | `npx skills list --json` |
 
 - Before handoff run `git diff --check` and `git status --short`; preserve unrelated dirty files.

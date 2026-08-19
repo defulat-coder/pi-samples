@@ -68,7 +68,7 @@ const fallbackResources: AgentResourceSummary[] = [
 
 const fallbackAgents: WorkbenchAgentDefinition[] = [
   { id: 'knowledge', name: '知识库问答', description: '基于项目文件和 Markdown 知识库提供可引用的回答。', capabilityLabel: '项目知识 · 只读', tools: ['read', 'search_knowledge'], welcomeTitle: '你好，我是知识库问答智能体', welcomeDescription: '从项目文件、知识库或 Pi 运行机制开始提问。', suggestions: ['解释当前项目的 Pi Session 生命周期', '这个智能体能调用哪些工具？', '如何开发一个新的只读工具？'] },
-  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？'] },
+  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以查询区域、渠道和品类的销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '对比各渠道近 30 天客单价和退款率', '直播渠道哪个品类退款率最高？', '查看近一年月度 GMV 和订单趋势'] },
 ];
 
 const fallbackWorkspace: WorkspaceSnapshot = {

@@ -10,6 +10,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "turbo run lint",
+    "business:data:generate:luna": "node scripts/business/generate-luna-scenarios.mjs",
     "format": "prettier --write .",
     "clean": "turbo run clean"
   },

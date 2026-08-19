@@ -3,17 +3,23 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { BusinessDimension, BusinessMetric, BusinessPeriod, BusinessQueryRequest, BusinessQueryResult } from '@pi-workbench/contracts';
+import scenarioSnapshot from './business-scenarios.json' with { type: 'json' };
 
 type Row = Record<string, unknown>;
 
-const catalogVersion = 'sales-demo-v1' as const;
+const catalogVersion = 'sales-demo-v2' as const;
 const datasetName = '电商经营演示数据' as const;
 const seedEndDate = '2026-08-18';
-const seedDays = 90;
+const seedDays = 365;
+const seedVersion = `${catalogVersion}:${scenarioSnapshot.generatedAt}`;
 
-const regions = ['华东', '华南', '华北', '西部'] as const;
-const channels = ['直营网店', '平台电商', '直播'] as const;
-const categories = ['数码家电', '家居生活', '美妆个护', '食品饮料'] as const;
+const regions = ['华东', '华南', '华北', '华中', '西部', '东北'] as const;
+const channels = ['直营网店', '平台电商', '直播', '内容电商'] as const;
+const categories = ['数码家电', '家居生活', '美妆个护', '食品饮料', '服饰鞋包', '运动户外'] as const;
+
+if (scenarioSnapshot.model !== 'gpt-5.6-luna' || scenarioSnapshot.concurrency !== 20 || scenarioSnapshot.scenarios.length !== 20) {
+  throw new Error('Luna business scenario snapshot is incomplete');
+}
 
 const metricDefinitions: Record<BusinessMetric, { name: string; unit: '元' | '单' | '%'; definition: string; formula: string; owner: string; sql: string; alias: string }> = {
   gross_sales: { name: 'GMV', unit: '元', definition: '已支付订单在退款前的商品成交总额。', formula: 'SUM(gross_sales_cents) / 100', owner: '经营分析组', sql: 'ROUND(SUM(gross_sales_cents) / 100.0, 2)', alias: 'grossSales' },
@@ -52,34 +58,51 @@ function uniqueMetrics(metrics: BusinessMetric[]): BusinessMetric[] {
   return result.slice(0, 3);
 }
 
+function scenarioForDate(saleDate: string) {
+  const scenario = scenarioSnapshot.scenarios.find((item) => saleDate >= item.from && saleDate <= item.to);
+  if (!scenario) throw new Error(`没有覆盖 ${saleDate} 的 Luna 经营场景`);
+  return scenario;
+}
+
 function seedRows(db: DatabaseSync) {
+  const expectedRows = seedDays * regions.length * channels.length * categories.length;
   const existing = Number((db.prepare('SELECT COUNT(*) AS count FROM business_sales_daily').get() as Row).count ?? 0);
-  if (existing > 0) return;
+  const currentVersion = String((db.prepare("SELECT value FROM business_seed_metadata WHERE key = 'version'").get() as Row | undefined)?.value ?? '');
+  if (currentVersion === seedVersion && existing === expectedRows) return;
 
   const insert = db.prepare('INSERT INTO business_sales_daily (sale_date, region, channel, category, order_count, gross_sales_cents, refund_cents) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  const unitPrices = [168_800, 36_800, 28_800, 12_800];
-  const regionFactors = [118, 105, 95, 88];
-  const channelFactors = [108, 100, 92];
-  const categoryRefundBps = [420, 360, 760, 280];
-  const channelRefundBps = [0, 120, 310];
+  const unitPrices = [168_800, 36_800, 28_800, 12_800, 49_800, 68_800];
+  const categoryRefundBps = [420, 360, 760, 280, 520, 430];
+  const channelRefundBps = [0, 120, 310, 180];
 
   db.exec('BEGIN');
   try {
+    db.exec('DELETE FROM business_sales_daily');
     for (let day = 0; day < seedDays; day += 1) {
       const saleDate = addDays(seedEndDate, -(seedDays - day - 1));
+      const month = new Date(`${saleDate}T00:00:00.000Z`).getUTCMonth();
+      const growth = 82 + Math.round(day * 28 / (seedDays - 1));
+      const scenario = scenarioForDate(saleDate);
       for (let region = 0; region < regions.length; region += 1) {
         for (let channel = 0; channel < channels.length; channel += 1) {
           for (let category = 0; category < categories.length; category += 1) {
-            const orders = 18 + region * 2 + channel * 3 + category * 2 + ((day * 7 + region * 3 + channel * 5 + category * 11) % 17);
+            const baseOrders = 24 + region * 2 + channel * 3 + category * 2 + ((day * 7 + region * 3 + channel * 5 + category * 11) % 17);
+            const regionName = regions[region]!;
+            const channelName = channels[channel]!;
+            const categoryName = categories[category]!;
+            const anomaly = scenario.anomalies.find((item) => item.month === month + 1 && item.region === regionName && item.channel === channelName && item.category === categoryName);
+            const lunaWeight = scenario.regionWeights[regionName] * scenario.channelWeights[channelName] * scenario.categoryWeights[categoryName] * scenario.monthWeights[month]!;
+            const orders = Math.max(1, Math.round(baseOrders * growth / 100 * lunaWeight));
             const seasonal = 94 + (day % 14);
-            const grossCents = Math.round(orders * unitPrices[category]! * regionFactors[region]! * channelFactors[channel]! * seasonal / 100 / 100 / 100);
-            const refundBps = categoryRefundBps[category]! + channelRefundBps[channel]! + ((day + region + category) % 5) * 18;
+            const grossCents = Math.round(orders * unitPrices[category]! * seasonal / 100 * (anomaly?.salesMultiplier ?? 1));
+            const refundBps = Math.max(0, categoryRefundBps[category]! + channelRefundBps[channel]! + scenario.refundAdjustmentsBps[categoryName] + (anomaly?.refundBpsDelta ?? 0) + ((day + region + category) % 5) * 18);
             const refundCents = Math.round(grossCents * refundBps / 10_000);
-            insert.run(saleDate, regions[region]!, channels[channel]!, categories[category]!, orders, grossCents, refundCents);
+            insert.run(saleDate, regionName, channelName, categoryName, orders, grossCents, refundCents);
           }
         }
       }
     }
+    db.prepare("INSERT OR REPLACE INTO business_seed_metadata (key, value) VALUES ('version', ?)").run(seedVersion);
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -107,6 +130,10 @@ export class SqliteBusinessDataStore {
         refund_cents INTEGER NOT NULL,
         PRIMARY KEY (sale_date, region, channel, category)
       );
+      CREATE TABLE IF NOT EXISTS business_seed_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_business_sales_date ON business_sales_daily(sale_date);
       CREATE INDEX IF NOT EXISTS idx_business_sales_region ON business_sales_daily(region);
       CREATE INDEX IF NOT EXISTS idx_business_sales_channel ON business_sales_daily(channel);
@@ -123,6 +150,7 @@ export class SqliteBusinessDataStore {
     const order = input.order === 'asc' ? 'asc' : 'desc';
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? 10), 1), 20);
     const asOf = String((this.db.prepare('SELECT MAX(sale_date) AS value FROM business_sales_daily').get() as Row).value ?? seedEndDate);
+    const coverageRow = this.db.prepare('SELECT MIN(sale_date) AS min_date, MAX(sale_date) AS max_date, COUNT(*) AS count FROM business_sales_daily').get() as Row;
     const window = timeWindow(period, asOf);
     const where = ['sale_date >= ?', 'sale_date < ?'];
     const params: Array<string | number> = [window.from, window.to];
@@ -134,7 +162,8 @@ export class SqliteBusinessDataStore {
     const selectedMetrics = metrics.map((metric) => `${metricDefinitions[metric].sql} AS ${metricDefinitions[metric].alias}`);
     const groupExpression = dimensionSql[groupBy];
     const orderAlias = metricDefinitions[orderBy].alias;
-    const sql = `SELECT ${groupExpression} AS dimension, ${selectedMetrics.join(', ')} FROM business_sales_daily WHERE ${where.join(' AND ')}${groupBy === 'none' ? '' : ` GROUP BY ${groupExpression}`} ORDER BY ${orderAlias} ${order.toUpperCase()}, dimension ASC LIMIT ?`;
+    const orderExpression = groupBy === 'month' ? 'dimension' : orderAlias;
+    const sql = `SELECT ${groupExpression} AS dimension, ${selectedMetrics.join(', ')} FROM business_sales_daily WHERE ${where.join(' AND ')}${groupBy === 'none' ? '' : ` GROUP BY ${groupExpression}`} ORDER BY ${orderExpression} ${order.toUpperCase()}, dimension ASC LIMIT ?`;
     const rows = this.db.prepare(sql).all(...params, limit) as Row[];
 
     return {
@@ -142,6 +171,9 @@ export class SqliteBusinessDataStore {
       catalogVersion,
       dataset: datasetName,
       asOf,
+      datasetRows: Number(coverageRow.count ?? 0),
+      coverage: { from: String(coverageRow.min_date ?? ''), to: String(coverageRow.max_date ?? '') },
+      generation: { source: 'codex-cli', model: 'gpt-5.6-luna', concurrency: 20, scenarios: 20 },
       timeWindow: { ...window, timezone: 'Asia/Shanghai' },
       query: { metrics, groupBy, period, orderBy, order, limit, ...(input.region ? { region: input.region } : {}), ...(input.channel ? { channel: input.channel } : {}), ...(input.category ? { category: input.category } : {}) },
       metricDefinitions: metrics.map((id) => ({ id, name: metricDefinitions[id].name, unit: metricDefinitions[id].unit, definition: metricDefinitions[id].definition, formula: metricDefinitions[id].formula, owner: metricDefinitions[id].owner, grain: '日', timeField: 'sale_date' })),
