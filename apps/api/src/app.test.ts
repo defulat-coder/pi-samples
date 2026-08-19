@@ -92,6 +92,7 @@ describe('Pi Workbench API', () => {
     assert.equal(response.statusCode, 200);
     assert.match(String(response.headers['content-type']), /^text\/event-stream/);
     assert.match(response.body, /event: start/);
+    assert.match(response.body, /event: event/);
     assert.match(response.body, /event: text_delta/);
     const doneBlock = response.body.split('\n\n').find((block) => block.includes('event: done'));
     if (!doneBlock) throw new Error('SSE done event missing');

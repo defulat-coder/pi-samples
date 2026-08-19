@@ -25,10 +25,11 @@ import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { X } from '@phosphor-icons/react/dist/icons/X';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { applyAgentStreamEvent, createLiveTurnProcess, isVisibleProcessEvent } from './stream-process.js';
 
 type UserMessageItem = Extract<AgentSessionMessage, { kind: 'user' }>;
 type ThinkingMessageItem = Extract<AgentSessionMessage, { kind: 'thinking' }>;
-type AssistantMessageItem = Extract<AgentSessionMessage, { kind: 'assistant' }>;
+type AssistantMessageItem = Extract<AgentSessionMessage, { kind: 'assistant' }> & { streamEvents?: AgentEventSummary[] };
 
 /** The stream's semantic output stays split into sibling UI items. */
 type ConversationItem = AgentSessionMessage;
@@ -348,16 +349,16 @@ function SourceList({ response, onOpenResource }: { response: AgentChatResponse;
 }
 
 function ThinkingBlock({ message }: { message: ThinkingMessageItem }) {
+  const [open, setOpen] = useState(true);
   if (!message.text) return null;
   const isWorking = message.status === 'streaming';
-  return <section className="agent-turn-thinking" aria-label="思考过程" aria-busy={isWorking} aria-live={isWorking ? 'polite' : undefined}><details className="thinking-trace" open={isWorking}><summary><span className="thinking-trace-title"><i className={isWorking ? 'thinking-trace-dot thinking-trace-dot-active' : 'thinking-trace-dot'} aria-hidden="true" />思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
+  return <section className="agent-turn-thinking" aria-label="思考过程" aria-busy={isWorking} aria-live={isWorking ? 'polite' : undefined}><details className="thinking-trace" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span className="thinking-trace-title"><i className={isWorking ? 'thinking-trace-dot thinking-trace-dot-active' : 'thinking-trace-dot'} aria-hidden="true" />思考过程</span><small>{isWorking ? '进行中' : `${message.text.length} 字符`}</small></summary><pre>{message.text}</pre></details></section>;
 }
 
-function AgentToolEvents({ events, toolCalls, toolMetrics }: { events: AgentEventSummary[]; toolCalls: string[]; toolMetrics: NonNullable<NonNullable<AgentChatResponse['metrics']>['toolMetrics']> }) {
-  const errorEvents = events.filter((event) => event.category === 'error');
-  const uniqueTools = [...new Set(toolCalls)];
-  if (!errorEvents.length && !uniqueTools.length && !toolMetrics.length) return null;
-  return <section className="agent-tool-events" aria-label="工具调用"><div className="agent-content-label">工具调用</div>{toolMetrics.length ? toolMetrics.map((metric, index) => <details className={metric.status === 'error' ? 'agent-tool-event agent-tool-event-error' : 'agent-tool-event'} key={`${metric.toolCallId ?? metric.toolName}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /><code>{metric.toolName}</code><span>{metric.status === 'error' ? '失败' : metric.status === 'running' ? '运行中' : '完成'}</span><small>{metric.durationMs !== undefined ? formatDuration(metric.durationMs) : '—'}</small></summary><div className="agent-tool-event-detail">输入 {metric.inputChars.toLocaleString('zh-CN')} 字符 · 输出 {metric.outputChars.toLocaleString('zh-CN')} 字符{metric.errorMessage ? ` · ${metric.errorMessage}` : ''}</div></details>) : uniqueTools.map((toolName) => <div className="agent-tool-event agent-tool-event-compact" key={toolName}><span className="agent-tool-event-status" aria-hidden="true" /><code>{toolName}</code><span>已调用</span></div>)}{errorEvents.map((event, index) => <details className="agent-tool-event agent-tool-event-error" key={`${event.type}-${index}`}><summary><span className="agent-tool-event-status" aria-hidden="true" /><span>{event.label}</span><small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>)}</section>;
+function AgentProcessTimeline({ events, isWorking }: { events: AgentEventSummary[]; isWorking: boolean }) {
+  const [open, setOpen] = useState(true);
+  if (!events.length) return null;
+  return <details className="agent-process" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary><span><i className={isWorking ? 'agent-process-dot agent-process-dot-active' : 'agent-process-dot'} aria-hidden="true" />工具与思考过程</span><small>{isWorking ? `进行中 · ${events.length} 个事件` : `${events.length} 个事件`}</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-process-list" aria-live={isWorking ? 'polite' : undefined}>{events.map((event, index) => <details className={event.category === 'error' ? 'agent-process-event agent-process-event-error' : `agent-process-event agent-process-event-${event.category ?? 'tool'}`} key={`${event.sequence ?? index}-${event.type}`}><summary><span className="agent-process-event-type">{event.type}</span><strong>{event.label}</strong>{event.toolName && <code>{event.toolName}</code>}<small>{event.elapsedMs !== undefined ? `+${formatDuration(event.elapsedMs)}` : event.durationMs !== undefined ? formatDuration(event.durationMs) : ''}</small></summary>{event.detail && <pre>{event.detail}</pre>}</details>)}</div></details>;
 }
 
 function formatDuration(durationMs: number) {
@@ -420,7 +421,7 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
 
 function AgentRunDetails({ response }: { response: AgentChatResponse }) {
   const metrics = response.metrics;
-  return <details className="agent-run-details"><summary><span>运行详情</span><small>{formatDuration(metrics.durationMs)} · {metrics.toolCallCount} 个工具 · {metrics.eventCount} 个事件</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-run-details-body"><AgentToolEvents events={response.events} toolCalls={response.decision.toolCalls} toolMetrics={metrics.toolMetrics} /><AgentMetrics response={response} /></div></details>;
+  return <details className="agent-run-details"><summary><span>运行指标</span><small>{formatDuration(metrics.durationMs)} · {metrics.toolCallCount} 个工具 · {metrics.eventCount} 个原始事件</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-run-details-body"><AgentMetrics response={response} /></div></details>;
 }
 
 function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFeedback }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void }) {
@@ -444,7 +445,8 @@ type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assis
 function AgentTurn({ thinking, assistant, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const response = assistant?.response;
   const isWorking = !response;
-  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
+  const events = response?.events.length ? response.events.filter(isVisibleProcessEvent) : assistant?.streamEvents ?? [];
+  return <article className="agent-turn" aria-label="Pi 智能体回合"><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>Pi 智能体</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <AgentProcessTimeline events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
@@ -1021,14 +1023,13 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false }]);
     setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === sessionId ? { ...session, updatedAt: createdAt, messages: [...session.messages, optimisticUser] } : session)));
     setPending(true);
-    let streamedAnswer = '';
-    let streamedThinking = '';
+    let streamedProcess = createLiveTurnProcess();
     let streamFrame: number | null = null;
     const flushStream = () => {
       streamFrame = null;
       setMessages((current) => current.map((item) => {
-        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, text: streamedThinking };
-        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedAnswer };
+        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, text: streamedProcess.thinking };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedProcess.answer, streamEvents: streamedProcess.events };
         return item;
       }));
     };
@@ -1043,18 +1044,12 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
       if (!response.ok) throw new Error('智能体网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
-        if (event.type === 'text_delta') {
-          streamedAnswer += event.delta;
-          scheduleStreamFlush();
-        }
-        if (event.type === 'thinking_delta') {
-          streamedThinking += event.delta;
-          scheduleStreamFlush();
-        }
+        streamedProcess = applyAgentStreamEvent(streamedProcess, event);
+        if (event.type === 'text_delta' || event.type === 'thinking_delta' || event.type === 'event') scheduleStreamFlush();
       });
       cancelStreamFlush();
       setMessages((current) => current.map((item) => {
-        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, status: 'complete', text: streamedThinking };
+        if (item.id === thinkingId && item.kind === 'thinking') return { ...item, status: 'complete', text: streamedProcess.thinking };
         if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: data.answer, response: data, createdAt: data.createdAt };
         return item;
       }));
