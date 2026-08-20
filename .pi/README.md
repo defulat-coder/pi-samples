@@ -8,7 +8,8 @@
 - `prompts/`：可通过 `/name` 展开的 Prompt Template；
 - `themes/`：Pi TUI 的 JSON 主题，不等同于 Web CSS；
 - `extensions/`：可注册命令和生命周期处理器的 TypeScript 扩展，Web 网关默认关闭，启用前必须审阅源码；
+- `digital-humans/`：数字人的姓名、职业、人设和能力档案引用；不能直接定义工具；
 - `sessions/`：Pi 官方 JSONL Session 文件，包含原生消息和本项目指标/反馈 custom entries；
 - `knowledge/`：带 OKF-compatible frontmatter 的 Agent Markdown 概念，通过 `search_knowledge` 读取。
 
-Agent 运行时按业务 profile 启用只读工具：知识库问答使用 `read` 和 `search_knowledge`，经营分析使用 `read` 和 `query_business_data`。所有 Agent 都由 Pi `AgentSession` 驱动，不会在这些文件或仓库里执行写入和 shell 命令。`.pi` 文件和第三方 Skill 内容都不能扩大工具权限。
+Pi 运行时按宿主能力档案启用只读工具：`project-knowledge` 使用 `read/search_knowledge`，`business-analytics` 使用 `read/query_business_data`。数字人只是运行在 Pi `AgentSession` 上的角色定义；`.pi` 文件和第三方 Skill 内容都不能扩大工具权限。

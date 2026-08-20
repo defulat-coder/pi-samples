@@ -4,9 +4,9 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentChatRequest, AgentChatStreamEvent, AgentFeedback, AgentResourceDocument, AgentResourceSummary, WorkbenchAgentId, WorkspaceRecordQuery } from '@pi-workbench/contracts';
+import type { AgentFeedback, AgentResourceDocument, AgentResourceSummary, DigitalHumanChatRequest, DigitalHumanChatStreamEvent, DigitalHumanId, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { businessDataStore, loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry, workbenchAgents } from '@pi-workbench/pi-agent';
+import { askPiAgent, getDigitalHumans, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { createFeishuAuth } from './auth.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -19,9 +19,9 @@ const WorkspaceRecordQuerySchema = Type.Object({
   status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('draft'), Type.Literal('archived')])),
 });
 
-const AgentChatRequestSchema = Type.Object({
+const DigitalHumanChatRequestSchema = Type.Object({
   message: Type.String({ minLength: 1, maxLength: 2000 }),
-  agentId: Type.Optional(Type.Union([Type.Literal('knowledge'), Type.Literal('business-data')])),
+  digitalHumanId: Type.String({ minLength: 3, maxLength: 64, pattern: '^[a-z][a-z0-9-]+$' }),
   sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   thinkingLevel: Type.Optional(Type.Union([
@@ -36,7 +36,7 @@ const AgentChatRequestSchema = Type.Object({
   debug: Type.Optional(Type.Boolean()),
 });
 
-const AgentIdSchema = Type.Union([Type.Literal('knowledge'), Type.Literal('business-data')]);
+const DigitalHumanIdSchema = Type.String({ minLength: 3, maxLength: 64, pattern: '^[a-z][a-z0-9-]+$' });
 
 type AppDependencies = { sessionStore?: PiFileSessionStore };
 
@@ -59,8 +59,8 @@ function walkPiFiles(directory: string, root = directory): string[] {
 function inferredResource(path: string): AgentResourceSummary {
   const name = basename(path);
   const extension = extname(name).toLowerCase();
-  const kind = path.startsWith('.pi/skills/') ? 'skill' : path.startsWith('.pi/prompts/') ? 'prompt' : path.startsWith('.pi/knowledge/') && extension === '.md' ? 'knowledge' : path.startsWith('.pi/sessions/') ? 'session' : path.startsWith('.pi/extensions/') && ['.ts', '.js', '.mjs', '.cjs'].includes(extension) ? 'extension' : path.startsWith('.pi/themes/') && extension === '.json' ? 'theme' : path === '.pi/settings.json' ? 'settings' : ['.pi/SYSTEM.md', '.pi/APPEND_SYSTEM.md'].includes(path) ? 'system' : 'file';
-  const title = path === '.pi/README.md' ? 'Pi 项目说明' : path === '.pi/settings.json' ? 'Pi 项目设置' : path === '.pi/APPEND_SYSTEM.md' ? '追加系统提示词' : path === '.pi/SYSTEM.md' ? '系统提示词' : kind === 'extension' ? `Pi 扩展 · ${name.replace(/\.[^.]+$/, '')}` : kind === 'theme' ? `Pi 主题 · ${name.replace(/\.json$/i, '')}` : kind === 'session' ? `会话 ${name.replace(/^.*_session_/, '').replace(/\.jsonl$/i, '')}` : extension === '.jsonl' ? `运行记录 · ${name.replace(/\.jsonl$/i, '')}` : name.replace(/\.[^.]+$/, '');
+  const kind = path.startsWith('.pi/digital-humans/') && extension === '.json' ? 'digital-human' : path.startsWith('.pi/skills/') ? 'skill' : path.startsWith('.pi/prompts/') ? 'prompt' : path.startsWith('.pi/knowledge/') && extension === '.md' ? 'knowledge' : path.startsWith('.pi/sessions/') ? 'session' : path.startsWith('.pi/extensions/') && ['.ts', '.js', '.mjs', '.cjs'].includes(extension) ? 'extension' : path.startsWith('.pi/themes/') && extension === '.json' ? 'theme' : path === '.pi/settings.json' ? 'settings' : ['.pi/SYSTEM.md', '.pi/APPEND_SYSTEM.md'].includes(path) ? 'system' : 'file';
+  const title = path === '.pi/README.md' ? 'Pi 项目说明' : path === '.pi/settings.json' ? 'Pi 项目设置' : path === '.pi/APPEND_SYSTEM.md' ? '追加系统提示词' : path === '.pi/SYSTEM.md' ? '系统提示词' : kind === 'digital-human' ? `数字人档案 · ${name.replace(/\.json$/i, '')}` : kind === 'extension' ? `Pi 扩展 · ${name.replace(/\.[^.]+$/, '')}` : kind === 'theme' ? `Pi 主题 · ${name.replace(/\.json$/i, '')}` : kind === 'session' ? `会话 ${name.replace(/^.*_session_/, '').replace(/\.jsonl$/i, '')}` : extension === '.jsonl' ? `运行记录 · ${name.replace(/\.jsonl$/i, '')}` : name.replace(/\.[^.]+$/, '');
   return { path, kind, title, status: 'active' };
 }
 
@@ -90,6 +90,11 @@ function readAgentResource(path: string): AgentResourceDocument | undefined {
 export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
   const businessAnalytics = { catalog: businessDataStore.catalog, analyze: (query: Parameters<typeof businessDataStore.analyze>[0]) => businessDataStore.analyze(query) };
   const sessions = dependencies.sessionStore ?? piFileSessionStore;
+  const digitalHumans = () => getDigitalHumans(projectRoot());
+  const digitalHuman = (id: DigitalHumanId) => digitalHumans().find((item) => item.id === id);
+  const capabilities = (tools: string[]) => {
+    return { ...(tools.includes('search_knowledge') ? { searchKnowledge } : {}), ...(tools.includes('query_business_data') ? { businessAnalytics } : {}) };
+  };
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
     genReqId: () => `req_${crypto.randomUUID().slice(0, 8)}`,
@@ -148,36 +153,39 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return record;
     });
 
-    v1.get('/agent/workspace', async () => ({
-      resources: workspaceResources(),
-      agents: workbenchAgents,
-      tools: { enabled: [...new Set(workbenchAgents.flatMap((agent) => agent.tools))], policy: 'read-only' as const },
-      model: getPiModelStatus(config.PI_AGENT_ENABLED),
-      pi: await loadPiResourceSnapshot(projectRoot(), { projectExtensions: config.PI_PROJECT_EXTENSIONS_ENABLED }),
-      data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
-      sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
-    }));
+    v1.get('/digital-humans/workspace', async () => {
+      const definitions = digitalHumans();
+      return {
+        resources: workspaceResources(),
+        digitalHumans: definitions,
+        tools: { enabled: [...new Set(definitions.flatMap((item) => item.tools))], policy: 'read-only' as const },
+        model: getPiModelStatus(config.PI_AGENT_ENABLED),
+        pi: await loadPiResourceSnapshot(projectRoot(), { projectExtensions: config.PI_PROJECT_EXTENSIONS_ENABLED }),
+        data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
+        sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
+      };
+    });
 
-    v1.get('/agent/agents', async () => ({ items: workbenchAgents, total: workbenchAgents.length }));
+    v1.get('/digital-humans', async () => { const items = digitalHumans(); return { items, total: items.length }; });
 
-    v1.get<{ Querystring: { agentId?: WorkbenchAgentId } }>('/agent/sessions', { schema: { querystring: Type.Object({ agentId: Type.Optional(AgentIdSchema) }) } }, async (request) => {
-      const items = await sessions.listSessions(request.query.agentId);
+    v1.get<{ Querystring: { digitalHumanId?: DigitalHumanId } }>('/digital-humans/sessions', { schema: { querystring: Type.Object({ digitalHumanId: Type.Optional(DigitalHumanIdSchema) }) } }, async (request, reply) => {
+      if (request.query.digitalHumanId && !digitalHuman(request.query.digitalHumanId)) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
+      const items = await sessions.listSessions(request.query.digitalHumanId);
       return { items, total: items.length };
     });
 
-    v1.post<{ Body: { agentId?: WorkbenchAgentId } | undefined }>('/agent/sessions', async (request, reply) => {
-      const agentId = request.body?.agentId ?? 'knowledge';
-      if (agentId !== 'knowledge' && agentId !== 'business-data') return reply.code(400).send({ error: 'ValidationError', message: '未知的智能体' });
-      return sessions.createSession(undefined, agentId);
+    v1.post<{ Body: { digitalHumanId: DigitalHumanId } }>('/digital-humans/sessions', { schema: { body: Type.Object({ digitalHumanId: DigitalHumanIdSchema }) } }, async (request, reply) => {
+      if (!digitalHuman(request.body.digitalHumanId)) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
+      return sessions.createSession(request.body.digitalHumanId);
     });
 
-    v1.get<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
+    v1.get<{ Params: { id: string } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
       const session = await sessions.getSession(request.params.id);
       if (!session) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
       return session;
     });
 
-    v1.patch<{ Params: { id: string }; Body: { title: string } }>('/agent/sessions/:id', {
+    v1.patch<{ Params: { id: string }; Body: { title: string } }>('/digital-humans/sessions/:id', {
       schema: {
         params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }),
         body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) }),
@@ -188,15 +196,15 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return session;
     });
 
-    v1.delete<{ Params: { id: string } }>('/agent/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
+    v1.delete<{ Params: { id: string } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
       if (!await sessions.getSession(request.params.id)) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
       const session = await sessions.getSession(request.params.id);
-      await piSessionRegistry.close(session?.agentId ?? 'knowledge', request.params.id);
+      if (session) await piSessionRegistry.close(session.digitalHumanId, request.params.id);
       await sessions.deleteSession(request.params.id);
       return reply.code(204).send();
     });
 
-    v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { feedback: AgentFeedback | null } }>('/agent/sessions/:sessionId/messages/:messageId/feedback', {
+    v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { feedback: AgentFeedback | null } }>('/digital-humans/sessions/:sessionId/messages/:messageId/feedback', {
       schema: {
         params: Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 120 }), messageId: Type.String({ minLength: 1, maxLength: 160 }) }),
         body: Type.Object({ feedback: Type.Union([Type.Literal('like'), Type.Literal('dislike'), Type.Null()]) }),
@@ -207,37 +215,40 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return session;
     });
 
-    v1.get<{ Querystring: { path: string } }>('/agent/resource', { schema: { querystring: Type.Object({ path: Type.String({ minLength: 1, maxLength: 400 }) }) } }, async (request, reply) => {
+    v1.get<{ Querystring: { path: string } }>('/digital-humans/resource', { schema: { querystring: Type.Object({ path: Type.String({ minLength: 1, maxLength: 400 }) }) } }, async (request, reply) => {
       const document = readAgentResource(request.query.path);
       if (!document) return reply.code(404).send({ error: 'NotFound', message: '项目文件不存在或不在只读资源范围内' });
       return document;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat', { schema: { body: AgentChatRequestSchema } }, async (request, reply) => {
-      const agentId = request.body.agentId ?? 'knowledge';
+    v1.post<{ Body: DigitalHumanChatRequest }>('/digital-humans/chat', { schema: { body: DigitalHumanChatRequestSchema } }, async (request, reply) => {
+      const digitalHumanId = request.body.digitalHumanId;
+      const definition = digitalHuman(digitalHumanId);
+      if (!definition) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
       try {
-        await sessions.ensureSession(sessionId, agentId);
+        await sessions.ensureSession(sessionId, digitalHumanId);
       } catch (error) {
-        if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') return reply.code(409).send({ error: 'AgentSessionMismatch', message: '该会话属于另一个智能体，不能切换能力后继续使用。' });
+        if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') return reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
         throw error;
       }
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-      const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { businessAnalytics }) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
-      if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
-      else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
+      const response = await askPiAgent(request.body.message, { digitalHumanId, sessionId, resources: workspaceResources(), ...capabilities(definition.tools) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
+      await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
       return response;
     });
 
-    v1.post<{ Body: AgentChatRequest }>('/agent/chat/stream', { schema: { body: AgentChatRequestSchema } }, async (request, reply) => {
-      const agentId = request.body.agentId ?? 'knowledge';
+    v1.post<{ Body: DigitalHumanChatRequest }>('/digital-humans/chat/stream', { schema: { body: DigitalHumanChatRequestSchema } }, async (request, reply) => {
+      const digitalHumanId = request.body.digitalHumanId;
+      const definition = digitalHuman(digitalHumanId);
+      if (!definition) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
       const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
       const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
       try {
-        await sessions.ensureSession(sessionId, agentId);
+        await sessions.ensureSession(sessionId, digitalHumanId);
       } catch (error) {
-        if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') return reply.code(409).send({ error: 'AgentSessionMismatch', message: '该会话属于另一个智能体，不能切换能力后继续使用。' });
+        if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') return reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
         throw error;
       }
       const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
@@ -253,7 +264,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       raw.flushHeaders?.();
       request.raw.once('aborted', () => { clientClosed = true; });
 
-      const send = (eventName: AgentChatStreamEvent['type'], payload: Record<string, unknown>) => {
+      const send = (eventName: DigitalHumanChatStreamEvent['type'], payload: Record<string, unknown>) => {
         if (clientClosed || raw.writableEnded || raw.destroyed) return;
         try {
           raw.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -263,10 +274,10 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       };
 
       const thinkingLevel = request.body.thinkingLevel ?? getPiModelStatus(config.PI_AGENT_ENABLED).thinkingLevel;
-      send('start', { agentId, sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
+      send('start', { digitalHumanId, sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
       try {
         let sawTextDelta = false;
-        const response = await askPiAgent(request.body.message, { agentId, sessionId, resources: workspaceResources(), ...(agentId === 'knowledge' ? { searchKnowledge } : { businessAnalytics }) }, {
+        const response = await askPiAgent(request.body.message, { digitalHumanId, sessionId, resources: workspaceResources(), ...capabilities(definition.tools) }, {
           turnNumber,
           thinkingLevel,
           onEventSummary: (event) => send('event', { event }),
@@ -274,11 +285,10 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
           onThinkingDelta: (delta) => { if (delta) send('thinking_delta', { delta }); },
         });
         if (!sawTextDelta && response.answer) send('text_delta', { delta: response.answer });
-        if (response.source === 'pi-coding-agent') await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
-        else await sessions.appendFallbackTurn(sessionId, request.body.message, turnId, response);
+        await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
         send('done', { response });
       } catch (error) {
-        send('error', { message: error instanceof Error ? error.message : '智能体流式响应失败' });
+        send('error', { message: error instanceof Error ? error.message : '数字人流式响应失败' });
       } finally {
         if (!raw.writableEnded) raw.end();
       }

@@ -8,12 +8,12 @@ import {
   type SessionInfo,
   type SessionMessageEntry,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentChatResponse, AgentFeedback, AgentSessionMessage, AgentSessionRecord, AgentTokenUsage, WorkbenchAgentId } from '@pi-workbench/contracts';
+import type { AgentFeedback, DigitalHumanChatResponse, DigitalHumanId, DigitalHumanSessionMessage, DigitalHumanSessionRecord, AgentTokenUsage } from '@pi-workbench/contracts';
 
 export const PI_WORKBENCH_TURN_ENTRY = 'pi-workbench.turn';
 export const PI_WORKBENCH_FEEDBACK_ENTRY = 'pi-workbench.feedback';
 export const PI_WORKBENCH_SESSION_TITLE_ENTRY = 'pi-workbench.session-title';
-export const PI_WORKBENCH_AGENT_ENTRY = 'pi-workbench.agent';
+export const PI_WORKBENCH_DIGITAL_HUMAN_ENTRY = 'pi-workbench.digital-human';
 
 function getProjectRoot(): string {
   if (existsSync(resolve(process.cwd(), '.pi'))) return process.cwd();
@@ -26,10 +26,9 @@ type UserMessage = Extract<PersistedMessage, { role: 'user' }>;
 
 type TurnEntryData = {
   turnId: string;
-  response: AgentChatResponse;
-  /** Original browser input. Pi's runtime user entry may include its internal workspace prompt. */
-  userText?: string;
-  userEntryId?: string;
+  response: DigitalHumanChatResponse;
+  userText: string;
+  userEntryId: string;
   assistantEntryIds: string[];
 };
 
@@ -42,8 +41,8 @@ type SessionTitleEntryData = {
   title: string;
 };
 
-type AgentEntryData = {
-  agentId: WorkbenchAgentId;
+type DigitalHumanEntryData = {
+  digitalHumanId: DigitalHumanId;
 };
 
 type MessageEntry = SessionMessageEntry;
@@ -66,27 +65,9 @@ function textFromContent(content: unknown): string {
   return content.filter((block): block is { type: 'text'; text: string } => Boolean(block && typeof block === 'object' && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string')).map((block) => block.text).join('');
 }
 
-/**
- * Older Pi turns stored the augmented workspace prompt as the user message.
- * Keep those sessions readable while new turns persist the original input in
- * the Web-only custom entry above.
- */
-function displayUserText(text: string, originalText?: string): string {
-  const explicit = originalText?.trim();
-  if (explicit) return explicit;
-  const marker = '\n\n这是一个 Pi Agent 验证工作台。项目资源目录摘要如下';
-  const markerIndex = text.indexOf(marker);
-  return markerIndex >= 0 ? text.slice(0, markerIndex).trimEnd() : text;
-}
-
 function thinkingFromAssistant(message: AssistantMessage): string {
   if (!Array.isArray(message.content)) return '';
   return message.content.filter((block): block is { type: 'thinking'; thinking: string } => Boolean(block && typeof block === 'object' && (block as { type?: unknown }).type === 'thinking' && typeof (block as { thinking?: unknown }).thinking === 'string')).map((block) => block.thinking).join('');
-}
-
-function toolCallsFromAssistant(message: AssistantMessage): string[] {
-  if (!Array.isArray(message.content)) return [];
-  return message.content.filter((block): block is Extract<AssistantMessage['content'][number], { type: 'toolCall' }> => Boolean(block && typeof block === 'object' && (block as { type?: unknown }).type === 'toolCall' && typeof (block as { name?: unknown }).name === 'string')).map((block) => block.name);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -119,56 +100,15 @@ function usageFromPersisted(usage: unknown, source: AgentTokenUsage['source'] = 
   };
 }
 
-function unavailableUsage(): AgentTokenUsage {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, source: 'unavailable' };
-}
-
-function responseWithLegacyMetrics(response: AgentChatResponse, turn: number): AgentChatResponse {
-  const toolCallCount = response.decision?.toolCalls?.length ?? 0;
-  const current = response.metrics;
-  return {
-    ...response,
-    metrics: {
-      turn: Math.max(1, current?.turn ?? turn),
-      executionRounds: current?.executionRounds ?? Math.max(1, toolCallCount + 1),
-      startedAt: current?.startedAt ?? response.createdAt,
-      completedAt: current?.completedAt ?? response.createdAt,
-      durationMs: current?.durationMs ?? response.latencyMs ?? 0,
-      eventCount: current?.eventCount ?? response.events?.length ?? 0,
-      eventCounts: current?.eventCounts ?? {},
-      eventCategoryCounts: current?.eventCategoryCounts ?? {},
-      toolCallCount: current?.toolCallCount ?? toolCallCount,
-      toolResultCount: current?.toolResultCount ?? 0,
-      toolErrorCount: current?.toolErrorCount ?? 0,
-      toolMetrics: current?.toolMetrics ?? [],
-      retryCount: current?.retryCount ?? 0,
-      retries: current?.retries ?? [],
-      compactionCount: current?.compactionCount ?? 0,
-      compactions: current?.compactions ?? [],
-      queueUpdateCount: current?.queueUpdateCount ?? 0,
-      settled: current?.settled ?? true,
-      inputChars: current?.inputChars ?? 0,
-      outputChars: current?.outputChars ?? response.answer?.length ?? 0,
-      thinkingChars: current?.thinkingChars ?? 0,
-      tokenUsage: current?.tokenUsage ? usageFromPersisted(current.tokenUsage, current.tokenUsage.source) : unavailableUsage(),
-      contextUsage: current?.contextUsage,
-      sessionTotals: current?.sessionTotals,
-      stopReason: current?.stopReason,
-      rawStopReason: current?.rawStopReason,
-      errorMessage: current?.errorMessage,
-    },
-  };
-}
-
 function parseTurnEntry(entry: SessionEntry): TurnEntryData | undefined {
   if (entry.type !== 'custom' || entry.customType !== PI_WORKBENCH_TURN_ENTRY || !entry.data || typeof entry.data !== 'object') return undefined;
   const data = entry.data as Partial<TurnEntryData>;
-  if (typeof data.turnId !== 'string' || !data.response || typeof data.response !== 'object') return undefined;
+  if (typeof data.turnId !== 'string' || !data.response || typeof data.response !== 'object' || typeof data.userText !== 'string' || typeof data.userEntryId !== 'string' || !Array.isArray(data.assistantEntryIds)) return undefined;
   return {
     turnId: data.turnId,
-    response: responseWithLegacyMetrics(data.response as AgentChatResponse, 1),
-    userText: typeof data.userText === 'string' ? data.userText : undefined,
-    userEntryId: typeof data.userEntryId === 'string' ? data.userEntryId : undefined,
+    response: data.response as DigitalHumanChatResponse,
+    userText: data.userText,
+    userEntryId: data.userEntryId,
     assistantEntryIds: Array.isArray(data.assistantEntryIds) ? data.assistantEntryIds.filter((id): id is string => typeof id === 'string') : [],
   };
 }
@@ -190,10 +130,14 @@ function sessionTitleFromEntries(entries: SessionEntry[]): string | undefined {
   return undefined;
 }
 
-function agentIdFromEntries(entries: SessionEntry[]): WorkbenchAgentId {
-  const entry = entries.find((item) => item.type === 'custom' && item.customType === PI_WORKBENCH_AGENT_ENTRY && item.data && typeof item.data === 'object');
-  const agentId = entry?.type === 'custom' ? (entry.data as Partial<AgentEntryData>).agentId : undefined;
-  return agentId === 'business-data' ? agentId : 'knowledge';
+export function assertSessionDigitalHumanBinding(entries: SessionEntry[], expectedDigitalHumanId?: DigitalHumanId): DigitalHumanId {
+  const bindings = entries.filter((item) => item.type === 'custom' && item.customType === PI_WORKBENCH_DIGITAL_HUMAN_ENTRY && item.data && typeof item.data === 'object');
+  if (bindings.length !== 1) throw new Error(bindings.length ? 'DIGITAL_HUMAN_BINDING_CONFLICT' : 'DIGITAL_HUMAN_BINDING_MISSING');
+  const entry = bindings[0]!;
+  const digitalHumanId = entry.type === 'custom' ? (entry.data as Partial<DigitalHumanEntryData>).digitalHumanId : undefined;
+  if (typeof digitalHumanId !== 'string' || !/^[a-z][a-z0-9-]{2,63}$/.test(digitalHumanId)) throw new Error('DIGITAL_HUMAN_BINDING_INVALID');
+  if (expectedDigitalHumanId && digitalHumanId !== expectedDigitalHumanId) throw new Error('DIGITAL_HUMAN_SESSION_MISMATCH');
+  return digitalHumanId;
 }
 
 function latestTurnEntry(entries: SessionEntry[], turnId: string): TurnEntryData | undefined {
@@ -204,75 +148,7 @@ function latestTurnEntry(entries: SessionEntry[], turnId: string): TurnEntryData
   return undefined;
 }
 
-function createFallbackAssistantMessage(text: string): AssistantMessage {
-  return {
-    role: 'assistant',
-    content: [{ type: 'text', text }],
-    api: 'pi-workbench',
-    provider: 'local-fallback',
-    model: 'local-fallback',
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    stopReason: 'stop',
-    timestamp: Date.now(),
-  };
-}
-
-function createFallbackUserMessage(text: string): UserMessage {
-  return { role: 'user', content: text, timestamp: Date.now() };
-}
-
-function responseFromPiMessage(agentId: WorkbenchAgentId, sessionId: string, userText: string, userTimestamp: number, assistant: AssistantMessage, turn: number, thinkingText: string, toolCalls: string[]): AgentChatResponse {
-  const usage = assistant.usage;
-  const hasUsage = isFiniteNumber(usage?.input) && isFiniteNumber(usage?.output) && isFiniteNumber(usage?.totalTokens);
-  const tokenUsage = hasUsage ? usageFromPersisted(usage) : unavailableUsage();
-  const startedAt = new Date(userTimestamp).toISOString();
-  const completedAt = new Date(assistant.timestamp).toISOString();
-  const durationMs = Math.max(0, assistant.timestamp - userTimestamp);
-  return {
-    answer: textFromContent(assistant.content),
-    source: 'pi-coding-agent',
-    agentId,
-    sessionId,
-    route: agentId === 'business-data' ? 'business-data' : 'workspace',
-    decision: { decidedBy: 'pi', toolCalls },
-    sources: [],
-    resources: [],
-    events: [],
-    tools: { enabled: agentId === 'business-data' ? ['read', 'query_business_data'] : ['read', 'search_knowledge'], policy: 'read-only' },
-    model: { enabled: true, providerConfigured: true, ...(assistant.api ? { api: assistant.api } : {}), provider: assistant.provider, model: assistant.model, ...(assistant.responseModel ? { responseModel: assistant.responseModel } : {}), ...(assistant.responseId ? { responseId: assistant.responseId } : {}), thinkingLevel: undefined },
-    metrics: {
-      turn: Math.max(1, turn),
-      executionRounds: Math.max(1, toolCalls.length + 1),
-      startedAt,
-      completedAt,
-      durationMs,
-      eventCount: 0,
-      eventCounts: {},
-      eventCategoryCounts: {},
-      toolCallCount: toolCalls.length,
-      toolResultCount: 0,
-      toolErrorCount: 0,
-      toolMetrics: [],
-      retryCount: 0,
-      retries: [],
-      compactionCount: 0,
-      compactions: [],
-      queueUpdateCount: 0,
-      settled: true,
-      inputChars: userText.length,
-      outputChars: textFromContent(assistant.content).length,
-      thinkingChars: thinkingText.length,
-      tokenUsage,
-      stopReason: assistant.stopReason,
-      rawStopReason: assistant.rawStopReason,
-      errorMessage: assistant.errorMessage,
-    },
-    latencyMs: durationMs,
-    createdAt: completedAt,
-  };
-}
-
-function responseWithSessionUsage(response: AgentChatResponse, userText: string, assistant: AssistantMessage, thinkingText: string): AgentChatResponse {
+function responseWithSessionUsage(response: DigitalHumanChatResponse, userText: string, assistant: AssistantMessage, thinkingText: string): DigitalHumanChatResponse {
   const usage = assistant.usage;
   if (!isFiniteNumber(usage?.input) || !isFiniteNumber(usage?.output) || !isFiniteNumber(usage?.totalTokens)) return response;
   return {
@@ -287,57 +163,30 @@ function responseWithSessionUsage(response: AgentChatResponse, userText: string,
   };
 }
 
-function projectEntries(agentId: WorkbenchAgentId, sessionId: string, entries: SessionEntry[]): AgentSessionMessage[] {
+function projectEntries(digitalHumanId: DigitalHumanId, entries: SessionEntry[]): DigitalHumanSessionMessage[] {
   const turnEntries = entries.map(parseTurnEntry).filter((entry): entry is TurnEntryData => Boolean(entry));
-  const turnByUser = new Map(turnEntries.filter((entry) => entry.userEntryId).map((entry) => [entry.userEntryId!, entry]));
-  const turnByAssistant = new Map(turnEntries.flatMap((entry) => entry.assistantEntryIds.map((id) => [id, entry] as const)));
+  const entriesById = new Map(entries.filter(isMessageEntry).map((entry) => [entry.id, entry]));
   const feedbackByMessage = new Map<string, AgentFeedback | null>();
   for (const entry of entries) {
     const data = parseFeedbackEntry(entry);
     if (data) feedbackByMessage.set(data.messageId, data.feedback);
   }
 
-  const messages: AgentSessionMessage[] = [];
-  let turnNumber = 0;
-  let current: { userEntryId: string; userText: string; userTimestamp: number; assistantEntryIds: string[]; answer: string; thinking: string; assistant?: AssistantMessage } | undefined;
-  const flush = () => {
-    if (!current) return;
-    const active = current;
-    const metadata = turnByUser.get(active.userEntryId) ?? active.assistantEntryIds.map((id) => turnByAssistant.get(id)).find((entry): entry is TurnEntryData => Boolean(entry));
-    const turnId = metadata?.turnId ?? `turn_${current.userEntryId}`;
-    const userText = displayUserText(active.userText, metadata?.userText);
-    const userCreatedAt = new Date(active.userTimestamp).toISOString();
-    const assistantCreatedAt = active.assistant ? new Date(active.assistant.timestamp).toISOString() : metadata?.response.createdAt;
-    messages.push({ id: active.userEntryId, kind: 'user', text: userText, turnId, createdAt: userCreatedAt });
-    if (active.thinking) messages.push({ id: `thinking_${active.userEntryId}`, kind: 'thinking', turnId, text: active.thinking, status: 'complete', createdAt: assistantCreatedAt });
-    if (active.answer || metadata?.response || active.assistant) {
-      const assistantId = metadata?.assistantEntryIds.at(-1) ?? active.assistantEntryIds.at(-1) ?? `assistant_${active.userEntryId}`;
-      const toolCalls = active.assistant ? toolCallsFromAssistant(active.assistant) : [];
-      const response = metadata?.response ? { ...responseWithLegacyMetrics(metadata.response, turnNumber), agentId } : active.assistant ? responseFromPiMessage(agentId, sessionId, userText, active.userTimestamp, active.assistant, turnNumber, active.thinking, toolCalls) : undefined;
-      const feedback = feedbackByMessage.get(assistantId);
-      if (response) messages.push({ id: assistantId, kind: 'assistant', turnId, text: active.answer || response.answer, response, createdAt: assistantCreatedAt ?? response.createdAt, persisted: true, ...(feedback ? { feedback } : {}) });
-    }
-    current = undefined;
-  };
-
-  for (const entry of entries) {
-    if (isUserMessage(entry)) {
-      flush();
-      turnNumber += 1;
-      current = { userEntryId: entry.id, userText: textFromContent(entry.message.content), userTimestamp: entry.message.timestamp, assistantEntryIds: [], answer: '', thinking: '' };
-      continue;
-    }
-    if (!isAssistantMessage(entry)) continue;
-    if (!current) {
-      turnNumber += 1;
-      current = { userEntryId: `unknown_${entry.id}`, userText: '', userTimestamp: entry.message.timestamp, assistantEntryIds: [], answer: '', thinking: '' };
-    }
-    current.assistantEntryIds.push(entry.id);
-    current.answer += textFromContent(entry.message.content);
-    current.thinking += thinkingFromAssistant(entry.message);
-    current.assistant = entry.message;
+  const messages: DigitalHumanSessionMessage[] = [];
+  for (const turn of turnEntries) {
+    const userEntry = entriesById.get(turn.userEntryId);
+    const assistantEntries = turn.assistantEntryIds.map((id) => entriesById.get(id)).filter((entry): entry is MessageEntry & { message: AssistantMessage } => Boolean(entry && isAssistantMessage(entry)));
+    const assistantEntry = assistantEntries.at(-1);
+    if (!userEntry || !isUserMessage(userEntry) || !assistantEntry) throw new Error(`数字人会话 ${turn.turnId} 缺少完整消息记录`);
+    const assistantId = assistantEntry.id;
+    const assistantCreatedAt = new Date(assistantEntry.message.timestamp).toISOString();
+    const thinking = assistantEntries.map((entry) => thinkingFromAssistant(entry.message)).join('');
+    const feedback = feedbackByMessage.get(assistantId);
+    const response = { ...turn.response, digitalHumanId };
+    messages.push({ id: userEntry.id, kind: 'user', text: turn.userText, turnId: turn.turnId, createdAt: new Date(userEntry.message.timestamp).toISOString() });
+    if (thinking) messages.push({ id: `thinking_${userEntry.id}`, kind: 'thinking', turnId: turn.turnId, text: thinking, status: 'complete', createdAt: assistantCreatedAt });
+    messages.push({ id: assistantId, kind: 'assistant', turnId: turn.turnId, text: response.answer, response, createdAt: assistantCreatedAt, persisted: true, ...(feedback !== undefined ? { feedback } : {}) });
   }
-  flush();
   return messages;
 }
 
@@ -372,52 +221,58 @@ export class PiFileSessionStore {
     this.sessionDir = resolve(this.cwd, options.sessionDir ?? getPiSessionDir(this.cwd));
   }
 
-  async listSessions(agentId?: WorkbenchAgentId): Promise<AgentSessionRecord[]> {
+  async listSessions(digitalHumanId?: DigitalHumanId): Promise<DigitalHumanSessionRecord[]> {
     const infos = await this.sortedInfos();
     const records = await Promise.all(infos.map((info, index) => this.recordFromInfo(info, index)));
-    return agentId ? records.filter((record) => record.agentId === agentId) : records;
+    const defined = records.filter((record): record is DigitalHumanSessionRecord => Boolean(record));
+    return digitalHumanId ? defined.filter((record) => record.digitalHumanId === digitalHumanId) : defined;
   }
 
-  async createSession(id = `session_${randomUUID().slice(0, 8)}`, agentId: WorkbenchAgentId = 'knowledge'): Promise<AgentSessionRecord> {
+  async createSession(digitalHumanId: DigitalHumanId, id = `session_${randomUUID().slice(0, 8)}`): Promise<DigitalHumanSessionRecord> {
     const existing = await this.findInfo(id);
     if (existing) {
       const record = await this.recordFromInfo(existing, await this.positionOf(id));
-      if (record.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
+      if (!record || record.digitalHumanId !== digitalHumanId) throw new Error('DIGITAL_HUMAN_SESSION_MISMATCH');
       return record;
     }
-    const manager = SessionManager.create(this.cwd, this.sessionDir, { id });
-    const file = manager.getSessionFile();
-    const header = manager.getHeader();
-    if (!file || !header) throw new Error('Pi session file could not be initialized');
     mkdirSync(this.sessionDir, { recursive: true });
-    if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
-    SessionManager.open(file, this.sessionDir, this.cwd).appendCustomEntry(PI_WORKBENCH_AGENT_ENTRY, { agentId } satisfies AgentEntryData);
-    return this.recordFromInfo({ path: file, id: header.id, cwd: header.cwd, created: new Date(header.timestamp), modified: new Date(header.timestamp), messageCount: 0, firstMessage: '(no messages)', allMessagesText: '' }, await this.positionOf(id));
+    const lockPath = resolve(this.sessionDir, `.create-${encodeURIComponent(id)}.lock`);
+    try {
+      mkdirSync(lockPath);
+    } catch {
+      throw new Error('DIGITAL_HUMAN_SESSION_CREATE_CONFLICT');
+    }
+    try {
+      const createdByPeer = await this.findInfo(id);
+      if (createdByPeer) {
+        const record = await this.recordFromInfo(createdByPeer, await this.positionOf(id));
+        if (!record || record.digitalHumanId !== digitalHumanId) throw new Error('DIGITAL_HUMAN_SESSION_MISMATCH');
+        return record;
+      }
+      const manager = SessionManager.create(this.cwd, this.sessionDir, { id });
+      const file = manager.getSessionFile();
+      const header = manager.getHeader();
+      if (!file || !header) throw new Error('Pi session file could not be initialized');
+      if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
+      SessionManager.open(file, this.sessionDir, this.cwd).appendCustomEntry(PI_WORKBENCH_DIGITAL_HUMAN_ENTRY, { digitalHumanId } satisfies DigitalHumanEntryData);
+      return (await this.recordFromInfo({ path: file, id: header.id, cwd: header.cwd, created: new Date(header.timestamp), modified: new Date(header.timestamp), messageCount: 0, firstMessage: '(no messages)', allMessagesText: '' }, await this.positionOf(id)))!;
+    } finally {
+      rmSync(lockPath, { recursive: true, force: true });
+    }
   }
 
-  async ensureSession(id: string, agentId: WorkbenchAgentId = 'knowledge'): Promise<AgentSessionRecord> {
+  async ensureSession(id: string, digitalHumanId: DigitalHumanId): Promise<DigitalHumanSessionRecord> {
     const existing = await this.getSession(id);
-    if (existing && existing.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
-    return existing ?? this.createSession(id, agentId);
+    if (existing && existing.digitalHumanId !== digitalHumanId) throw new Error('DIGITAL_HUMAN_SESSION_MISMATCH');
+    return existing ?? this.createSession(digitalHumanId, id);
   }
 
-  async getSession(id: string): Promise<AgentSessionRecord | undefined> {
+  async getSession(id: string): Promise<DigitalHumanSessionRecord | undefined> {
     const info = await this.findInfo(id);
     return info ? this.recordFromInfo(info, await this.positionOf(id)) : undefined;
   }
 
-  async appendFallbackTurn(sessionId: string, text: string, turnId: string, response: AgentChatResponse): Promise<AgentSessionRecord> {
-    const manager = await this.openOrCreate(sessionId);
-    if (!latestTurnEntry(manager.getEntries(), turnId)) {
-      const latestUser = [...manager.getEntries()].reverse().find(isUserMessage);
-      const userEntryId = latestUser && textFromContent(latestUser.message.content) === text ? latestUser.id : manager.appendMessage(createFallbackUserMessage(text) as PersistedMessage);
-      const assistantEntryId = manager.appendMessage(createFallbackAssistantMessage(response.answer) as PersistedMessage);
-      manager.appendCustomEntry(PI_WORKBENCH_TURN_ENTRY, { turnId, response, userEntryId, assistantEntryIds: [assistantEntryId] } satisfies TurnEntryData);
-    }
-    return (await this.getSession(sessionId))!;
-  }
-
-  async appendTurnMetadata(sessionId: string, turnId: string, response: AgentChatResponse, userText?: string): Promise<AgentSessionRecord> {
+  async appendTurnMetadata(sessionId: string, turnId: string, response: DigitalHumanChatResponse, userText: string): Promise<DigitalHumanSessionRecord> {
     const manager = await this.openOrCreate(sessionId);
     const entries = manager.getEntries();
     if (!latestTurnEntry(entries, turnId)) {
@@ -425,21 +280,22 @@ export class PiFileSessionStore {
       const userEntryId = latestUserIndex && isUserMessage(latestUserIndex.entry) ? latestUserIndex.entry.id : undefined;
       const assistantEntryIds = latestUserIndex ? entries.slice(latestUserIndex.index + 1).filter(isAssistantMessage).map((entry) => entry.id) : [];
       const latestAssistant = assistantEntryIds.length ? entries.find((entry) => entry.type === 'message' && entry.id === assistantEntryIds.at(-1)) : undefined;
-      const persistedUserText = userText?.trim() || (latestUserIndex && isUserMessage(latestUserIndex.entry) ? displayUserText(textFromContent(latestUserIndex.entry.message.content)) : '');
+      const persistedUserText = userText.trim();
+      if (!userEntryId || !assistantEntryIds.length || !persistedUserText) throw new Error('数字人 turn 缺少持久化消息');
       const persistedResponse = latestAssistant && isAssistantMessage(latestAssistant) ? responseWithSessionUsage(response, persistedUserText, latestAssistant.message, thinkingFromAssistant(latestAssistant.message)) : response;
-      manager.appendCustomEntry(PI_WORKBENCH_TURN_ENTRY, { turnId, response: persistedResponse, userText, userEntryId, assistantEntryIds } satisfies TurnEntryData);
+      manager.appendCustomEntry(PI_WORKBENCH_TURN_ENTRY, { turnId, response: persistedResponse, userText: persistedUserText, userEntryId, assistantEntryIds } satisfies TurnEntryData);
     }
     return (await this.getSession(sessionId))!;
   }
 
-  async setMessageFeedback(sessionId: string, messageId: string, feedback: AgentFeedback | null): Promise<AgentSessionRecord | undefined> {
+  async setMessageFeedback(sessionId: string, messageId: string, feedback: AgentFeedback | null): Promise<DigitalHumanSessionRecord | undefined> {
     const manager = await this.openOrCreate(sessionId);
     if (!manager.getEntries().some((entry) => isAssistantMessage(entry) && entry.id === messageId)) return undefined;
     manager.appendCustomEntry(PI_WORKBENCH_FEEDBACK_ENTRY, { messageId, feedback } satisfies FeedbackEntryData);
     return this.getSession(sessionId);
   }
 
-  async setSessionTitle(sessionId: string, title: string): Promise<AgentSessionRecord | undefined> {
+  async setSessionTitle(sessionId: string, title: string): Promise<DigitalHumanSessionRecord | undefined> {
     const info = await this.findInfo(sessionId);
     if (!info) return undefined;
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
@@ -477,12 +333,17 @@ export class PiFileSessionStore {
     return info ? SessionManager.open(info.path, this.sessionDir, this.cwd) : SessionManager.create(this.cwd, this.sessionDir, { id: sessionId });
   }
 
-  private async recordFromInfo(info: SessionInfo, position: number): Promise<AgentSessionRecord> {
+  private async recordFromInfo(info: SessionInfo, position: number): Promise<DigitalHumanSessionRecord | undefined> {
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
     const entries = manager.getEntries();
     const title = sessionTitleFromEntries(entries);
-    const agentId = agentIdFromEntries(entries);
-    return { id: info.id, agentId, ...(title ? { title } : {}), position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(agentId, info.id, entries) };
+    let digitalHumanId: DigitalHumanId;
+    try {
+      digitalHumanId = assertSessionDigitalHumanBinding(entries);
+    } catch {
+      return undefined;
+    }
+    return { id: info.id, digitalHumanId, ...(title ? { title } : {}), position, createdAt: info.created.toISOString(), updatedAt: info.modified.toISOString(), messages: projectEntries(digitalHumanId, entries) };
   }
 }
 

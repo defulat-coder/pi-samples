@@ -52,7 +52,7 @@ const domains = [
       'context|上下文预算|系统提示、工具说明、检索片段和历史消息如何共同消耗预算',
       'evidence|证据回答|回答必须能回到实际使用的文件、数据库记录或工具结果',
       'clarify|澄清问题|信息不足时如何提出最少且有价值的澄清，而不是猜测',
-      'fallback|降级回答|没有模型、工具失败或证据不足时如何保持诚实且可操作',
+      'explicit-failure|显式失败|没有模型、工具失败或证据不足时如何保持诚实且可诊断',
       'multiturn|多轮对话|将前一轮事实、用户修正和新证据合并为下一轮上下文',
       'prompts|提示层次|系统约束、项目上下文、工具指南和用户问题如何分工',
       'capability|能力注入|只给 Agent 当前任务需要的最小能力，避免无限工具集合',
@@ -61,7 +61,7 @@ const domains = [
     ['模型决策和宿主职责', '事实、推论和未知状态', '用户意图与能力授权', '单轮速度和长期可维护性', '自动化与人工复核'],
     ['Agent contract', 'context snapshot', 'evidence envelope', 'capability registry', 'human review record'],
     ['证据覆盖率', '无证据拒答率', '澄清后解决率', '工具选择准确率', '人工复核通过率'],
-    ['把关键词路由伪装成 Agent', '把检索结果当作指令', '把模型输出当作权限', '把未知写成肯定答案', '让 fallback 冒充真实模型决策'],
+    ['把关键词路由伪装成 Agent', '把检索结果当作指令', '把模型输出当作权限', '把未知写成肯定答案', '用伪造回答掩盖真实失败'],
   ),
   makeDomain(
     'rag-retrieval',
@@ -364,7 +364,6 @@ const variants = [
 
 const legacy = [
   { path: 'agent/answer-contract.md', title: 'Agent 回答契约', description: '一个可验证的 Agent 回答包含文本、实际工具决策、来源和运行状态。', topic: { id: 'answer-contract', title: '回答契约', focus: '文本、工具决策、来源和运行状态如何组成可验证的最终回答' }, domain: domains.find((item) => item.id === 'agent-design') },
-  { path: 'agent/local-fallback.md', title: '本地降级模式', description: '没有模型凭据时，用本地 consumer 和规则回答验证 Agent 外壳。', topic: { id: 'local-fallback', title: '本地降级', focus: '没有模型、工具失败或证据不足时如何保持诚实且可测试的回答' }, domain: domains.find((item) => item.id === 'agent-design') },
   { path: 'agent/resource-loading.md', title: '项目资源加载', description: 'Pi 官方资源发现与项目 Markdown 知识工具之间的边界。', topic: { id: 'resource-loading', title: '项目资源加载', focus: 'Pi 官方资源发现规则与项目自定义 Markdown 知识 bundle 的边界' }, domain: domains.find((item) => item.id === 'pi-runtime') },
   { path: 'agent/session-lifecycle.md', title: 'Pi Session 生命周期', description: 'Agent session 从创建、加载资源、提交 turn 到结束的基本流程。', topic: { id: 'session-lifecycle', title: 'Session 生命周期', focus: '从创建、资源加载、提交 turn、接收事件到关闭的状态变化' }, domain: domains.find((item) => item.id === 'pi-runtime') },
   { path: 'agent/tool-policy.md', title: '工具权限边界', description: '只读工具、能力注入和模型决策之间的安全边界。', topic: { id: 'tool-policy', title: '工具权限边界', focus: '只读工具、能力注入和模型决策之间的安全边界' }, domain: domains.find((item) => item.id === 'security') },

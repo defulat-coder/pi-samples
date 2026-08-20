@@ -1,4 +1,4 @@
-import type { AgentChatStreamEvent, AgentEventSummary } from '@pi-workbench/contracts';
+import type { AgentEventSummary, DigitalHumanChatStreamEvent } from '@pi-workbench/contracts';
 
 export type LiveTurnProcess = {
   answer: string;
@@ -25,7 +25,7 @@ export function isVisibleProcessEvent(event: AgentEventSummary): boolean {
   return event.category === 'tool' || event.category === 'thinking' || event.category === 'error';
 }
 
-export function applyAgentStreamEvent(process: LiveTurnProcess, event: AgentChatStreamEvent): LiveTurnProcess {
+export function applyAgentStreamEvent(process: LiveTurnProcess, event: DigitalHumanChatStreamEvent): LiveTurnProcess {
   if (event.type === 'text_delta') return { ...process, answer: process.answer + event.delta };
   if (event.type === 'thinking_delta') return { ...process, thinking: process.thinking + event.delta };
   if (event.type === 'event' && isVisibleProcessEvent(event.event)) return { ...process, events: [...process.events, event.event] };

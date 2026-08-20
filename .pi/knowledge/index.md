@@ -41,7 +41,6 @@ updated: 2026-08-01
 ## 项目基线
 
 - [Agent 回答契约](./agent/answer-contract.md)
-- [本地降级模式](./agent/local-fallback.md)
 - [项目资源加载](./agent/resource-loading.md)
 - [Pi Session 生命周期](./agent/session-lifecycle.md)
 - [工具权限边界](./agent/tool-policy.md)

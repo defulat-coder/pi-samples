@@ -85,18 +85,32 @@ export interface QuerySource {
   fields?: string[];
 }
 
-export type WorkbenchAgentId = 'knowledge' | 'business-data';
-export type AgentChatRoute = 'workspace' | 'knowledge' | 'business-data';
+export type DigitalHumanId = string;
+export type DigitalHumanCapabilityProfile = 'project-knowledge' | 'business-analytics';
+export type DigitalHumanAccent = 'indigo' | 'teal' | 'amber' | 'rose';
+export type DigitalHumanChatRoute = DigitalHumanCapabilityProfile;
 
-export interface WorkbenchAgentDefinition {
-  id: WorkbenchAgentId;
-  name: string;
+export interface DigitalHumanDefinition {
+  schemaVersion: 1;
+  order: number;
+  id: DigitalHumanId;
+  displayName: string;
+  role: string;
+  tagline: string;
   description: string;
+  capabilityProfile: DigitalHumanCapabilityProfile;
   capabilityLabel: string;
+  avatar: { initials: string; accent: DigitalHumanAccent };
+  persona: {
+    identity: string;
+    mission: string;
+    traits: string[];
+    communicationStyle: string;
+    principles: string[];
+  };
+  skills: string[];
   tools: string[];
-  welcomeTitle: string;
-  welcomeDescription: string;
-  suggestions: string[];
+  welcome: { title: string; description: string; suggestions: string[] };
 }
 
 export type BusinessMeasure = 'gross_sales' | 'net_sales' | 'order_count' | 'average_order_value' | 'refund_rate';
@@ -186,7 +200,7 @@ export type AgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' |
 
 export interface AgentResourceSummary {
   path: string;
-  kind: 'skill' | 'prompt' | 'knowledge' | 'session' | 'extension' | 'theme' | 'settings' | 'system' | 'file';
+  kind: 'digital-human' | 'skill' | 'prompt' | 'knowledge' | 'session' | 'extension' | 'theme' | 'settings' | 'system' | 'file';
   title: string;
   status: 'active' | 'draft' | 'deprecated';
 }
@@ -246,7 +260,7 @@ export interface AgentEventSummary {
 
 export interface AgentDecision {
   /** Who selected the execution path. This is observed after the turn, not an input route. */
-  decidedBy: 'pi' | 'fallback';
+  decidedBy: 'pi';
   /** Tools actually called by Pi during this turn. */
   toolCalls: string[];
 }
@@ -369,21 +383,21 @@ export interface AgentTurnMetrics {
   errorMessage?: string;
 }
 
-export interface AgentChatRequest {
+export interface DigitalHumanChatRequest {
   message: string;
-  agentId?: WorkbenchAgentId;
+  digitalHumanId: DigitalHumanId;
   sessionId?: string;
   turnId?: string;
   thinkingLevel?: AgentThinkingLevel;
   debug?: boolean;
 }
 
-export interface AgentChatResponse {
+export interface DigitalHumanChatResponse {
   answer: string;
-  source: 'local-fallback' | 'pi-coding-agent';
-  agentId: WorkbenchAgentId;
+  source: 'pi-coding-agent';
+  digitalHumanId: DigitalHumanId;
   sessionId: string;
-  route: AgentChatRoute;
+  route: DigitalHumanChatRoute;
   decision: AgentDecision;
   sources: QuerySource[];
   analysis?: BusinessAnalysis;
@@ -408,31 +422,31 @@ export interface AgentChatResponse {
   createdAt: string;
 }
 
-export type AgentSessionMessage =
+export type DigitalHumanSessionMessage =
   | { id: string; kind: 'user'; text: string; turnId?: string; createdAt?: string }
   | { id: string; kind: 'thinking'; turnId: string; text: string; status: 'streaming' | 'complete'; createdAt?: string }
-  | { id: string; kind: 'assistant'; turnId: string; text: string; response?: AgentChatResponse; feedback?: AgentFeedback | null; createdAt?: string; persisted?: boolean };
+  | { id: string; kind: 'assistant'; turnId: string; text: string; response?: DigitalHumanChatResponse; feedback?: AgentFeedback | null; createdAt?: string; persisted?: boolean };
 
-export interface AgentSessionRecord {
+export interface DigitalHumanSessionRecord {
   id: string;
-  agentId: WorkbenchAgentId;
+  digitalHumanId: DigitalHumanId;
   title?: string;
   position: number;
   createdAt: string;
   updatedAt: string;
-  messages: AgentSessionMessage[];
+  messages: DigitalHumanSessionMessage[];
 }
 
-export interface AgentSessionListResponse {
-  items: AgentSessionRecord[];
+export interface DigitalHumanSessionListResponse {
+  items: DigitalHumanSessionRecord[];
   total: number;
 }
 
-/** Payloads transported by the POST /agent/chat/stream SSE endpoint. */
-export type AgentChatStreamEvent =
-  | { type: 'start'; agentId: WorkbenchAgentId; sessionId: string; model: AgentChatResponse['model'] }
+/** Payloads transported by the POST /digital-humans/chat/stream SSE endpoint. */
+export type DigitalHumanChatStreamEvent =
+  | { type: 'start'; digitalHumanId: DigitalHumanId; sessionId: string; model: DigitalHumanChatResponse['model'] }
   | { type: 'event'; event: AgentEventSummary }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
-  | { type: 'done'; response: AgentChatResponse }
+  | { type: 'done'; response: DigitalHumanChatResponse }
   | { type: 'error'; message: string };

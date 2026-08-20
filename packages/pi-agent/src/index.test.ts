@@ -1,11 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createPiAgentSession, getPiProjectRoot, loadPiResourceSnapshot } from './index.js';
+import { PiFileSessionStore } from './session-store.js';
 
 describe('Pi workspace tools', () => {
   it('registers knowledge search as a Pi decision tool instead of pre-routing the request', async () => {
     const runtime = await createPiAgentSession({
       cwd: getPiProjectRoot(),
+      digitalHumanId: 'project-steward',
       persistSession: false,
       searchKnowledge: async (query) => [{ kind: 'knowledge', title: 'Session', ref: '.pi/knowledge/agent/session-lifecycle.md', excerpt: `matched ${query}` }],
     });
@@ -32,12 +37,12 @@ describe('Pi workspace tools', () => {
     assert.ok(snapshot.appendSystemPrompts.some((prompt) => prompt.path === '.pi/APPEND_SYSTEM.md'));
   });
 
-  it('creates a second Pi AgentSession with only the business analysis capability set', async () => {
+  it('creates the commerce analyst digital human with only the business analytics capability profile', async () => {
     let observedDimensions: string[] = [];
     let observedMeasures: string[] = [];
     const runtime = await createPiAgentSession({
       cwd: getPiProjectRoot(),
-      agentId: 'business-data',
+      digitalHumanId: 'commerce-analyst',
       persistSession: false,
       businessAnalytics: {
         catalog: {
@@ -78,6 +83,18 @@ describe('Pi workspace tools', () => {
       await assert.rejects(() => tool.execute('business-call-again', { measures: ['net_sales'], dimensions: [] }, undefined, undefined, undefined as never), /已在本轮执行/);
     } finally {
       runtime.close();
+    }
+  });
+
+  it('refuses to open another digital human session through the direct runtime interface', async () => {
+    const cwd = getPiProjectRoot();
+    const sessionDir = mkdtempSync(join(tmpdir(), 'pi-runtime-binding-'));
+    try {
+      const store = new PiFileSessionStore({ cwd, sessionDir });
+      await store.createSession('project-steward', 'owned-session');
+      await assert.rejects(() => createPiAgentSession({ cwd, digitalHumanId: 'commerce-analyst', sessionId: 'owned-session', sessionDir, persistSession: true }), /DIGITAL_HUMAN_SESSION_MISMATCH/);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
     }
   });
 });

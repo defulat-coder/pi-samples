@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentChatResponse, AgentChatStreamEvent, AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentSessionListResponse, AgentSessionMessage, AgentSessionRecord, AgentThinkingLevel, AuthStatusResponse, AuthUser, PiRuntimeResourceSnapshot, WorkbenchAgentDefinition, WorkbenchAgentId } from '@pi-workbench/contracts';
+import type { AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentThinkingLevel, AuthStatusResponse, AuthUser, DigitalHumanChatResponse, DigitalHumanChatStreamEvent, DigitalHumanDefinition, DigitalHumanId, DigitalHumanSessionListResponse, DigitalHumanSessionMessage, DigitalHumanSessionRecord, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight';
 import { ArrowUpRight } from '@phosphor-icons/react/dist/icons/ArrowUpRight';
@@ -29,15 +29,15 @@ import { applyAgentStreamEvent, buildToolActivities, createLiveTurnProcess, isVi
 
 const BusinessPresentationView = lazy(() => import('./business-presentation.js').then((module) => ({ default: module.BusinessPresentationView })));
 
-type UserMessageItem = Extract<AgentSessionMessage, { kind: 'user' }>;
-type ThinkingMessageItem = Extract<AgentSessionMessage, { kind: 'thinking' }>;
-type AssistantMessageItem = Extract<AgentSessionMessage, { kind: 'assistant' }> & { streamEvents?: AgentEventSummary[]; agentId?: WorkbenchAgentId };
+type UserMessageItem = Extract<DigitalHumanSessionMessage, { kind: 'user' }>;
+type ThinkingMessageItem = Extract<DigitalHumanSessionMessage, { kind: 'thinking' }>;
+type AssistantMessageItem = Extract<DigitalHumanSessionMessage, { kind: 'assistant' }> & { streamEvents?: AgentEventSummary[]; digitalHumanId?: DigitalHumanId };
 
 /** The stream's semantic output stays split into sibling UI items. */
-type ConversationItem = AgentSessionMessage;
+type ConversationItem = DigitalHumanSessionMessage;
 
 type WorkspaceSnapshot = {
-  agents: WorkbenchAgentDefinition[];
+  digitalHumans: DigitalHumanDefinition[];
   resources: AgentResourceSummary[];
   tools: { enabled: string[]; policy: 'read-only' };
   model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string };
@@ -54,30 +54,15 @@ type FileTreeNode = {
   resource?: AgentResourceSummary;
 };
 
-type SessionRecord = AgentSessionRecord;
+type SessionRecord = DigitalHumanSessionRecord;
 
 type WorkspaceView = 'sessions' | 'files';
 
-const fallbackResources: AgentResourceSummary[] = [
-  { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill', title: 'Pi 工作台智能体技能', status: 'active' },
-  { path: '.pi/prompts/agent-chat.md', kind: 'prompt', title: '智能体对话提示词', status: 'active' },
-  { path: '.pi/knowledge/agent/session-lifecycle.md', kind: 'knowledge', title: 'Pi 会话生命周期', status: 'active' },
-  { path: '.pi/knowledge/agent/resource-loading.md', kind: 'knowledge', title: '项目资源加载', status: 'active' },
-  { path: '.pi/knowledge/agent/tool-policy.md', kind: 'knowledge', title: '只读工具策略', status: 'active' },
-  { path: '.pi/knowledge/agent/answer-contract.md', kind: 'knowledge', title: '智能体回答契约', status: 'active' },
-  { path: '.pi/knowledge/agent/local-fallback.md', kind: 'knowledge', title: '本地降级模式', status: 'active' },
-];
-
-const fallbackAgents: WorkbenchAgentDefinition[] = [
-  { id: 'knowledge', name: '知识库问答', description: '基于项目文件和 Markdown 知识库提供可引用的回答。', capabilityLabel: '项目知识 · 只读', tools: ['read', 'search_knowledge'], welcomeTitle: '你好，我是知识库问答智能体', welcomeDescription: '从项目文件、知识库或 Pi 运行机制开始提问。', suggestions: ['解释当前项目的 Pi Session 生命周期', '这个智能体能调用哪些工具？', '如何开发一个新的只读工具？'] },
-  { id: 'business-data', name: '经营分析智能体', description: '基于认证经营指标查询演示数据，并解释趋势、排名和异常。', capabilityLabel: '经营问数 · 只读', tools: ['read', 'query_business_data'], welcomeTitle: '你好，我是经营分析智能体', welcomeDescription: '可以自由组合区域、渠道、品类和时间维度，查询销售额、订单量、客单价与退款率。', suggestions: ['近 30 天各区域退款后销售额和订单量排名', '按月对比各渠道近 90 天退款后销售额趋势', '直播渠道各区域、品类的退款率排名', '查看近一年月度 GMV 和订单趋势'] },
-];
-
-const fallbackWorkspace: WorkspaceSnapshot = {
-  agents: fallbackAgents,
-  resources: fallbackResources,
-  tools: { enabled: ['read', 'search_knowledge'], policy: 'read-only' },
-  model: { enabled: false, providerConfigured: false, provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'off' },
+const emptyWorkspace: WorkspaceSnapshot = {
+  digitalHumans: [],
+  resources: [],
+  tools: { enabled: [], policy: 'read-only' },
+  model: { enabled: false, providerConfigured: false, thinkingLevel: 'off' },
 };
 
 const enabledThinkingLevel: AgentThinkingLevel = 'minimal';
@@ -87,9 +72,9 @@ function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function emptySessionRecord(agentId: WorkbenchAgentId, position = 0): SessionRecord {
+function emptySessionRecord(digitalHumanId: DigitalHumanId, position = 0): SessionRecord {
   const now = new Date().toISOString();
-  return { id: newSessionId(), agentId, position, createdAt: now, updatedAt: now, messages: [] };
+  return { id: newSessionId(), digitalHumanId, position, createdAt: now, updatedAt: now, messages: [] };
 }
 
 function sortSessionRecords(records: SessionRecord[]) {
@@ -111,12 +96,12 @@ function conversationTime(value?: string) {
   return new Intl.DateTimeFormat('zh-CN', sameDay ? { hour: '2-digit', minute: '2-digit' } : { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
-function routeLabel(route: AgentChatResponse['route']) {
-  return route === 'business-data' ? '经营数据' : route === 'knowledge' ? '知识库' : '工作区';
+function routeLabel(route: DigitalHumanChatResponse['route']) {
+  return route === 'business-analytics' ? '经营分析' : '项目知识';
 }
 
-function responseSourceLabel(source: AgentChatResponse['source']) {
-  return source === 'pi-coding-agent' ? 'Pi 会话' : '本地降级';
+function responseSourceLabel(_source: DigitalHumanChatResponse['source']) {
+  return 'Pi 会话';
 }
 
 function resourceTitle(title: string) {
@@ -134,23 +119,23 @@ function markdownBody(content: string) {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 }
 
-function parseStreamPayload(eventName: string, data: string): AgentChatStreamEvent {
+function parseStreamPayload(eventName: string, data: string): DigitalHumanChatStreamEvent {
   const payload = JSON.parse(data) as Record<string, unknown>;
-  if (eventName === 'start') return { type: 'start', agentId: payload.agentId === 'business-data' ? 'business-data' : 'knowledge', sessionId: String(payload.sessionId), model: payload.model as AgentChatResponse['model'] };
+  if (eventName === 'start') return { type: 'start', digitalHumanId: String(payload.digitalHumanId), sessionId: String(payload.sessionId), model: payload.model as DigitalHumanChatResponse['model'] };
   if (eventName === 'event') return { type: 'event', event: payload.event as AgentEventSummary };
   if (eventName === 'text_delta') return { type: 'text_delta', delta: String(payload.delta ?? '') };
   if (eventName === 'thinking_delta') return { type: 'thinking_delta', delta: String(payload.delta ?? '') };
-  if (eventName === 'done') return { type: 'done', response: payload.response as AgentChatResponse };
-  if (eventName === 'error') return { type: 'error', message: String(payload.message ?? '智能体流式响应失败') };
+  if (eventName === 'done') return { type: 'done', response: payload.response as DigitalHumanChatResponse };
+  if (eventName === 'error') return { type: 'error', message: String(payload.message ?? '数字人流式响应失败') };
   throw new Error(`未知的流式事件：${eventName}`);
 }
 
-async function consumeAgentStream(response: Response, onEvent: (event: AgentChatStreamEvent) => void): Promise<AgentChatResponse> {
-  if (!response.body) throw new Error('智能体网关没有返回可读流');
+async function consumeAgentStream(response: Response, onEvent: (event: DigitalHumanChatStreamEvent) => void): Promise<DigitalHumanChatResponse> {
+  if (!response.body) throw new Error('数字人网关没有返回可读流');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalResponse: AgentChatResponse | undefined;
+  let finalResponse: DigitalHumanChatResponse | undefined;
 
   const consumeBlock = (block: string) => {
     let eventName = 'message';
@@ -179,31 +164,31 @@ async function consumeAgentStream(response: Response, onEvent: (event: AgentChat
     if (done) break;
   }
   if (buffer.trim()) consumeBlock(buffer);
-  if (!finalResponse) throw new Error('智能体流在完成事件前结束');
+  if (!finalResponse) throw new Error('数字人响应流在完成事件前结束');
   return finalResponse;
 }
 
-async function fetchSessionRecords(agentId: WorkbenchAgentId): Promise<SessionRecord[]> {
-  const response = await fetch(`/api/v1/agent/sessions?agentId=${encodeURIComponent(agentId)}`);
+async function fetchSessionRecords(digitalHumanId: DigitalHumanId): Promise<SessionRecord[]> {
+  const response = await fetch(`/api/v1/digital-humans/sessions?digitalHumanId=${encodeURIComponent(digitalHumanId)}`);
   if (!response.ok) throw new Error('会话列表暂时无法读取');
-  const payload = await response.json() as AgentSessionListResponse;
+  const payload = await response.json() as DigitalHumanSessionListResponse;
   return sortSessionRecords(payload.items);
 }
 
 async function fetchSessionRecord(id: string): Promise<SessionRecord> {
-  const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(id)}`);
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`);
   if (!response.ok) throw new Error('会话内容暂时无法读取');
   return response.json() as Promise<SessionRecord>;
 }
 
 async function renameSessionRecord(id: string, title: string): Promise<SessionRecord> {
-  const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
   if (!response.ok) throw new Error('会话名称暂时无法保存');
   return response.json() as Promise<SessionRecord>;
 }
 
 async function deleteSessionRecord(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!response.ok && response.status !== 404) throw new Error('会话暂时无法删除');
 }
 
@@ -243,7 +228,7 @@ function FeishuLoginPage({ status, error, onRetry }: { status: AuthStatusRespons
   const configured = status.configured;
   return <div className="auth-shell">
     <section className="auth-context" aria-labelledby="auth-context-title">
-      <header className="auth-brand"><span className="auth-brand-mark">π</span><span><strong>Pi 工作台</strong><small>本地智能体工作区</small></span></header>
+      <header className="auth-brand"><span className="auth-brand-mark">π</span><span><strong>Pi 工作台</strong><small>本地数字人工作区</small></span></header>
       <div className="auth-context-body">
         <h1 id="auth-context-title">先确认身份，<br /><span>再把项目交给 Pi。</span></h1>
         <p>使用飞书账号进入一个只读、可追溯的项目上下文。文件、提示词、知识库和每次会话，都在同一个工作台里保持清晰。</p>
@@ -323,6 +308,7 @@ function treeHasMatch(node: FileTreeNode, query: string): boolean {
 }
 
 function fileKindLabel(resource?: AgentResourceSummary) {
+  if (resource?.kind === 'digital-human') return 'HUMAN';
   if (resource?.kind === 'skill') return 'S';
   if (resource?.kind === 'prompt') return 'P';
   if (resource?.kind === 'session' || resource?.path.endsWith('.jsonl')) return 'JSONL';
@@ -348,7 +334,7 @@ const FileTree = memo(function FileTree({ node, depth, query, collapsedPaths, se
   return <div className="tree-node"><button type="button" role="treeitem" aria-level={depth + 1} className="tree-row tree-folder" style={indentStyle} onClick={() => onToggle(node.path)} aria-expanded={isOpen}><span className="tree-folder-icon">{isOpen ? <FolderOpen size={16} weight="duotone" /> : <Folder size={16} weight="duotone" />}</span><span className="tree-file-copy"><strong>{node.name}</strong><small className="tree-folder-count" aria-label={`${node.fileCount} 个文件`}>{node.fileCount}</small></span>{isOpen ? <CaretDown size={13} /> : <CaretRight size={13} />}</button>{isOpen && <div className="tree-children" role="group">{node.children.map((child) => <FileTree key={child.path} node={child} depth={depth + 1} query={query} collapsedPaths={collapsedPaths} selectedResource={selectedResource} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>;
 });
 
-function SourceList({ response, onOpenResource }: { response: AgentChatResponse; onOpenResource: (path: string) => void }) {
+function SourceList({ response, onOpenResource }: { response: DigitalHumanChatResponse; onOpenResource: (path: string) => void }) {
   if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
   return <div className="source-list">{response.sources.map((source) => {
     const canOpen = source.kind === 'knowledge' && source.ref.startsWith('.pi/');
@@ -407,7 +393,7 @@ function formatMetricTime(value: string) {
   }
 }
 
-function AgentMetrics({ response }: { response: AgentChatResponse }) {
+function AgentMetrics({ response }: { response: DigitalHumanChatResponse }) {
   const metrics = response.metrics;
   if (!metrics) return null;
   const tokens = metrics.tokenUsage;
@@ -425,7 +411,7 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
         <span>输入字符<strong>{metrics.inputChars.toLocaleString('zh-CN')}</strong></span>
         <span>输出字符<strong>{metrics.outputChars.toLocaleString('zh-CN')}</strong></span>
         <span>Thinking 字符<strong>{metrics.thinkingChars.toLocaleString('zh-CN')}</strong></span>
-        <span>模型<strong>{response.model.model ?? '本地降级'}</strong></span>
+        <span>模型<strong>{response.model.model ?? '未配置'}</strong></span>
         <span>提供方<strong>{response.model.provider ?? '本地'}</strong></span>
         <span>API<strong>{response.model.api ?? '—'}</strong></span>
         <span>响应模型<strong>{response.model.responseModel ?? '—'}</strong></span>
@@ -452,7 +438,7 @@ function AgentMetrics({ response }: { response: AgentChatResponse }) {
   </section>;
 }
 
-function AgentRunDetails({ response }: { response: AgentChatResponse }) {
+function AgentRunDetails({ response }: { response: DigitalHumanChatResponse }) {
   const metrics = response.metrics;
   return <details className="agent-run-details"><summary><span>运行指标</span><small>{formatDuration(metrics.durationMs)} · {metrics.toolCallCount} 个工具 · {metrics.eventCount} 个原始事件</small><CaretDown size={13} aria-hidden="true" /></summary><div className="agent-run-details-body"><AgentMetrics response={response} /></div></details>;
 }
@@ -470,29 +456,28 @@ function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFee
 
 function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const isWorking = !message.response;
-  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.response?.analysis ? <Suspense fallback={<div className="business-presentation-loading">正在准备数据视图…</div>}><BusinessPresentationView analysis={message.response.analysis} /></Suspense> : null}{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking && <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div>}{message.response && <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className={`response-tag response-tag-${message.response.source === 'pi-coding-agent' ? 'live' : 'local'}`}>{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div>}{(message.text || message.response) && <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} />}{message.response && <AgentRunDetails response={message.response} />}</section>;
+  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.response?.analysis ? <Suspense fallback={<div className="business-presentation-loading">正在准备数据视图…</div>}><BusinessPresentationView analysis={message.response.analysis} /></Suspense> : null}{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking ? <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div> : null}{message.response ? <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className="response-tag response-tag-live">{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div> : null}{message.text || message.response ? <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} /> : null}{message.response ? <AgentRunDetails response={message.response} /> : null}</section>;
 }
 
 type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem };
 
-function AgentTurn({ thinking, assistant, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
+function AgentTurn({ digitalHuman, thinking, assistant, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { digitalHuman: DigitalHumanDefinition; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const response = assistant?.response;
   const isWorking = !response;
   const events = response?.events.length ? response.events.filter(isVisibleProcessEvent) : assistant?.streamEvents ?? [];
-  const agentName = (response?.agentId ?? assistant?.agentId) === 'business-data' ? '经营分析智能体' : '知识库问答智能体';
-  return <article className="agent-turn" aria-label={`${agentName}回合`}><div className="agent-turn-avatar message-avatar"><span className="agent-avatar-mark">π</span></div><div className="agent-turn-content"><div className="message-meta"><strong>{agentName}</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking && <ThinkingBlock message={thinking} />}{events.length > 0 && <ToolActivityList events={events} isWorking={isWorking} />}{assistant && <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />}</div></article>;
+  return <article className="agent-turn" aria-label={`${digitalHuman.displayName}回合`}><div className={`agent-turn-avatar message-avatar digital-human-accent-${digitalHuman.avatar.accent}`}><span className="agent-avatar-mark">{digitalHuman.avatar.initials}</span></div><div className="agent-turn-content"><div className="message-meta"><strong>{digitalHuman.displayName} · {digitalHuman.role}</strong><span>{isWorking ? '处理中' : conversationTime(assistant?.createdAt ?? response?.createdAt)}</span></div>{thinking ? <ThinkingBlock message={thinking} /> : null}{events.length > 0 ? <ToolActivityList events={events} isWorking={isWorking} /> : null}{assistant ? <AgentAnswer message={assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} /> : null}</div></article>;
 }
 
 function UserMessage({ message }: { message: UserMessageItem }) {
   return <article className="message message-user"><div className="message-body"><div className="message-meta"><strong>你</strong><span>{conversationTime(message.createdAt)}</span></div><p>{message.text}</p></div></article>;
 }
 
-function ConversationStream({ messages, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { messages: ConversationItem[]; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
+function ConversationStream({ digitalHuman, messages, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { digitalHuman: DigitalHumanDefinition; messages: ConversationItem[]; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const nodes: ReactNode[] = [];
   let turn: AgentTurnMessages | null = null;
   const flushTurn = () => {
     if (!turn) return;
-    nodes.push(<AgentTurn key={`agent-turn-${turn.turnId}`} thinking={turn.thinking} assistant={turn.assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />);
+    nodes.push(<AgentTurn key={`agent-turn-${turn.turnId}`} digitalHuman={digitalHuman} thinking={turn.thinking} assistant={turn.assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />);
     turn = null;
   };
   for (const message of messages) {
@@ -708,14 +693,14 @@ function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSessi
   </nav>;
 }
 
-function AgentSelector({ agents, currentAgentId, pending, onSelect }: { agents: WorkbenchAgentDefinition[]; currentAgentId: WorkbenchAgentId; pending: boolean; onSelect: (agentId: WorkbenchAgentId) => void }) {
-  return <section className="agent-selector" aria-label="业务智能体"><div className="agent-selector-label"><span>业务智能体</span><small>{agents.length}</small></div><div className="agent-selector-list" role="listbox" aria-label="选择智能体">{agents.map((agent) => {
-    const selected = agent.id === currentAgentId;
-    return <button type="button" role="option" aria-selected={selected} className={selected ? 'agent-selector-item agent-selector-item-active' : 'agent-selector-item'} key={agent.id} onClick={() => onSelect(agent.id)} disabled={pending && !selected}><span className="agent-selector-mark" aria-hidden="true">π</span><span><strong>{agent.name}</strong><small>{agent.capabilityLabel}</small></span>{selected && <Check size={13} weight="bold" aria-hidden="true" />}</button>;
+function DigitalHumanSelector({ digitalHumans, currentDigitalHumanId, pending, onSelect }: { digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; pending: boolean; onSelect: (digitalHumanId: DigitalHumanId) => void }) {
+  return <section className="agent-selector" aria-label="数字人团队"><div className="agent-selector-label"><span>数字人团队</span><small>{digitalHumans.length}</small></div><div className="agent-selector-list" role="listbox" aria-label="选择数字人">{digitalHumans.map((digitalHuman) => {
+    const selected = digitalHuman.id === currentDigitalHumanId;
+    return <button type="button" role="option" aria-selected={selected} className={selected ? 'agent-selector-item agent-selector-item-active' : 'agent-selector-item'} key={digitalHuman.id} onClick={() => onSelect(digitalHuman.id)} disabled={pending && !selected}><span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span><span><strong>{digitalHuman.displayName} · {digitalHuman.role}</strong><small>{digitalHuman.tagline}</small></span>{selected ? <Check size={13} weight="bold" aria-hidden="true" /> : null}</button>;
   })}</div></section>;
 }
 
-function WorkspacePanel({ workspace, agents, currentAgentId, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onSelectAgent, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; agents: WorkbenchAgentDefinition[]; currentAgentId: WorkbenchAgentId; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onSelectAgent: (agentId: WorkbenchAgentId) => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
+function WorkspacePanel({ workspace, digitalHumans, currentDigitalHumanId, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onSelectDigitalHuman, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onSelectDigitalHuman: (digitalHumanId: DigitalHumanId) => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
   const showingSessions = view === 'sessions';
   const normalizedFilter = filter.trim().toLocaleLowerCase();
   const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
@@ -764,11 +749,11 @@ function WorkspacePanel({ workspace, agents, currentAgentId, sessions, currentSe
               <div className="workspace-brand-mark">π</div>
               <div className="workspace-brand-copy">
                 <strong>Pi 工作台</strong>
-                <span>本地智能体</span>
+                <span>本地数字人</span>
               </div>
             </div>
           </header>
-          <AgentSelector agents={agents} currentAgentId={currentAgentId} pending={pending} onSelect={onSelectAgent} />
+          <DigitalHumanSelector digitalHumans={digitalHumans} currentDigitalHumanId={currentDigitalHumanId} pending={pending} onSelect={onSelectDigitalHuman} />
           <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="horizontal">
             <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
@@ -811,13 +796,13 @@ function WorkspacePanel({ workspace, agents, currentAgentId, sessions, currentSe
 }
 
 function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: () => void }) {
-  const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(fallbackWorkspace);
-  const [agentId, setAgentId] = useState<WorkbenchAgentId>('knowledge');
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(emptyWorkspace);
+  const [digitalHumanId, setDigitalHumanId] = useState<DigitalHumanId>('');
   const [sessionId, setSessionId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<ConversationItem[]>([]);
   const [pending, setPending] = useState(false);
-  const [selectedResource, setSelectedResource] = useState(fallbackResources[0]!.path);
+  const [selectedResource, setSelectedResource] = useState('');
   const [resourceFilter, setResourceFilter] = useState('');
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('files');
@@ -838,8 +823,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const followConversationRef = useRef(true);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
-  const agents = workspace.agents?.length ? workspace.agents : fallbackAgents;
-  const currentAgent = agents.find((agent) => agent.id === agentId) ?? fallbackAgents[0]!;
+  const digitalHumans = workspace.digitalHumans;
+  const currentDigitalHuman = digitalHumans.find((digitalHuman) => digitalHuman.id === digitalHumanId);
   const sessions = useMemo(() => sortSessionRecords(sessionRecords), [sessionRecords]);
   const currentSession = sessionRecords.find((session) => session.id === sessionId);
 
@@ -858,60 +843,68 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   async function refreshWorkspace() {
     setWorkspaceRefreshing(true);
     try {
-      const response = await fetch('/api/v1/agent/workspace', { cache: 'no-store' });
-      if (!response.ok) throw new Error('workspace unavailable');
-      setWorkspace(await response.json() as WorkspaceSnapshot);
-    } catch {
-      // Keep the last known workspace snapshot when the API is restarting.
+      const response = await fetch('/api/v1/digital-humans/workspace', { cache: 'no-store' });
+      if (!response.ok) throw new Error('数字人工作区暂时无法读取');
+      const snapshot = await response.json() as WorkspaceSnapshot;
+      if (!snapshot.digitalHumans.length) throw new Error('项目没有定义数字人');
+      setWorkspace(snapshot);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '数字人工作区暂时无法读取');
     } finally {
       setWorkspaceRefreshing(false);
     }
   }
 
   useEffect(() => {
-    void refreshWorkspace();
-  }, []);
-
-  useEffect(() => {
     let active = true;
-    const loadSessions = async () => {
+    const initialize = async () => {
+      setWorkspaceRefreshing(true);
+      setSessionsReady(false);
       try {
-        let records = await fetchSessionRecords('knowledge');
+        const response = await fetch('/api/v1/digital-humans/workspace', { cache: 'no-store' });
+        if (!response.ok) throw new Error('数字人工作区暂时无法读取');
+        const snapshot = await response.json() as WorkspaceSnapshot;
+        const firstDigitalHuman = snapshot.digitalHumans[0];
+        if (!firstDigitalHuman) throw new Error('项目没有定义数字人');
+        let records = await fetchSessionRecords(firstDigitalHuman.id);
+        let drafts = new Set<string>();
         if (!records.length) {
-          const draft = emptySessionRecord('knowledge');
+          const draft = emptySessionRecord(firstDigitalHuman.id);
           records = [draft];
-          setDraftSessionIds(new Set([draft.id]));
+          drafts = new Set([draft.id]);
         }
         if (!active) return;
         const initial = records[0]!;
         followConversationRef.current = true;
+        setWorkspace(snapshot);
+        setSelectedResource(snapshot.resources[0]?.path ?? '');
+        setDigitalHumanId(firstDigitalHuman.id);
         setSessionRecords(records);
+        setDraftSessionIds(drafts);
         setSessionId(initial.id);
         setMessages(initial.messages);
-      } catch {
-        if (!active) return;
-        const draft = emptySessionRecord('knowledge');
-        setSessionRecords([draft]);
-        setDraftSessionIds(new Set([draft.id]));
-        setSessionId(draft.id);
-        setMessages([]);
+      } catch (requestError) {
+        if (active) setError(requestError instanceof Error ? requestError.message : '数字人工作区暂时无法读取');
       } finally {
-        if (active) setSessionsReady(true);
+        if (active) {
+          setWorkspaceRefreshing(false);
+          setSessionsReady(true);
+        }
       }
     };
-    void loadSessions();
+    void initialize();
     return () => { active = false; };
   }, []);
 
-  async function selectAgent(nextAgentId: WorkbenchAgentId) {
-    if (pending || nextAgentId === agentId) return;
+  async function selectDigitalHuman(nextDigitalHumanId: DigitalHumanId) {
+    if (pending || nextDigitalHumanId === digitalHumanId) return;
     setSessionsReady(false);
     setError('');
     closeResourceViewer();
     try {
-      let records = await fetchSessionRecords(nextAgentId);
+      let records = await fetchSessionRecords(nextDigitalHumanId);
       if (!records.length) {
-        const draft = emptySessionRecord(nextAgentId);
+        const draft = emptySessionRecord(nextDigitalHumanId);
         records = [draft];
         setDraftSessionIds(new Set([draft.id]));
       } else {
@@ -919,19 +912,13 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       }
       const initial = records[0]!;
       followConversationRef.current = true;
-      setAgentId(nextAgentId);
+      setDigitalHumanId(nextDigitalHumanId);
       setSessionRecords(records);
       setSessionId(initial.id);
       setMessages(initial.messages);
       setWorkspaceView('sessions');
     } catch (requestError) {
-      const draft = emptySessionRecord(nextAgentId);
-      setAgentId(nextAgentId);
-      setSessionRecords([draft]);
-      setDraftSessionIds(new Set([draft.id]));
-      setSessionId(draft.id);
-      setMessages([]);
-      setError(requestError instanceof Error ? requestError.message : '智能体会话暂时无法读取');
+      setError(requestError instanceof Error ? requestError.message : '数字人会话暂时无法读取');
     } finally {
       setSessionsReady(true);
     }
@@ -945,8 +932,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (id === sessionId) setMessages(record.messages);
       if (wasDraft) void refreshWorkspace();
-    } catch {
-      // Keep the streamed UI when persistence is temporarily unavailable.
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '数字人会话同步失败');
     }
   }
 
@@ -965,7 +952,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     if (!sessionId) return;
     setFeedbackPending(messageId);
     try {
-      const response = await fetch(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`, {
+      const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ feedback }),
@@ -988,7 +975,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       closeResourceViewer();
       return;
     }
-    const record = emptySessionRecord(agentId, sessionRecords.length);
+    const record = emptySessionRecord(digitalHumanId, sessionRecords.length);
     setDraftSessionIds((current) => new Set(current).add(record.id));
     setSessionRecords((current) => [record, ...current]);
     followConversationRef.current = true;
@@ -1014,7 +1001,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       let remaining = sessionRecords.filter((session) => session.id !== id);
       setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (!remaining.length) {
-        const draft = emptySessionRecord(agentId);
+        const draft = emptySessionRecord(digitalHumanId);
         remaining = [draft];
         setDraftSessionIds(new Set([draft.id]));
       }
@@ -1065,7 +1052,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     setResourceError('');
     setResourceLoading(true);
     try {
-      const response = await fetch(`/api/v1/agent/resource?path=${encodeURIComponent(path)}`);
+      const response = await fetch(`/api/v1/digital-humans/resource?path=${encodeURIComponent(path)}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         throw new Error(payload?.message ?? '项目文件暂时无法读取');
@@ -1090,7 +1077,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
 
   async function send(message = prompt) {
     const text = message.trim();
-    if (!text || pending || !sessionsReady || !sessionId) return;
+    if (!text || pending || !sessionsReady || !sessionId || !digitalHumanId || !workspace.model.enabled) return;
     followConversationRef.current = true;
     const userId = `${Date.now()}-user`;
     const thinkingId = `${Date.now()}-thinking`;
@@ -1099,7 +1086,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const optimisticUser: UserMessageItem = { id: userId, kind: 'user', text, turnId: assistantId, createdAt };
     setPrompt('');
     setError('');
-    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false, agentId } as AssistantMessageItem]);
+    setMessages((current) => [...current, optimisticUser, { id: thinkingId, kind: 'thinking', turnId: assistantId, text: '', status: 'streaming', createdAt }, { id: assistantId, kind: 'assistant', turnId: assistantId, text: '', createdAt, persisted: false, digitalHumanId } as AssistantMessageItem]);
     setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === sessionId ? { ...session, updatedAt: createdAt, messages: [...session.messages, optimisticUser] } : session)));
     setPending(true);
     let streamedProcess = createLiveTurnProcess();
@@ -1108,7 +1095,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
       setMessages((current) => current.map((item) => {
         if (item.id === thinkingId && item.kind === 'thinking') return { ...item, text: streamedProcess.thinking };
-        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedProcess.answer, streamEvents: streamedProcess.events, agentId };
+        if (item.id === assistantId && item.kind === 'assistant') return { ...item, text: streamedProcess.answer, streamEvents: streamedProcess.events, digitalHumanId };
         return item;
       }));
     };
@@ -1120,8 +1107,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
     };
     try {
-      const response = await fetch('/api/v1/agent/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, agentId, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
-      if (!response.ok) throw new Error('智能体网关返回错误');
+      const response = await fetch('/api/v1/digital-humans/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, digitalHumanId, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
+      if (!response.ok) throw new Error('数字人网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
         streamedProcess = applyAgentStreamEvent(streamedProcess, event);
         if (event.type === 'text_delta' || event.type === 'thinking_delta' || event.type === 'event') scheduleStreamFlush();
@@ -1135,48 +1122,51 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       await syncSession(sessionId);
     } catch (requestError) {
       cancelStreamFlush();
-      setError(requestError instanceof Error ? requestError.message : '智能体网关暂时不可用');
-      void syncSession(sessionId);
+      setError(requestError instanceof Error ? requestError.message : '数字人网关暂时不可用');
     } finally {
       cancelStreamFlush();
       setPending(false);
     }
   }
 
+  if (!currentDigitalHuman) {
+    return <main className="auth-loading" aria-live="polite"><span className="auth-loading-mark">人</span><strong>正在加载数字人档案</strong><span>{error || '正在读取项目定义与能力档案。'}</span></main>;
+  }
+
   return (
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
-      <WorkspacePanel workspace={workspace} agents={agents} currentAgentId={agentId} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onSelectAgent={(nextAgentId) => { void selectAgent(nextAgentId); }} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
+      <WorkspacePanel workspace={workspace} digitalHumans={digitalHumans} currentDigitalHumanId={digitalHumanId} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onSelectDigitalHuman={(nextDigitalHumanId) => { void selectDigitalHuman(nextDigitalHumanId); }} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
       <main className="session-panel">
         <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: 'easeIn' } }}>
-          <header className="conversation-header"><div><strong>{currentAgent.name}</strong><span>{currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentAgent.capabilityLabel}</span></header>
+          <header className="conversation-header"><div><strong>{currentDigitalHuman.displayName} · {currentDigitalHuman.role}</strong><span>{currentDigitalHuman.tagline} · {currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentDigitalHuman.capabilityLabel}</span></header>
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
             const node = event.currentTarget;
             followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
           }}>
             {messages.length === 0 ? (
               <div className="welcome-state">
-                <div className="welcome-mark"><span className="pi-welcome-glyph">π</span></div>
-                <h1>{currentAgent.welcomeTitle}</h1>
-                <p>{currentAgent.welcomeDescription}</p>
+                <div className={`welcome-mark digital-human-accent-${currentDigitalHuman.avatar.accent}`}><span className="pi-welcome-glyph">{currentDigitalHuman.avatar.initials}</span></div>
+                <h1>{currentDigitalHuman.welcome.title}</h1>
+                <p>{currentDigitalHuman.welcome.description}</p>
                 <div className="welcome-suggestions" aria-label="建议问题">
-                  {currentAgent.suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
+                  {currentDigitalHuman.welcome.suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
                 </div>
               </div>
             ) : (
               <div className="message-list">
-                <ConversationStream messages={messages} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={copyAnswer} onFeedback={updateFeedback} onOpenResource={openResource} />
+                <ConversationStream digitalHuman={currentDigitalHuman} messages={messages} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={copyAnswer} onFeedback={updateFeedback} onOpenResource={openResource} />
               </div>
             )}
           </div>
           <div className="composer-wrap">
             <div className="composer">
-              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentAgent.name}提问…` : '正在加载会话…'} aria-label={`向${currentAgent.name}提问`} rows={1} disabled={!sessionsReady || pending} />
+              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentDigitalHuman.displayName}提问…` : '正在加载会话…'} aria-label={`向${currentDigitalHuman.displayName}提问`} rows={1} disabled={!sessionsReady || pending || !workspace.model.enabled} />
               <div className="composer-toolbar">
                 <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
                 <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>
                 <span className="composer-toolbar-spacer" />
-                <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '本地降级'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '当前使用本地降级模式'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '本地降级'}</span></div>
-                <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim()} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
+                <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '未配置'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '模型未配置'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '未配置'}</span></div>
+                <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim() || !workspace.model.enabled} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
               </div>
             </div>
             <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>

@@ -17,7 +17,7 @@ const queries = [
   '工具权限和外部状态修改',
   'Agent 回答来源 evidence route',
   '没有模型凭据时的本地降级',
-  'fallback 和真实 Pi 工具决策',
+  '显式失败和真实 Pi 工具决策',
   '浏览器如何消费结构化回答',
   'Markdown 知识 bundle 的 Git 审阅',
   'read 工具和 search_knowledge 的能力边界',

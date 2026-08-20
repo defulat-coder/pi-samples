@@ -8,6 +8,6 @@ import { toJsonRenderSpec } from './business-presentation/to-json-render-spec.js
 export function BusinessPresentationView({ analysis }: { analysis: BusinessAnalysis }) {
   const spec = useMemo(() => toJsonRenderSpec(analysis), [analysis]);
   const validation = validateSpec(spec);
-  if (!validation.valid) return null;
-  return <JSONUIProvider registry={businessPresentationRegistry}><Renderer spec={spec} registry={businessPresentationRegistry} fallback={() => null} /></JSONUIProvider>;
+  if (!validation.valid) throw new Error('经营分析展示计划未通过 json-render 校验');
+  return <JSONUIProvider registry={businessPresentationRegistry}><Renderer spec={spec} registry={businessPresentationRegistry} /></JSONUIProvider>;
 }

@@ -36,7 +36,7 @@ describe('Pi Workbench API', () => {
   it('protects workbench routes when Feishu auth is required', async () => {
     const protectedApp = buildApp({ PORT: 4310, HOST: '127.0.0.1', WEB_ORIGIN: 'http://localhost:5173', AUTH_REQUIRED: true, PI_AGENT_ENABLED: false, PI_PROJECT_EXTENSIONS_ENABLED: false, LOG_LEVEL: 'error' }, { sessionStore: sessions });
     await protectedApp.ready();
-    const response = await protectedApp.inject({ method: 'GET', url: '/api/v1/agent/workspace' });
+    const response = await protectedApp.inject({ method: 'GET', url: '/api/v1/digital-humans/workspace' });
     await protectedApp.close();
     assert.equal(response.statusCode, 401);
     assert.equal(response.json().error, 'Unauthenticated');
@@ -60,145 +60,106 @@ describe('Pi Workbench API', () => {
     assert.equal(response.json().items[0].id, 'record-session-lifecycle');
   });
 
-  it('lets the Agent boundary return local knowledge evidence when Pi is disabled', async () => {
-    const response = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: 'Pi session 生命周期是什么？', sessionId: 'test-session' } });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().route, 'knowledge');
-    assert.equal(response.json().agentId, 'knowledge');
-    assert.match(response.json().sources[0].ref, /\.pi\/knowledge/);
-    assert.deepEqual(response.json().decision, { decidedBy: 'fallback', toolCalls: [] });
-    assert.equal(response.json().tools.policy, 'read-only');
-    assert.equal(response.json().metrics.turn, 1);
-    assert.equal(response.json().metrics.tokenUsage.source, 'estimated');
-    assert.equal(response.json().metrics.tokenUsage.cacheRead, 0);
-    assert.equal(response.json().metrics.eventCounts.local_fallback, 1);
-    assert.equal(response.json().metrics.settled, true);
+  it('fails explicitly when Pi is disabled instead of producing a fallback answer', async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat', payload: { message: 'Pi session 生命周期是什么？', digitalHumanId: 'project-steward', sessionId: 'test-session' } });
+    assert.equal(response.statusCode, 500);
+    assert.equal(response.json().error, 'InternalError');
+    assert.doesNotMatch(response.body, /local-fallback|本地降级/);
   });
 
-  it('accepts explicit page-controlled thinking modes', async () => {
-    const off = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '关闭思考', sessionId: 'thinking-off', thinkingLevel: 'off' } });
-    assert.equal(off.statusCode, 200);
-    assert.equal(off.json().model.thinkingLevel, 'off');
-
-    const minimal = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '开启思考', sessionId: 'thinking-minimal', thinkingLevel: 'minimal' } });
-    assert.equal(minimal.statusCode, 200);
-    assert.equal(minimal.json().model.thinkingLevel, 'minimal');
-
-    const invalid = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '非法思考级别', sessionId: 'thinking-invalid', thinkingLevel: 'auto' } });
-    assert.equal(invalid.statusCode, 400);
+  it('requires a digital human identity and validates thinking modes', async () => {
+    const missingIdentity = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat', payload: { message: '缺少数字人' } });
+    assert.equal(missingIdentity.statusCode, 400);
+    const invalidThinking = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat', payload: { message: '非法思考级别', digitalHumanId: 'project-steward', thinkingLevel: 'auto' } });
+    assert.equal(invalidThinking.statusCode, 400);
   });
 
-  it('streams fallback text and a terminal response over SSE', async () => {
-    const response = await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: 'Pi session 生命周期是什么？', sessionId: 'stream-test-session' } });
+  it('streams an explicit error when Pi is disabled', async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat/stream', payload: { message: 'Pi session 生命周期是什么？', digitalHumanId: 'project-steward', sessionId: 'stream-test-session' } });
     assert.equal(response.statusCode, 200);
     assert.match(String(response.headers['content-type']), /^text\/event-stream/);
     assert.match(response.body, /event: start/);
-    assert.match(response.body, /event: event/);
-    assert.match(response.body, /event: text_delta/);
-    const doneBlock = response.body.split('\n\n').find((block) => block.includes('event: done'));
-    if (!doneBlock) throw new Error('SSE done event missing');
-    const dataLine = doneBlock.split('\n').find((line) => line.startsWith('data:'));
-    if (!dataLine) throw new Error('SSE done data missing');
-    const streamedResponse = JSON.parse(dataLine.slice(5).trim()).response;
-    assert.equal(streamedResponse.source, 'local-fallback');
-    assert.equal(streamedResponse.metrics.executionRounds, 1);
+    assert.match(response.body, /event: error/);
+    assert.doesNotMatch(response.body, /event: done|local-fallback/);
   });
 
-  it('creates ordered sessions and persists streamed history', async () => {
-    const first = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
-    const second = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+  it('creates ordered digital human sessions', async () => {
+    const first = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'project-steward' } });
+    const second = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'project-steward' } });
     assert.equal(first.statusCode, 200);
     assert.equal(second.statusCode, 200);
     const firstId = first.json().id as string;
     const secondId = second.json().id as string;
-    const before = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions' });
+    const before = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/sessions?digitalHumanId=project-steward' });
     const beforeIds = before.json().items.map((session: { id: string }) => session.id);
     assert.ok(beforeIds.indexOf(firstId) < beforeIds.indexOf(secondId));
-    await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: '记录第一个会话', sessionId: firstId, turnId: 'turn-ordered' } });
-    const list = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions' });
-    assert.deepEqual(list.json().items.map((session: { id: string }) => session.id), beforeIds);
-    const detail = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${firstId}` });
-    assert.equal(detail.json().messages[0].kind, 'user');
-    assert.equal(detail.json().messages[0].text, '记录第一个会话');
   });
 
-  it('lists two Pi business Agents and isolates their sessions', async () => {
-    const catalog = await app.inject({ method: 'GET', url: '/api/v1/agent/agents' });
-    assert.deepEqual(catalog.json().items.map((agent: { id: string }) => agent.id), ['knowledge', 'business-data']);
-    assert.ok(catalog.json().items.every((agent: { tools: string[] }) => agent.tools.every((tool) => ['read', 'search_knowledge', 'query_business_data'].includes(tool))));
+  it('loads file-defined digital humans and isolates their sessions', async () => {
+    const catalog = await app.inject({ method: 'GET', url: '/api/v1/digital-humans' });
+    assert.deepEqual(catalog.json().items.map((item: { id: string }) => item.id), ['project-steward', 'commerce-analyst']);
+    assert.equal(catalog.json().items[1].displayName, '林澈');
+    assert.deepEqual(catalog.json().items[1].avatar, { initials: '林', accent: 'teal' });
 
-    const business = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions', payload: { agentId: 'business-data' } });
-    assert.equal(business.statusCode, 200);
-    assert.equal(business.json().agentId, 'business-data');
-    const businessId = business.json().id as string;
+    const analyst = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'commerce-analyst' } });
+    assert.equal(analyst.statusCode, 200);
+    assert.equal(analyst.json().digitalHumanId, 'commerce-analyst');
+    const analystId = analyst.json().id as string;
+    const analystSessions = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/sessions?digitalHumanId=commerce-analyst' });
+    assert.ok(analystSessions.json().items.every((session: { digitalHumanId: string }) => session.digitalHumanId === 'commerce-analyst'));
 
-    const businessSessions = await app.inject({ method: 'GET', url: '/api/v1/agent/sessions?agentId=business-data' });
-    assert.ok(businessSessions.json().items.some((session: { id: string }) => session.id === businessId));
-    assert.ok(businessSessions.json().items.every((session: { agentId: string }) => session.agentId === 'business-data'));
-
-    const mismatch = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '解释项目', agentId: 'knowledge', sessionId: businessId } });
+    const mismatch = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat', payload: { message: '解释项目', digitalHumanId: 'project-steward', sessionId: analystId } });
     assert.equal(mismatch.statusCode, 409);
-    assert.equal(mismatch.json().error, 'AgentSessionMismatch');
-
-    const fallback = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '近30天各区域销售额', agentId: 'business-data', sessionId: businessId } });
-    assert.equal(fallback.statusCode, 200);
-    assert.equal(fallback.json().agentId, 'business-data');
-    assert.equal(fallback.json().route, 'business-data');
-    assert.deepEqual(fallback.json().tools.enabled, ['read', 'query_business_data']);
+    assert.equal(mismatch.json().error, 'DigitalHumanSessionMismatch');
+    const unknown = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'unknown-human' } });
+    assert.equal(unknown.statusCode, 404);
   });
 
-  it('persists assistant feedback without changing session order', async () => {
-    const created = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
-    const sessionId = created.json().id as string;
-    await app.inject({ method: 'POST', url: '/api/v1/agent/chat/stream', payload: { message: '给这条回答加反馈', sessionId, turnId: 'turn-feedback' } });
-    const detail = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${sessionId}` });
-    const assistant = detail.json().messages.find((message: { kind: string }) => message.kind === 'assistant') as { id: string } | undefined;
-    assert.ok(assistant);
-    const liked = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}/messages/${assistant!.id}/feedback`, payload: { feedback: 'like' } });
-    assert.equal(liked.statusCode, 200);
-    assert.equal(liked.json().messages.find((message: { id: string }) => message.id === assistant!.id).feedback, 'like');
-    const cleared = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}/messages/${assistant!.id}/feedback`, payload: { feedback: null } });
-    assert.equal(cleared.statusCode, 200);
-    assert.equal(cleared.json().messages.find((message: { id: string }) => message.id === assistant!.id).feedback, undefined);
+  it('does not expose the removed Agent HTTP contract', async () => {
+    const workspace = await app.inject({ method: 'GET', url: '/api/v1/agent/workspace' });
+    const chat = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', payload: { message: '旧请求' } });
+    assert.equal(workspace.statusCode, 404);
+    assert.equal(chat.statusCode, 404);
   });
 
   it('renames and deletes persisted sessions', async () => {
-    const created = await app.inject({ method: 'POST', url: '/api/v1/agent/sessions' });
+    const created = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'project-steward' } });
     const sessionId = created.json().id as string;
-    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/agent/sessions/${sessionId}`, payload: { title: '项目架构讨论' } });
+    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/digital-humans/sessions/${sessionId}`, payload: { title: '项目架构讨论' } });
     assert.equal(renamed.statusCode, 200);
     assert.equal(renamed.json().title, '项目架构讨论');
 
-    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/agent/sessions/${sessionId}` });
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/digital-humans/sessions/${sessionId}` });
     assert.equal(removed.statusCode, 204);
-    const missing = await app.inject({ method: 'GET', url: `/api/v1/agent/sessions/${sessionId}` });
+    const missing = await app.inject({ method: 'GET', url: `/api/v1/digital-humans/sessions/${sessionId}` });
     assert.equal(missing.statusCode, 404);
   });
 
   it('exposes the Pi workspace runtime contract', async () => {
-    const response = await app.inject({ method: 'GET', url: '/api/v1/agent/workspace' });
+    const response = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/workspace' });
     assert.equal(response.statusCode, 200);
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.includes('pi-workbench')));
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path === '.pi/README.md'));
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.startsWith('.pi/sessions/')));
     assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/settings.json' && resource.kind === 'settings'));
     assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/APPEND_SYSTEM.md' && resource.kind === 'system'));
+    assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/digital-humans/commerce-analyst.json' && resource.kind === 'digital-human'));
     assert.equal(response.json().pi.extensionsEnabled, false);
     assert.ok(response.json().pi.skills.some((skill: { name: string }) => skill.name === 'pi-session-observability'));
     assert.ok(response.json().pi.prompts.some((prompt: { name: string }) => prompt.name === 'inspect-pi'));
     assert.ok(response.json().pi.themes.some((theme: { name: string }) => theme.name === 'pi-workbench-neutral'));
     assert.deepEqual(response.json().tools, { enabled: ['read', 'search_knowledge', 'query_business_data'], policy: 'read-only' });
-    assert.deepEqual(response.json().agents.map((agent: { id: string }) => agent.id), ['knowledge', 'business-data']);
+    assert.deepEqual(response.json().digitalHumans.map((item: { id: string }) => item.id), ['project-steward', 'commerce-analyst']);
     assert.equal(response.json().data.kind, 'local-sqlite');
   });
 
   it('reads an allowlisted project resource without exposing arbitrary paths', async () => {
-    const response = await app.inject({ method: 'GET', url: '/api/v1/agent/resource?path=.pi%2Fknowledge%2Fagent%2Fsession-lifecycle.md' });
+    const response = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/resource?path=.pi%2Fknowledge%2Fagent%2Fsession-lifecycle.md' });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().resource.path, '.pi/knowledge/agent/session-lifecycle.md');
     assert.match(response.json().content, /session/i);
 
-    const blocked = await app.inject({ method: 'GET', url: '/api/v1/agent/resource?path=..%2F.env' });
+    const blocked = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/resource?path=..%2F.env' });
     assert.equal(blocked.statusCode, 404);
   });
 

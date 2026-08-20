@@ -134,6 +134,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .agent-turn-avatar, .message-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border-radius: 9px; color: var(--accent-strong); background: var(--accent-soft); }
 .agent-avatar-mark { font-family: Georgia, serif; font-weight: 700; line-height: 1; }
 .agent-avatar-mark { font-size: 16px; }
+.digital-human-accent-indigo { color: #4055f4; background: #eef0ff; }
+.digital-human-accent-teal { color: #087e72; background: #e7f8f4; }
+.digital-human-accent-amber { color: #a45b06; background: #fff4df; }
+.digital-human-accent-rose { color: #b5265b; background: #ffeaf1; }
 .agent-turn-thinking { margin: 0 0 11px; padding-left: 10px; border-left: 1px solid var(--line); }
 .agent-turn-thinking .thinking-trace { padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; }
 .agent-turn-thinking .thinking-trace summary { display: flex; align-items: center; gap: 8px; }

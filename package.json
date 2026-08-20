@@ -2,7 +2,7 @@
   "name": "pi-workbench",
   "private": true,
   "version": "0.1.0",
-  "description": "Pi Workbench Agent playground powered by Pi Coding Agent",
+  "description": "File-defined digital humans powered by Pi Coding Agent",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "turbo run dev --parallel",
