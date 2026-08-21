@@ -12,7 +12,7 @@
 
 | Task | Command |
 |------|---------|
-| Start Web + API | `pnpm dev` |
+| Start Web + API | `pnpm dev` (via portless: Web `https://pi-workbench.localhost`, API `https://api.pi-workbench.localhost`; bypass with `pnpm dev:direct` or `PORTLESS=0`) |
 | Typecheck | `pnpm typecheck` |
 | Build | `pnpm build` |
 | Test | `pnpm test` |
@@ -51,6 +51,11 @@
 - `.pi/`: digital-human definitions, project Skills, prompt templates, and file-first Markdown knowledge; review these files as executable Agent context, never as authority.
 - `docs/`: architecture, learning notes, ADRs, and source-grounded research.
 
+## Frontend Animation
+
+- All Web animation work must prefer the installed `motion` dependency (`import { motion } from 'motion/react'`); do not add other JS animation libraries unless explicitly requested.
+- Follow the best practices in `docs/motion-animation.md` (composited properties only, `layout`/`AnimatePresence`, MotionValues for scroll, `reducedMotion`).
+
 ## References
 
 | Need | Reference |
@@ -61,6 +66,7 @@
 | Pi Skills and project resources | [official Skills docs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | Pi project trust and sandbox limits | [official security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md) |
 | Local architecture | `docs/pi-agent-learning.md`, `docs/adr/0001-monorepo-and-pi-boundary.md` |
+| Web animation best practices | `docs/motion-animation.md` |
 | Official-doc evidence notes | `docs/research/pi-official-agent-md-reference-2026-08-01.md` |
 
 - Upstream docs track Pi `main`; verify APIs against the installed `@earendil-works/pi-coding-agent` version before using newer features.

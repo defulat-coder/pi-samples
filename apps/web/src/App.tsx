@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { AgentEventSummary, AgentFeedback, AgentResourceDocument, AgentResourceSummary, AgentThinkingLevel, AuthStatusResponse, AuthUser, DigitalHumanChatResponse, DigitalHumanChatStreamEvent, DigitalHumanDefinition, DigitalHumanId, DigitalHumanSessionListResponse, DigitalHumanSessionMessage, DigitalHumanSessionRecord, PiRuntimeResourceSnapshot } from '@pi-workbench/contracts';
-import { AnimatePresence, MotionConfig, motion } from 'motion/react';
+import { AnimatePresence, MotionConfig, motion, type Variants } from 'motion/react';
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight';
 import { ArrowUpRight } from '@phosphor-icons/react/dist/icons/ArrowUpRight';
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise';
@@ -17,6 +17,7 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlas
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { ShieldCheck } from '@phosphor-icons/react/dist/icons/ShieldCheck';
+import { SidebarSimple } from '@phosphor-icons/react/dist/icons/SidebarSimple';
 import { SignOut } from '@phosphor-icons/react/dist/icons/SignOut';
 import { ThumbsDown } from '@phosphor-icons/react/dist/icons/ThumbsDown';
 import { ThumbsUp } from '@phosphor-icons/react/dist/icons/ThumbsUp';
@@ -66,7 +67,12 @@ const emptyWorkspace: WorkspaceSnapshot = {
 };
 
 const enabledThinkingLevel: AgentThinkingLevel = 'minimal';
-const motionEase = [0.22, 0.61, 0.36, 1] as const;
+/** Shared UI curve — mirrors `--ease-out` in styles.css. */
+const motionEase = [0.23, 1, 0.32, 1] as const;
+
+/** Welcome screen choreography — variants + staggerChildren, no hand-written delay chains. */
+const welcomeGroup: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
+const welcomeItem: Variants = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: motionEase } } };
 
 function newSessionId() {
   return `session_${Math.random().toString(36).slice(2, 10)}`;
@@ -175,20 +181,20 @@ async function fetchSessionRecords(digitalHumanId: DigitalHumanId): Promise<Sess
   return sortSessionRecords(payload.items);
 }
 
-async function fetchSessionRecord(id: string): Promise<SessionRecord> {
-  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`);
+async function fetchSessionRecord(id: string, digitalHumanId: DigitalHumanId): Promise<SessionRecord> {
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}?digitalHumanId=${encodeURIComponent(digitalHumanId)}`);
   if (!response.ok) throw new Error('会话内容暂时无法读取');
   return response.json() as Promise<SessionRecord>;
 }
 
-async function renameSessionRecord(id: string, title: string): Promise<SessionRecord> {
-  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+async function renameSessionRecord(id: string, digitalHumanId: DigitalHumanId, title: string): Promise<SessionRecord> {
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ digitalHumanId, title }) });
   if (!response.ok) throw new Error('会话名称暂时无法保存');
   return response.json() as Promise<SessionRecord>;
 }
 
-async function deleteSessionRecord(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+async function deleteSessionRecord(id: string, digitalHumanId: DigitalHumanId): Promise<void> {
+  const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(id)}?digitalHumanId=${encodeURIComponent(digitalHumanId)}`, { method: 'DELETE' });
   if (!response.ok && response.status !== 404) throw new Error('会话暂时无法删除');
 }
 
@@ -327,7 +333,7 @@ const FileTree = memo(function FileTree({ node, depth, query, collapsedPaths, se
   const indentStyle = { '--tree-depth': depth } as CSSProperties;
   if (node.kind === 'file' && node.resource) {
     const isSelected = selectedResource === node.path;
-    return <button type="button" role="treeitem" aria-level={depth + 1} className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={indentStyle} onClick={() => onSelect(node.path)} title={node.path}><span className={`tree-file-kind tree-file-kind-${node.resource.kind}`}>{fileKindLabel(node.resource)}</span><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
+    return <button type="button" role="treeitem" aria-level={depth + 1} className={isSelected ? 'tree-row tree-file selected' : 'tree-row tree-file'} style={indentStyle} onClick={() => onSelect(node.path)} title={node.path}><span className="tree-file-copy"><strong>{node.name}</strong><small>{resourceTitle(node.resource.title)}</small></span></button>;
   }
 
   const isOpen = Boolean(query) || !collapsedPaths.has(node.path);
@@ -335,7 +341,11 @@ const FileTree = memo(function FileTree({ node, depth, query, collapsedPaths, se
 });
 
 function SourceList({ response, onOpenResource }: { response: DigitalHumanChatResponse; onOpenResource: (path: string) => void }) {
-  if (!response.sources.length) return <div className="empty-source">本次没有额外文件证据</div>;
+  const [expanded, setExpanded] = useState(false);
+  if (!response.sources.length) return null;
+  if (!expanded) {
+    return <button type="button" className="source-toggle" onClick={() => setExpanded(true)} aria-expanded="false" aria-label={`展开 ${response.sources.length} 个来源`}>{response.sources.length} 个来源<CaretRight size={12} aria-hidden="true" /></button>;
+  }
   return <div className="source-list">{response.sources.map((source) => {
     const canOpen = source.kind === 'knowledge' && source.ref.startsWith('.pi/');
     const content = <><span className="source-kind">{source.kind === 'database' ? 'DB' : 'MD'}</span><span><strong>{resourceTitle(source.title)}</strong><small>{source.ref}</small></span>{canOpen && <CaretRight size={13} aria-hidden="true" />}</>;
@@ -456,7 +466,7 @@ function AgentActions({ message, copiedMessageId, feedbackPending, onCopy, onFee
 
 function AgentAnswer({ message, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { message: AssistantMessageItem; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
   const isWorking = !message.response;
-  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.response?.analysis ? <Suspense fallback={<div className="business-presentation-loading">正在准备数据视图…</div>}><BusinessPresentationView analysis={message.response.analysis} /></Suspense> : null}{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking ? <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div> : null}{message.response ? <div className="message-evidence"><div className="evidence-head"><span>依据</span><span className="response-tag response-tag-live">{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div> : null}{message.text || message.response ? <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} /> : null}{message.response ? <AgentRunDetails response={message.response} /> : null}</section>;
+  return <section className="agent-turn-answer" aria-live={isWorking ? 'polite' : undefined} aria-busy={isWorking}>{message.response?.analysis ? <Suspense fallback={<div className="business-presentation-loading">正在准备数据视图…</div>}><BusinessPresentationView analysis={message.response.analysis} /></Suspense> : null}{message.text ? <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div> : isWorking ? <div className="typing-line" aria-label="正在生成回答"><i /><i /><i /></div> : null}{message.response ? <div className="message-evidence"><div className="evidence-head"><span className="response-tag response-tag-live">{responseSourceLabel(message.response.source)}</span><span className="route-tag">路径 · {routeLabel(message.response.route)}</span><span className="evidence-runtime">{formatDuration(message.response.metrics.durationMs)} · {message.response.metrics.toolCallCount} 个工具</span></div><SourceList response={message.response} onOpenResource={onOpenResource} /></div> : null}{message.text || message.response ? <AgentActions message={message} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} /> : null}{message.response ? <AgentRunDetails response={message.response} /> : null}</section>;
 }
 
 type AgentTurnMessages = { turnId: string; thinking?: ThinkingMessageItem; assistant?: AssistantMessageItem };
@@ -473,17 +483,25 @@ function UserMessage({ message }: { message: UserMessageItem }) {
 }
 
 function ConversationStream({ digitalHuman, messages, copiedMessageId, feedbackPending, onCopy, onFeedback, onOpenResource }: { digitalHuman: DigitalHumanDefinition; messages: ConversationItem[]; copiedMessageId: string; feedbackPending: string; onCopy: (messageId: string, text: string) => void; onFeedback: (messageId: string, feedback: AgentFeedback | null) => void; onOpenResource: (path: string) => void }) {
+  // Only animate turns that arrive after the first committed render; history loads must not replay.
+  const committedKeysRef = useRef<Set<string>>(new Set());
   const nodes: ReactNode[] = [];
+  const nodeKeys: string[] = [];
+  const wrapNode = (key: string, child: ReactNode) => {
+    nodeKeys.push(key);
+    const isNew = !committedKeysRef.current.has(key);
+    nodes.push(<motion.div key={key} initial={isNew ? { opacity: 0, y: 4 } : false} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: motionEase }}>{child}</motion.div>);
+  };
   let turn: AgentTurnMessages | null = null;
   const flushTurn = () => {
     if (!turn) return;
-    nodes.push(<AgentTurn key={`agent-turn-${turn.turnId}`} digitalHuman={digitalHuman} thinking={turn.thinking} assistant={turn.assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />);
+    wrapNode(`agent-turn-${turn.turnId}`, <AgentTurn digitalHuman={digitalHuman} thinking={turn.thinking} assistant={turn.assistant} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={onCopy} onFeedback={onFeedback} onOpenResource={onOpenResource} />);
     turn = null;
   };
   for (const message of messages) {
     if (message.kind === 'user') {
       flushTurn();
-      nodes.push(<UserMessage key={message.id} message={message} />);
+      wrapNode(message.id, <UserMessage message={message} />);
       continue;
     }
     if (!turn || turn.turnId !== message.turnId) {
@@ -494,6 +512,9 @@ function ConversationStream({ digitalHuman, messages, copiedMessageId, feedbackP
     if (message.kind === 'assistant') turn.assistant = message;
   }
   flushTurn();
+  useEffect(() => {
+    for (const key of nodeKeys) committedKeysRef.current.add(key);
+  });
   return <>{nodes}</>;
 }
 
@@ -642,7 +663,7 @@ function ResourceViewer({ document, loading, error, onClose }: { document: Agent
       // Preserve malformed JSON verbatim so the user can inspect the source.
     }
   }
-  return <motion.section className="resource-viewer" aria-label="项目文件预览" aria-busy={loading} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: -4, transition: { duration: 0.08, ease: 'easeIn' } }}>
+  return <motion.section className="resource-viewer" aria-label="项目文件预览" aria-busy={loading} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: -4, transition: { duration: 0.08, ease: motionEase } }}>
     <header className="resource-viewer-header">
       <button type="button" className="resource-viewer-close" onClick={onClose} aria-label="返回聊天" title="返回聊天"><CaretLeft size={16} /></button>
       <div className="resource-viewer-heading">
@@ -693,15 +714,118 @@ function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSessi
   </nav>;
 }
 
-function DigitalHumanSelector({ digitalHumans, currentDigitalHumanId, pending, onSelect }: { digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; pending: boolean; onSelect: (digitalHumanId: DigitalHumanId) => void }) {
-  return <section className="agent-selector" aria-label="数字人团队"><div className="agent-selector-label"><span>数字人团队</span><small>{digitalHumans.length}</small></div><div className="agent-selector-list" role="listbox" aria-label="选择数字人">{digitalHumans.map((digitalHuman) => {
-    const selected = digitalHuman.id === currentDigitalHumanId;
-    return <button type="button" role="option" aria-selected={selected} className={selected ? 'agent-selector-item agent-selector-item-active' : 'agent-selector-item'} key={digitalHuman.id} onClick={() => onSelect(digitalHuman.id)} disabled={pending && !selected}><span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span><span><strong>{digitalHuman.displayName} · {digitalHuman.role}</strong><small>{digitalHuman.tagline}</small></span>{selected ? <Check size={13} weight="bold" aria-hidden="true" /> : null}</button>;
-  })}</div></section>;
+function flattenResources(node: FileTreeNode, acc: AgentResourceSummary[] = []): AgentResourceSummary[] {
+  if (node.resource) acc.push(node.resource);
+  for (const child of node.children) flattenResources(child, acc);
+  return acc;
 }
 
-function WorkspacePanel({ workspace, digitalHumans, currentDigitalHumanId, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, onToggleOpen, onSelectDigitalHuman, onViewChange, onFilterChange, onToggle, onSelect, onSelectSession, onNewSession, onRenameSession, onDeleteSession, onRefreshWorkspace, onLogout }: { workspace: WorkspaceSnapshot; digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; onToggleOpen: () => void; onSelectDigitalHuman: (digitalHumanId: DigitalHumanId) => void; onViewChange: (view: WorkspaceView) => void; onFilterChange: (value: string) => void; onToggle: (path: string) => void; onSelect: (path: string) => void; onSelectSession: (id: string) => void; onNewSession: () => void; onRenameSession: (id: string, title: string) => Promise<void>; onDeleteSession: (id: string) => Promise<void>; onRefreshWorkspace: () => void; onLogout: () => void }) {
+/** LangSmith-style scope switcher: the current digital human collapses into a trigger row, options live in a dropdown dialog. */
+function DigitalHumanSwitcher({ digitalHumans, currentDigitalHumanId, pending, onSelect }: { digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; pending: boolean; onSelect: (digitalHumanId: DigitalHumanId) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const current = digitalHumans.find((digitalHuman) => digitalHuman.id === currentDigitalHumanId);
+  const normalized = query.trim().toLocaleLowerCase();
+  const filtered = normalized ? digitalHumans.filter((digitalHuman) => `${digitalHuman.displayName} ${digitalHuman.role} ${digitalHuman.tagline}`.toLocaleLowerCase().includes(normalized)) : digitalHumans;
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open]);
+  const choose = (id: DigitalHumanId) => { setOpen(false); setQuery(''); onSelect(id); };
+  return <div className="switcher" ref={rootRef}>
+    <button type="button" className="switcher-trigger" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen((value) => !value); setQuery(''); }}>
+      {current ? <span className={`agent-selector-mark digital-human-accent-${current.avatar.accent}`} aria-hidden="true">{current.avatar.initials}</span> : null}
+      <span className="switcher-trigger-label">{current ? `${current.displayName} · ${current.role}` : '选择数字人'}</span>
+      <CaretDown size={13} aria-hidden="true" />
+    </button>
+    <AnimatePresence>{open ? <motion.div className="switcher-panel" role="dialog" aria-label="切换数字人" initial={{ opacity: 0, scale: 0.97, y: -2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: -2, transition: { duration: 0.1, ease: motionEase } }} transition={{ duration: 0.18, ease: motionEase }} style={{ transformOrigin: 'top center' }} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); setQuery(''); } }}>
+      {digitalHumans.length > 4 ? <label className="switcher-search"><MagnifyingGlass size={13} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索数字人" aria-label="搜索数字人" /></label> : null}
+      <div className="switcher-options" role="listbox" aria-label="数字人列表">
+        {filtered.map((digitalHuman) => {
+          const selected = digitalHuman.id === currentDigitalHumanId;
+          return <button type="button" role="option" aria-selected={selected} key={digitalHuman.id} className={selected ? 'switcher-option switcher-option-active' : 'switcher-option'} disabled={pending && !selected} onClick={() => choose(digitalHuman.id)}>
+            <span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span>
+            <span className="switcher-option-copy"><strong>{digitalHuman.displayName} · {digitalHuman.role}</strong><small>{digitalHuman.tagline}</small></span>
+            {selected ? <Check size={13} weight="bold" aria-hidden="true" /> : null}
+          </button>;
+        })}
+        {!filtered.length ? <p className="switcher-empty">没有匹配的数字人。</p> : null}
+      </div>
+    </motion.div> : null}</AnimatePresence>
+  </div>;
+}
+
+type PaletteItem = { id: string; group: string; label: string; hint?: string; icon?: ReactNode; run: () => void };
+
+type CommandPaletteProps = {
+  open: boolean;
+  onClose: () => void;
+  digitalHumans: DigitalHumanDefinition[];
+  sessions: SessionRecord[];
+  resources: AgentResourceSummary[];
+  actions: { selectDigitalHuman: (id: DigitalHumanId) => void; selectSession: (id: string) => void; openResource: (path: string) => void; newSession: () => void; browseFiles: () => void };
+};
+
+/** LangSmith-style ⌘K palette: one modal that jumps to digital humans, sessions, files, and actions. */
+function CommandPalette({ open, onClose, digitalHumans, sessions, resources, actions }: CommandPaletteProps) {
+  const [query, setQuery] = useState('');
+  const [activeId, setActiveId] = useState('');
+  useEffect(() => { if (open) { setQuery(''); setActiveId(''); } }, [open]);
+  if (!open) return null;
+  const items: PaletteItem[] = [
+    { id: 'action-new-session', group: '操作', label: '新建会话', icon: <Plus size={15} />, run: actions.newSession },
+    { id: 'action-browse-files', group: '操作', label: '浏览项目文件', icon: <FolderOpen size={15} />, run: actions.browseFiles },
+    ...digitalHumans.map((digitalHuman) => ({ id: `digital-human-${digitalHuman.id}`, group: '数字人', label: `${digitalHuman.displayName} · ${digitalHuman.role}`, hint: digitalHuman.tagline, icon: <span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span>, run: () => actions.selectDigitalHuman(digitalHuman.id) })),
+    ...sessions.map((session) => ({ id: `session-${session.id}`, group: '会话', label: sessionTitle(session), hint: conversationTime(session.updatedAt), icon: <ChatCircle size={15} />, run: () => actions.selectSession(session.id) })),
+    ...resources.map((resource) => ({ id: `resource-${resource.path}`, group: '项目文件', label: resourceTitle(resource.title), hint: resource.path, icon: <Folder size={15} />, run: () => actions.openResource(resource.path) })),
+  ];
+  const normalized = query.trim().toLocaleLowerCase();
+  // 无查询时只给导航级入口（对齐 LangSmith：文件要搜索才出现），并限制每组行数。
+  const visible = (normalized ? items.filter((item) => `${item.label} ${item.hint ?? ''}`.toLocaleLowerCase().includes(normalized)) : items.filter((item) => item.group !== '项目文件')).slice(0, 60);
+  const groups: { name: string; items: PaletteItem[] }[] = [];
+  for (const item of visible) {
+    const group = groups.find((entry) => entry.name === item.group);
+    if (group) group.items.push(item); else groups.push({ name: item.group, items: [item] });
+  }
+  if (!normalized) for (const group of groups) group.items = group.items.slice(0, 8);
+  const active = visible.find((item) => item.id === activeId) ?? visible[0];
+  const runItem = (item?: PaletteItem) => { if (!item) return; onClose(); item.run(); };
+  return <div className="palette-backdrop" onClick={onClose}>
+    <div className="palette" role="dialog" aria-modal="true" aria-label="搜索与跳转" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!visible.length) return;
+        const index = visible.findIndex((item) => item.id === active?.id);
+        const next = event.key === 'ArrowDown' ? (index + 1) % visible.length : (index - 1 + visible.length) % visible.length;
+        setActiveId(visible[next]!.id);
+        return;
+      }
+      if (event.key === 'Enter') { event.preventDefault(); runItem(active); }
+    }}>
+      <div className="palette-input-row"><MagnifyingGlass size={15} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setActiveId(''); }} placeholder="搜索数字人、会话、文件…" aria-label="搜索数字人、会话、文件" /><kbd>Esc</kbd></div>
+      <div className="palette-results">
+        {groups.map((group) => <div key={group.name} role="group" aria-label={group.name}><div className="palette-group-label">{group.name}</div>{group.items.map((item) => <button type="button" key={item.id} className={item.id === active?.id ? 'palette-item palette-item-active' : 'palette-item'} onMouseEnter={() => setActiveId(item.id)} onClick={() => runItem(item)}>{item.icon}<span className="palette-item-label">{item.label}</span>{item.hint ? <small>{item.hint}</small> : null}</button>)}</div>)}
+        {!visible.length ? <p className="palette-empty">没有匹配的结果。</p> : null}
+      </div>
+      <footer className="palette-foot"><span>↑↓ 移动</span><span>Enter 选择</span><span>Esc 关闭</span></footer>
+    </div>
+  </div>;
+}
+
+type WorkspacePanelProps = {
+  state: { workspace: WorkspaceSnapshot; digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; sessions: SessionRecord[]; currentSessionId: string; view: WorkspaceView; tree: FileTreeNode; filter: string; selectedResource: string; collapsedPaths: Set<string>; pending: boolean; refreshing: boolean; authUser?: AuthUser; open: boolean; animating: boolean };
+  actions: { toggleOpen: () => void; selectDigitalHuman: (digitalHumanId: DigitalHumanId) => void; changeView: (view: WorkspaceView) => void; changeFilter: (value: string) => void; toggleResource: (path: string) => void; selectResource: (path: string) => void; selectSession: (id: string) => void; newSession: () => void; renameSession: (id: string, title: string) => Promise<void>; deleteSession: (id: string) => Promise<void>; refreshWorkspace: () => void; openPalette: () => void; logout: () => void };
+};
+
+function WorkspacePanel({ state, actions }: WorkspacePanelProps) {
+  const { workspace, digitalHumans, currentDigitalHumanId, sessions, currentSessionId, view, tree, filter, selectedResource, collapsedPaths, pending, refreshing, authUser, open, animating } = state;
+  const { toggleOpen: onToggleOpen, selectDigitalHuman: onSelectDigitalHuman, changeView: onViewChange, changeFilter: onFilterChange, toggleResource: onToggle, selectResource: onSelect, selectSession: onSelectSession, newSession: onNewSession, renameSession: onRenameSession, deleteSession: onDeleteSession, refreshWorkspace: onRefreshWorkspace, openPalette: onOpenPalette, logout: onLogout } = actions;
   const showingSessions = view === 'sessions';
+  const currentDigitalHuman = digitalHumans.find((digitalHuman) => digitalHuman.id === currentDigitalHumanId);
   const normalizedFilter = filter.trim().toLocaleLowerCase();
   const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -737,11 +861,7 @@ function WorkspacePanel({ workspace, digitalHumans, currentDigitalHumanId, sessi
     }
   };
   return (
-    <aside id="project-workspace" className={open ? 'workspace-panel' : 'workspace-panel workspace-panel-collapsed'} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
-      <button type="button" className="workspace-toggle-button" data-sidebar="trigger" onClick={onToggleOpen} aria-controls="project-workspace" aria-expanded={open} aria-label={open ? '收起工作区' : '展开工作区'} title={open ? '收起工作区' : '展开工作区'}>
-        {open ? <CaretRight size={15} /> : <CaretLeft size={15} />}
-        <span className="sr-only">{open ? '收起工作区' : '展开工作区'}</span>
-      </button>
+    <aside id="project-workspace" className={['workspace-panel', open ? '' : 'workspace-panel-collapsed', animating ? 'workspace-panel-animating' : ''].filter(Boolean).join(' ')} data-state={open ? 'expanded' : 'collapsed'} data-collapsible="icon" aria-label="项目工作区">
       {open ? (
         <div className="workspace-panel-content">
           <header className="workspace-brand-header" aria-label="Pi 工作台">
@@ -750,17 +870,27 @@ function WorkspacePanel({ workspace, digitalHumans, currentDigitalHumanId, sessi
               <div className="workspace-brand-copy">
                 <strong>Pi 工作台</strong>
                 <span>本地数字人</span>
+                <CaretDown size={13} aria-hidden="true" />
               </div>
             </div>
+            <button type="button" className="workspace-toggle-button" data-sidebar="trigger" onClick={onToggleOpen} aria-controls="project-workspace" aria-expanded="true" aria-label="收起工作区 (⌘B)" title="收起工作区 (⌘B)">
+              <SidebarSimple size={16} />
+            </button>
           </header>
-          <DigitalHumanSelector digitalHumans={digitalHumans} currentDigitalHumanId={currentDigitalHumanId} pending={pending} onSelect={onSelectDigitalHuman} />
+          <div className="workspace-nav-section">
+            <span className="workspace-nav-label">数字人</span>
+            <DigitalHumanSwitcher digitalHumans={digitalHumans} currentDigitalHumanId={currentDigitalHumanId} pending={pending} onSelect={onSelectDigitalHuman} />
+            <button type="button" className="workspace-search-trigger" onClick={onOpenPalette} aria-keyshortcuts="meta+k ctrl+k"><MagnifyingGlass size={15} /><span>搜索</span><kbd>⌘K</kbd></button>
+          </div>
           <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="horizontal">
             <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
+              {showingSessions ? <motion.span className="workspace-tab-pill" layoutId="workspace-tab-pill" transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} aria-hidden="true" /> : null}
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
               <span>会话</span>
               <small>{sessions.length}</small>
             </button>
             <button type="button" id="workspace-tab-files" role="tab" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={!showingSessions} tabIndex={showingSessions ? -1 : 0}>
+              {!showingSessions ? <motion.span className="workspace-tab-pill" layoutId="workspace-tab-pill" transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} aria-hidden="true" /> : null}
               <FolderOpen size={14} weight={!showingSessions ? 'fill' : 'regular'} />
               <span>项目文件</span>
               <small>{workspace.resources.length}</small>
@@ -790,7 +920,21 @@ function WorkspacePanel({ workspace, digitalHumans, currentDigitalHumanId, sessi
             <button type="button" className="workspace-logout-button" onClick={onLogout} aria-label="退出飞书登录" title="退出飞书登录"><SignOut size={14} /></button>
           </footer>}
         </div>
-      ) : null}
+      ) : (
+        <nav className="workspace-rail" aria-label="工作区快速导航">
+          <button type="button" className="rail-item rail-expand" onClick={onToggleOpen} aria-controls="project-workspace" aria-expanded="false" aria-label="展开工作区 (⌘B)" data-tip="展开 ⌘B"><SidebarSimple size={16} /></button>
+          {currentDigitalHuman ? <button type="button" className="rail-item rail-mark" onClick={onToggleOpen} aria-label={`展开并切换到数字人 ${currentDigitalHuman.displayName}`} data-tip={`${currentDigitalHuman.displayName} · ${currentDigitalHuman.role}`}><span className={`agent-selector-mark digital-human-accent-${currentDigitalHuman.avatar.accent}`} aria-hidden="true">{currentDigitalHuman.avatar.initials}</span></button> : null}
+          <button type="button" className="rail-item" onClick={onOpenPalette} aria-keyshortcuts="meta+k ctrl+k" aria-label="搜索 (⌘K)" data-tip="搜索 ⌘K"><MagnifyingGlass size={16} /></button>
+          <button type="button" className={showingSessions ? 'rail-item rail-item-active' : 'rail-item'} onClick={() => { onViewChange('sessions'); onToggleOpen(); }} aria-label="展开会话列表" data-tip="会话"><ChatCircle size={16} weight={showingSessions ? 'fill' : 'regular'} /></button>
+          <button type="button" className={!showingSessions ? 'rail-item rail-item-active' : 'rail-item'} onClick={() => { onViewChange('files'); onToggleOpen(); }} aria-label="展开项目文件" data-tip="项目文件"><FolderOpen size={16} weight={!showingSessions ? 'fill' : 'regular'} /></button>
+          {authUser ? (
+            <>
+              <button type="button" className="rail-item rail-bottom" onClick={onLogout} aria-label="退出飞书登录" data-tip="退出登录"><SignOut size={16} /></button>
+              <span className="rail-item rail-avatar" data-tip={authUser.name} aria-hidden="true">{authUser.name.slice(0, 1)}</span>
+            </>
+          ) : null}
+        </nav>
+      )}
     </aside>
   );
 }
@@ -818,15 +962,42 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceError, setResourceError] = useState('');
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const resourceRequestRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const followConversationRef = useRef(true);
+  const workspaceAnimTimerRef = useRef<number | undefined>(undefined);
+  const [workspaceAnimating, setWorkspaceAnimating] = useState(false);
+  /** Animates the sidebar width only during expand/collapse; keeps drag-resize instant. */
+  const toggleWorkspace = () => {
+    setWorkspaceAnimating(true);
+    window.clearTimeout(workspaceAnimTimerRef.current);
+    workspaceAnimTimerRef.current = window.setTimeout(() => setWorkspaceAnimating(false), 220);
+    setWorkspaceOpen((value) => !value);
+  };
+  useEffect(() => () => window.clearTimeout(workspaceAnimTimerRef.current), []);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
+  const flatResources = useMemo(() => flattenResources(fileTree), [fileTree]);
   const digitalHumans = workspace.digitalHumans;
   const currentDigitalHuman = digitalHumans.find((digitalHuman) => digitalHuman.id === digitalHumanId);
   const sessions = useMemo(() => sortSessionRecords(sessionRecords), [sessionRecords]);
   const currentSession = sessionRecords.find((session) => session.id === sessionId);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        toggleWorkspace();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     setCollapsedPaths(new Set(collectCollapsedFolders(fileTree)));
@@ -839,6 +1010,16 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     const frame = window.requestAnimationFrame(() => node.scrollTo({ top: node.scrollHeight, behavior: 'auto' }));
     return () => window.cancelAnimationFrame(frame);
   }, [sessionId, messages, pending]);
+
+  // After the first message the composer FLIPs from the welcome flow to the bottom dock; restore focus once it lands.
+  const hadMessagesRef = useRef(false);
+  useEffect(() => {
+    const hadMessages = hadMessagesRef.current;
+    hadMessagesRef.current = messages.length > 0;
+    if (hadMessages || messages.length === 0) return;
+    const focusTimer = window.setTimeout(() => promptInputRef.current?.focus(), 380);
+    return () => window.clearTimeout(focusTimer);
+  }, [messages.length]);
 
   async function refreshWorkspace() {
     setWorkspaceRefreshing(true);
@@ -927,7 +1108,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   async function syncSession(id: string) {
     const wasDraft = draftSessionIds.has(id);
     try {
-      const record = await fetchSessionRecord(id);
+      const record = await fetchSessionRecord(id, digitalHumanId);
       setSessionRecords((current) => sortSessionRecords(current.some((session) => session.id === id) ? current.map((session) => session.id === id ? record : session) : [...current, record]));
       setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (id === sessionId) setMessages(record.messages);
@@ -955,7 +1136,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       const response = await fetch(`/api/v1/digital-humans/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ feedback }),
+        body: JSON.stringify({ digitalHumanId, feedback }),
       });
       if (!response.ok) throw new Error('回答反馈暂时无法保存');
       const record = await response.json() as SessionRecord;
@@ -987,7 +1168,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
 
   async function renameSession(id: string, title: string) {
     try {
-      const record = draftSessionIds.has(id) ? { ...sessionRecords.find((session) => session.id === id)!, title, updatedAt: new Date().toISOString() } : await renameSessionRecord(id, title);
+      const record = draftSessionIds.has(id) ? { ...sessionRecords.find((session) => session.id === id)!, title, updatedAt: new Date().toISOString() } : await renameSessionRecord(id, digitalHumanId, title);
       setSessionRecords((current) => sortSessionRecords(current.map((session) => session.id === id ? record : session)));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '会话名称暂时无法保存');
@@ -997,7 +1178,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
 
   async function deleteSession(id: string) {
     try {
-      if (!draftSessionIds.has(id)) await deleteSessionRecord(id);
+      if (!draftSessionIds.has(id)) await deleteSessionRecord(id, digitalHumanId);
       let remaining = sessionRecords.filter((session) => session.id !== id);
       setDraftSessionIds((current) => { const next = new Set(current); next.delete(id); return next; });
       if (!remaining.length) {
@@ -1133,47 +1314,55 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
     return <main className="auth-loading" aria-live="polite"><span className="auth-loading-mark">人</span><strong>正在加载数字人档案</strong><span>{error || '正在读取项目定义与能力档案。'}</span></main>;
   }
 
+  const showWelcome = messages.length === 0;
+  /** One composer, two placements: in the welcome flow when empty, docked at the bottom once chatting. layoutId FLIPs between them. */
+  const composerNode = (
+    <motion.div layoutId="composer" className={showWelcome ? 'composer-wrap composer-welcome' : 'composer-wrap'} transition={{ type: 'spring', duration: 0.5, bounce: 0.1 }}>
+      <div className="composer">
+        <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentDigitalHuman.displayName}提问…` : '正在加载会话…'} aria-label={`向${currentDigitalHuman.displayName}提问`} rows={1} disabled={!sessionsReady || pending || !workspace.model.enabled} />
+        <div className="composer-toolbar">
+          <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
+          <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>
+          <span className="composer-toolbar-spacer" />
+          <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '未配置'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '模型未配置'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '未配置'}</span></div>
+          <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim() || !workspace.model.enabled} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
+        </div>
+      </div>
+      <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>
+    </motion.div>
+  );
+
   return (
     <div className={workspaceOpen ? 'workbench-shell' : 'workbench-shell workbench-shell-workspace-collapsed'}>
-      <WorkspacePanel workspace={workspace} digitalHumans={digitalHumans} currentDigitalHumanId={digitalHumanId} sessions={sessions} currentSessionId={sessionId} view={workspaceView} tree={fileTree} filter={resourceFilter} selectedResource={selectedResource} collapsedPaths={collapsedPaths} pending={pending} refreshing={workspaceRefreshing} authUser={authUser} open={workspaceOpen} onToggleOpen={() => setWorkspaceOpen((openState) => !openState)} onSelectDigitalHuman={(nextDigitalHumanId) => { void selectDigitalHuman(nextDigitalHumanId); }} onViewChange={setWorkspaceView} onFilterChange={setResourceFilter} onToggle={togglePath} onSelect={openResource} onSelectSession={selectSession} onNewSession={resetSession} onRenameSession={renameSession} onDeleteSession={deleteSession} onRefreshWorkspace={() => { if (!workspaceRefreshing) void refreshWorkspace(); }} onLogout={onLogout} />
+      <WorkspacePanel state={{ workspace, digitalHumans, currentDigitalHumanId: digitalHumanId, sessions, currentSessionId: sessionId, view: workspaceView, tree: fileTree, filter: resourceFilter, selectedResource, collapsedPaths, pending, refreshing: workspaceRefreshing, authUser, open: workspaceOpen, animating: workspaceAnimating }} actions={{ toggleOpen: toggleWorkspace, selectDigitalHuman: (nextDigitalHumanId) => { void selectDigitalHuman(nextDigitalHumanId); }, changeView: setWorkspaceView, changeFilter: setResourceFilter, toggleResource: togglePath, selectResource: openResource, selectSession, newSession: resetSession, renameSession, deleteSession, refreshWorkspace: () => { if (!workspaceRefreshing) void refreshWorkspace(); }, openPalette: () => setPaletteOpen(true), logout: onLogout }} />
       <main className="session-panel">
-        <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: 'easeIn' } }}>
+        <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: motionEase } }}>
           <header className="conversation-header"><div><strong>{currentDigitalHuman.displayName} · {currentDigitalHuman.role}</strong><span>{currentDigitalHuman.tagline} · {currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentDigitalHuman.capabilityLabel}</span></header>
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
             const node = event.currentTarget;
             followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
           }}>
             {messages.length === 0 ? (
-              <div className="welcome-state">
-                <div className={`welcome-mark digital-human-accent-${currentDigitalHuman.avatar.accent}`}><span className="pi-welcome-glyph">{currentDigitalHuman.avatar.initials}</span></div>
-                <h1>{currentDigitalHuman.welcome.title}</h1>
-                <p>{currentDigitalHuman.welcome.description}</p>
+              <motion.div className="welcome-state" variants={welcomeGroup} initial="hidden" animate="show">
+                <motion.div className={`welcome-mark digital-human-accent-${currentDigitalHuman.avatar.accent}`} variants={welcomeItem}><span className="pi-welcome-glyph">{currentDigitalHuman.avatar.initials}</span></motion.div>
+                <motion.h1 variants={welcomeItem}>{currentDigitalHuman.welcome.title}</motion.h1>
+                <motion.p variants={welcomeItem}>{currentDigitalHuman.welcome.description}</motion.p>
                 <div className="welcome-suggestions" aria-label="建议问题">
-                  {currentDigitalHuman.welcome.suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></button>)}
+                  {currentDigitalHuman.welcome.suggestions.map((suggestion) => <motion.button type="button" key={suggestion} variants={welcomeItem} onClick={() => { setPrompt(suggestion); requestAnimationFrame(() => promptInputRef.current?.focus()); }}>{suggestion}<CaretRight size={13} /></motion.button>)}
                 </div>
-              </div>
+                {composerNode}
+              </motion.div>
             ) : (
               <div className="message-list">
                 <ConversationStream digitalHuman={currentDigitalHuman} messages={messages} copiedMessageId={copiedMessageId} feedbackPending={feedbackPending} onCopy={copyAnswer} onFeedback={updateFeedback} onOpenResource={openResource} />
               </div>
             )}
           </div>
-          <div className="composer-wrap">
-            <div className="composer">
-              <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentDigitalHuman.displayName}提问…` : '正在加载会话…'} aria-label={`向${currentDigitalHuman.displayName}提问`} rows={1} disabled={!sessionsReady || pending || !workspace.model.enabled} />
-              <div className="composer-toolbar">
-                <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
-                <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>
-                <span className="composer-toolbar-spacer" />
-                <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '未配置'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '模型未配置'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '未配置'}</span></div>
-                <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim() || !workspace.model.enabled} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
-              </div>
-            </div>
-            <div className="composer-foot"><span>按 Enter 发送 · Shift + Enter 换行</span><span><span className="composer-lock" />只读上下文</span></div>
-          </div>
+          {!showWelcome ? composerNode : null}
         </motion.section>}</AnimatePresence>
       </main>
-      <AnimatePresence>{error && <motion.div className="error-toast" role="alert" initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.12, ease: 'easeIn' } }}><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></motion.div>}</AnimatePresence>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} digitalHumans={digitalHumans} sessions={sessions} resources={flatResources} actions={{ selectDigitalHuman: (id) => { void selectDigitalHuman(id); }, selectSession: (id) => { setWorkspaceOpen(true); setWorkspaceView('sessions'); selectSession(id); }, openResource: (path) => void openResource(path), newSession: () => { setWorkspaceOpen(true); setWorkspaceView('sessions'); resetSession(); }, browseFiles: () => openWorkspace('files') }} />
+      <AnimatePresence>{error && <motion.div className="error-toast" role="alert" initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.12, ease: motionEase } }}><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></motion.div>}</AnimatePresence>
     </div>
   );
 }
