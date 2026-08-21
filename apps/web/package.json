@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "portless": { "name": "pi-workbench", "script": "dev:app", "appPort": 5173 },
+  "portless": {
+    "name": "pi-workbench",
+    "script": "dev:app",
+    "appPort": 5173
+  },
   "scripts": {
     "dev": "portless",
     "dev:app": "vite --host 0.0.0.0",
@@ -16,20 +20,20 @@
   "dependencies": {
     "@json-render/core": "0.20.0",
     "@json-render/react": "0.20.0",
-    "@phosphor-icons/react": "^2.1.7",
+    "@phosphor-icons/react": "^2.1.10",
     "@pi-workbench/contracts": "workspace:*",
-    "motion": "13.1.0",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "motion": "13.1.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "zod": "4.3.6"
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.2",
-    "tsx": "^4.20.3",
-    "vite": "^7.1.3"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "tsx": "^4.23.12",
+    "vite": "^8.2.2"
   }
 }

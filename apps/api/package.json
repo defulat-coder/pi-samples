@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "portless": { "name": "api.pi-workbench", "script": "dev:app", "appPort": 4310 },
+  "portless": {
+    "name": "api.pi-workbench",
+    "script": "dev:app",
+    "appPort": 4310
+  },
   "scripts": {
     "dev": "portless",
     "dev:app": "tsx watch src/server.ts",
@@ -15,16 +19,16 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@fastify/cors": "^11.0.1",
-    "@fastify/helmet": "^13.0.2",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.1",
     "@pi-workbench/contracts": "workspace:*",
-    "@pi-workbench/workspace-data": "workspace:*",
     "@pi-workbench/pi-agent": "workspace:*",
-    "@sinclair/typebox": "^0.34.41",
-    "env-schema": "^6.0.1",
-    "fastify": "^5.4.0"
+    "@pi-workbench/workspace-data": "workspace:*",
+    "@sinclair/typebox": "^0.34.52",
+    "env-schema": "^8.0.0",
+    "fastify": "^5.12.1"
   },
   "devDependencies": {
-    "tsx": "^4.20.3"
+    "tsx": "^4.23.12"
   }
 }
