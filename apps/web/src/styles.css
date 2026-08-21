@@ -91,8 +91,23 @@ input, textarea { font: inherit; color: inherit; }
   padding: var(--space-3) var(--space-2);
   transition: width var(--duration-normal) ease-in-out;
 }
-.sidebar.collapsed { width: 52px; }
-.sidebar.collapsed .sidebar-fold { display: none; }
+/* 收起态（§11.9）：44px 宽，导航/agent 行变 32×32 纯图标，未读徽标保留 */
+.sidebar.collapsed { width: 44px; padding-left: var(--space-1); padding-right: var(--space-1); }
+.sidebar.collapsed .sidebar-brand,
+.sidebar.collapsed .sidebar-search,
+.sidebar.collapsed .group-header,
+.sidebar.collapsed .session-tabs,
+.sidebar.collapsed .session-group-label,
+.sidebar.collapsed .session-row,
+.sidebar.collapsed .sidebar-empty-hint { display: none; }
+.sidebar.collapsed .nav-row, .sidebar.collapsed .agent-row {
+  position: relative; width: 32px; height: 32px; margin: 0 auto; padding: 0; justify-content: center; gap: 0;
+}
+.sidebar.collapsed .nav-row > span:not(.nav-badge),
+.sidebar.collapsed .agent-name { display: none; }
+/* 需压过 .agent-row.active/.agent-row:hover 的 actions 显现规则（§ 同优先级后者胜） */
+.sidebar.collapsed .agent-row .agent-row-actions { display: none; }
+.sidebar.collapsed .nav-badge { position: absolute; top: -3px; right: -3px; }
 .sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; height: 26px; }
 .sidebar-brand { display: flex; align-items: center; gap: 6px; padding: var(--space-1); font-size: 14px; font-weight: 600; letter-spacing: -0.56px; white-space: nowrap; }
 .icon-button {
@@ -172,11 +187,12 @@ input, textarea { font: inherit; color: inherit; }
 }
 .mini-button:hover { background: var(--bg-secondary-hover); color: var(--text-secondary); }
 
+/* Agent 标识色 chip（§3.5 实测：自定义 agent 为紫色系） */
 .agent-chip {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 18px; height: 18px; border-radius: 5px;
-  background: rgba(0, 109, 221, 0.12); border: 1px solid rgba(0, 109, 221, 0.35);
-  color: var(--brand); font-size: 8px; font-weight: 600;
+  background: rgba(124, 58, 237, 0.12); border: 1px solid rgba(124, 58, 237, 0.35);
+  color: #6d28d7; font-size: 8px; font-weight: 600;
 }
 .agent-chip.large { width: 56px; height: 56px; border-radius: var(--radius-xl); font-size: 24px; }
 .agent-chip.medium { width: 32px; height: 32px; border-radius: var(--radius-lg); font-size: 13px; }
@@ -644,5 +660,4 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 /* 界面偏好「消息紧凑模式」：缩小消息纵向间距 */
 .thread-column.compact .message-row { margin-top: var(--space-2); }
 
-/* 折叠侧边栏：底部 Usage/Settings 导航只留图标 */
-.sidebar.collapsed .sidebar-footer .nav-row { justify-content: center; padding: var(--space-1) 0; }
+/* 折叠侧边栏：底部 Usage/Settings 导航同样收敛为 32×32 图标（通用规则已覆盖） */

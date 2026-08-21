@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-21T15:29:43Z",
+  "title": "Design System: Pi 工作台（Fleet 复刻）",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "信号蓝 Signal Blue",
+        "canonical": "#006ddd",
+        "tonalRamp": [
+          "oklch(22% 0.06 262)",
+          "oklch(32% 0.10 262)",
+          "oklch(42% 0.15 261)",
+          "oklch(50% 0.18 260)",
+          "oklch(56% 0.19 258)",
+          "oklch(66% 0.15 256)",
+          "oklch(78% 0.10 254)",
+          "oklch(93% 0.03 252)"
+        ]
+      },
+      "primary-secondary": {
+        "role": "primary",
+        "displayName": "信号浅底 Signal Wash",
+        "canonical": "#e5f4ff",
+        "tonalRamp": [
+          "oklch(40% 0.08 255)",
+          "oklch(52% 0.10 254)",
+          "oklch(64% 0.09 253)",
+          "oklch(74% 0.07 252)",
+          "oklch(82% 0.05 251)",
+          "oklch(88% 0.035 250)",
+          "oklch(93% 0.02 248)",
+          "oklch(96% 0.012 246)"
+        ]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "墨色正文",
+        "canonical": "#0f172a",
+        "tonalRamp": [
+          "oklch(21% 0.03 264)",
+          "oklch(32% 0.03 262)",
+          "oklch(42% 0.03 261)",
+          "oklch(52% 0.025 260)",
+          "oklch(62% 0.02 259)",
+          "oklch(74% 0.015 258)",
+          "oklch(86% 0.01 257)",
+          "oklch(96% 0.005 256)"
+        ]
+      },
+      "bg-secondary": {
+        "role": "neutral",
+        "displayName": "雾灰·一级",
+        "canonical": "#f5f8fb",
+        "tonalRamp": [
+          "oklch(35% 0.02 255)",
+          "oklch(50% 0.015 254)",
+          "oklch(65% 0.01 253)",
+          "oklch(78% 0.008 252)",
+          "oklch(87% 0.007 250)",
+          "oklch(93% 0.006 248)",
+          "oklch(97% 0.004 247)",
+          "oklch(99% 0.002 245)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "页面级大标题（欢迎态、探索区头部），全应用仅此一处层级。" },
+      "headline": { "displayName": "Headline", "purpose": "卡片/弹窗/收件箱标题。" },
+      "title": { "displayName": "Title", "purpose": "面板与区块小标题。" },
+      "body": { "displayName": "Body", "purpose": "默认正文；assistant 消息用 15px/1.75。" },
+      "label": { "displayName": "Label", "purpose": "分组头与区块标签，永远 10px/500/全大写/+0.5px/四级灰。" }
+    },
+    "shadows": [
+      {
+        "name": "popover-outline",
+        "value": "drop-shadow(0 1px 0 #e2e8f0) drop-shadow(0 -1px 0 #e2e8f0) drop-shadow(1px 0 0 #e2e8f0) drop-shadow(-1px 0 0 #e2e8f0) drop-shadow(0 2px 3px #1018280d) drop-shadow(0 6px 12px #1018280d)",
+        "purpose": "浮层专用：多层 drop-shadow 组，1px 描边与柔和投影一体。"
+      },
+      {
+        "name": "button-lift",
+        "value": "0 1px 2px rgba(16, 24, 40, 0.05)",
+        "purpose": "带边框的白底控件（工具按钮、页签、建议胶囊）的极浅托起影。"
+      },
+      {
+        "name": "modal",
+        "value": "0 8px 24px rgba(16, 24, 40, 0.16)",
+        "purpose": "模态框专用，配 rgba(15,23,42,0.3) 遮罩。"
+      }
+    ],
+    "motion": [
+      { "name": "duration-fast", "value": "0.1s", "purpose": "页签、列表行等高频态切换。" },
+      { "name": "duration-normal", "value": "0.2s", "purpose": "默认过渡（hover、侧边栏宽度、开关）。" },
+      { "name": "duration-slow", "value": "0.3s", "purpose": "导航行背景等稍重的状态变化。" },
+      { "name": "ease-standard", "value": "ease-in-out", "purpose": "默认缓动。" },
+      { "name": "ease-out-expo", "value": "cubic-bezier(0.23, 1, 0.32, 1)", "purpose": "折叠/展开类运动（chevron 旋转、开关滑块）。" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Send Button (Primary)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "信号蓝全圆角发送按钮，26×26，hover 加深；禁用态极浅灰。",
+      "html": "<button class=\"ds-btn-send\" aria-label=\"发送\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 19V5\"/><path d=\"m5 12 7-7 7 7\"/></svg></button>",
+      "css": ".ds-btn-send { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; border-radius: 9999px; background: var(--brand); color: #fff; cursor: pointer; transition: background 0.2s ease-in-out; } .ds-btn-send:hover { background: var(--brand-hover); } .ds-btn-send:disabled { background: #fafbfd; color: var(--text-disabled); cursor: default; } .ds-btn-send:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Icon Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "侧边栏与工具栏的 26×26 图标按钮：透明底、二级灰图标、hover 雾灰。",
+      "html": "<button class=\"ds-btn-ghost\" aria-label=\"收起\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M9 3v18\"/></svg></button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; transition: background 0.2s ease-in-out, color 0.2s ease-in-out; } .ds-btn-ghost:hover { background: var(--bg-secondary); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }"
+    },
+    {
+      "name": "Sidebar Nav Row",
+      "kind": "nav",
+      "refersTo": "nav-row",
+      "description": "26px 高导航行；active 为信号浅底 + 品牌深蓝字（Paired Active Rule）。",
+      "html": "<div class=\"ds-nav\"><button class=\"ds-nav-row\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\"/></svg><span>会话</span></button><button class=\"ds-nav-row ds-active\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z\"/></svg><span>收件箱</span><span class=\"ds-nav-badge\">3</span></button></div>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 220px; } .ds-nav-row { display: flex; align-items: center; gap: 12px; width: 100%; height: 26px; border: none; border-radius: 4px; padding: 4px 10px; background: transparent; font-size: 12px; line-height: 13.8px; color: var(--text-primary); text-align: left; cursor: pointer; white-space: nowrap; transition: background 0.3s ease-in-out; } .ds-nav-row:hover { background: var(--bg-secondary); } .ds-nav-row.ds-active { background: var(--brand-secondary); color: var(--text-brand); font-weight: 500; } .ds-nav-badge { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; height: 14px; min-width: 14px; border-radius: 9999px; padding: 0 2px; background: var(--brand); color: #fff; font-size: 8px; font-weight: 500; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "30px 高表单输入：1px 默认边框、6px 圆角，聚焦边框变信号蓝，无发光环。",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Agent 名称\" />",
+      "css": ".ds-input { height: 30px; width: 220px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-primary); padding: 0 10px; font-size: 13px; color: var(--text-primary); outline: none; transition: border-color 0.2s ease-in-out; } .ds-input::placeholder { color: var(--text-placeholder); } .ds-input:focus { border-color: var(--brand); }"
+    },
+    {
+      "name": "Agent Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "探索区 Agent 卡：12px 圆角、1px 微妙边框、24px 内距，hover 雾灰底。",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-head\"><span class=\"ds-agent-chip\">π</span><div class=\"ds-card-title\"><strong>Pi 助手</strong><small>pi-assistant</small></div></div><p class=\"ds-card-desc\">通用对话与问题解答，了解这个项目与 Pi 的用法。</p><div class=\"ds-card-foot\"><span>3 会话 · 12,480 tokens</span><span>›</span></div></div>",
+      "css": ".ds-card { display: flex; flex-direction: column; gap: 12px; width: 320px; border-radius: 12px; border: 1px solid var(--border-subtle); background: var(--bg-primary); box-shadow: 0 1px 3px rgba(16,24,40,0.1), 0 1px 2px rgba(16,24,40,0.06); padding: 24px; cursor: pointer; transition: background 0.2s ease-in-out; } .ds-card:hover { background: var(--bg-secondary); } .ds-card-head { display: flex; align-items: center; gap: 12px; } .ds-card-title { display: flex; flex-direction: column; min-width: 0; } .ds-card-title strong { font-size: 16px; line-height: 19.2px; font-weight: 600; letter-spacing: -0.48px; color: var(--text-primary); } .ds-card-title small { font-size: 13px; color: var(--text-quaternary); } .ds-card-desc { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); } .ds-card-foot { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-quaternary); }"
+    },
+    {
+      "name": "Agent Chip",
+      "kind": "chip",
+      "refersTo": "chip-agent",
+      "description": "Agent 视觉签名：按 Agent 标识色生成的小方块徽标（Fleet 实测自定义 agent 为紫色系），三档尺寸。",
+      "html": "<span class=\"ds-agent-chip\">P</span> <span class=\"ds-agent-chip ds-medium\">评</span> <span class=\"ds-agent-chip ds-large\">写</span>",
+      "css": ".ds-agent-chip { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 5px; background: rgba(124,58,237,0.12); border: 1px solid rgba(124,58,237,0.35); color: #6d28d7; font-size: 8px; font-weight: 600; vertical-align: middle; } .ds-agent-chip.ds-medium { width: 32px; height: 32px; border-radius: 8px; font-size: 13px; } .ds-agent-chip.ds-large { width: 56px; height: 56px; border-radius: 12px; font-size: 24px; }"
+    },
+    {
+      "name": "Capsule Switch",
+      "kind": "custom",
+      "refersTo": "capsule-switch",
+      "description": "全圆角胶囊二元开关（Thinking 开/关），active 项信号浅底 + 品牌深蓝。",
+      "html": "<div class=\"ds-capsule\"><button class=\"ds-capsule-opt ds-active\">开</button><button class=\"ds-capsule-opt\">关</button></div>",
+      "css": ".ds-capsule { display: inline-flex; gap: 2px; padding: 4px; border-radius: 9999px; border: 1px solid var(--border-subtle); background: var(--bg-primary); } .ds-capsule-opt { border: none; background: transparent; padding: 4px 10px; border-radius: 9999px; font-size: 10px; font-weight: 600; color: var(--text-quaternary); cursor: pointer; transition: color 0.2s ease-in-out; } .ds-capsule-opt:hover { color: var(--text-secondary); } .ds-capsule-opt.ds-active { background: var(--brand-secondary); color: var(--text-brand); }"
+    },
+    {
+      "name": "Header Button",
+      "kind": "button",
+      "refersTo": "card",
+      "description": "会话头部工具按钮：白底 1px 边框 + 按钮微影；有 primary（信号蓝）与 active（浅底）变体。",
+      "html": "<div style=\"display:flex;gap:8px;\"><button class=\"ds-hbtn\">配置</button><button class=\"ds-hbtn ds-primary\">新建会话</button><button class=\"ds-hbtn ds-on\">关注</button></div>",
+      "css": ".ds-hbtn { display: inline-flex; align-items: center; gap: 6px; height: 26px; border-radius: 4px; border: 1px solid var(--border-subtle); background: var(--bg-primary); padding: 4px 8px; font-size: 13px; letter-spacing: -0.26px; color: var(--text-primary); box-shadow: 0 1px 2px rgba(16,24,40,0.05); cursor: pointer; transition: background 0.2s ease-in-out; } .ds-hbtn:hover { background: var(--bg-secondary); } .ds-hbtn.ds-primary { background: var(--brand); border-color: var(--brand-hover); color: #fff; } .ds-hbtn.ds-primary:hover { background: var(--brand-hover); } .ds-hbtn.ds-on { background: var(--brand-secondary); border-color: transparent; color: var(--text-brand); box-shadow: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "安静控制台（The Quiet Console）",
+    "overview": "这是一套为高密度操作而生的工具界面：它平静、精确、克制，把全部表达欲让给内容本身。所有视觉决策都以 Fleet（LangSmith 工作台）页面的 CDP 实测值为唯一准绳，不自由发挥配色、密度或圆角。界面是 Operate 模式的工具——扫读性、一致性和平台直觉永远优先于个性表达。品牌感不住在装饰里，而住在精确的细节中：唯一的信号蓝、统一的 26px 行高节奏、0.5px 字距的全大写标签。",
+    "keyCharacteristics": [
+      "高密度但平静：12–14px 字号、26px 导航行、4px 基准间距刻度",
+      "单一品牌色纪律：信号蓝只标记可行动/已选中，全屏占比 ≤10%",
+      "扁平为默认：层次靠背景色阶，投影只属于浮层",
+      "中文界面 + Inter 字体栈，标题负字距"
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "信号蓝在任意一屏的占比 ≤10%。它的稀有性就是它的意义——如果三个元素同时是蓝的，就删掉两个。", "section": "colors" },
+      { "name": "The Paired Active Rule", "body": "active 态永远是信号浅底 + 品牌深蓝文字成对出现，不允许白底蓝字或蓝底白字当 active。", "section": "colors" },
+      { "name": "The Shrinking Label Rule", "body": "层级越低的标签越小越灰越疏——Label 永远是 10px/全大写/+0.5px/四级灰，不许加粗到 600、不许上色。", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "表面静止时必须是平的。投影只作为状态响应出现（浮层、弹窗），卡片默认无影。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 一切视觉数值以 docs/research/fleet-cdp-reference-2026-08-21.md 实测为准；新增页面先查该文档再动手。",
+      "Do 用背景色阶表达层次：白 → #f5f8fb → #edf2f7 → #e2e8f0，不许发明中间色。",
+      "Do active 态遵守 Paired Active Rule（#e5f4ff 底 + #0d3d77 字）。",
+      "Do 保持 4px 间距刻度与 26px/44px/48px 三档行高。",
+      "Do 动效用 motion 库，时长 0.1/0.2/0.3s 三档，缓动 ease-in-out 或 cubic-bezier(0.23, 1, 0.32, 1)。",
+      "Do 浮层用多层 drop-shadow 组（描边 + 投影一体），不要 box-shadow + border 双写。"
+    ],
+    "donts": [
+      "Don't 发明新品牌色、渐变或强调色；信号蓝是唯一的声音（One Voice Rule）。",
+      "Don't 给静态卡片、面板加投影（Flat-By-Default Rule）。",
+      "Don't 把 Label 标签加粗、上色或放大——它永远 10px/500/全大写/四级灰。",
+      "Don't 使用大于 12px 的圆角（全圆角胶囊除外）。",
+      "Don't 为透气降低信息密度；这是工具，不是营销页。",
+      "Don't 引入 Inter 之外的界面字体；等宽仅限路径与代码（ui-monospace 栈）。"
+    ]
+  }
+}

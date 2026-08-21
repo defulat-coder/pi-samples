@@ -160,6 +160,7 @@ export function Sidebar(props: SidebarProps) {
             className={chatActive ? 'nav-row active' : 'nav-row'}
             aria-current={chatActive ? 'page' : undefined}
             onClick={props.onCloseInbox}
+            title="会话"
           >
             <ChatCircle size={12} weight="bold" />
             <span>会话</span>
@@ -169,6 +170,7 @@ export function Sidebar(props: SidebarProps) {
             className={inboxOpen ? 'nav-row active' : 'nav-row'}
             aria-current={inboxOpen ? 'page' : undefined}
             onClick={props.onOpenInbox}
+            title="收件箱"
           >
             <Tray size={12} weight="bold" />
             <span>收件箱</span>
@@ -188,6 +190,7 @@ export function Sidebar(props: SidebarProps) {
               tabIndex={0}
               key={agent.id}
               className={agent.id === currentAgentId ? 'agent-row active' : 'agent-row'}
+              title={agent.name}
               onClick={() => props.onSelectAgent(agent.id)}
               onKeyDown={(event) => { if (event.key === 'Enter') props.onSelectAgent(agent.id); }}
             >
@@ -261,6 +264,7 @@ export function Sidebar(props: SidebarProps) {
             className={exploreView === 'agents' ? 'nav-row active' : 'nav-row'}
             aria-current={exploreView === 'agents' ? 'page' : undefined}
             onClick={() => props.onOpenExplore('agents')}
+            title="Agents"
           >
             <Users size={12} weight="bold" />
             <span>Agents</span>
@@ -270,6 +274,7 @@ export function Sidebar(props: SidebarProps) {
             className={exploreView === 'templates' ? 'nav-row active' : 'nav-row'}
             aria-current={exploreView === 'templates' ? 'page' : undefined}
             onClick={() => props.onOpenExplore('templates')}
+            title="模板"
           >
             <Layout size={12} weight="bold" />
             <span>模板</span>
@@ -279,6 +284,7 @@ export function Sidebar(props: SidebarProps) {
             className={exploreView === 'skills' ? 'nav-row active' : 'nav-row'}
             aria-current={exploreView === 'skills' ? 'page' : undefined}
             onClick={() => props.onOpenExplore('skills')}
+            title="技能"
           >
             <PuzzlePiece size={12} weight="bold" />
             <span>技能</span>
