@@ -16,6 +16,8 @@ describe('Pi workspace tools', () => {
     });
 
     try {
+      assert.match(runtime.session.systemPrompt, /Pi Workbench 项目约束/);
+      assert.match(runtime.session.systemPrompt, /你是小派/);
       assert.ok(runtime.session.getActiveToolNames().includes('read'));
       assert.ok(runtime.session.getActiveToolNames().includes('search_knowledge'));
       const tool = runtime.session.getToolDefinition('search_knowledge');
@@ -95,6 +97,28 @@ describe('Pi workspace tools', () => {
       await assert.rejects(() => createPiAgentSession({ cwd, digitalHumanId: 'commerce-analyst', sessionId: 'owned-session', sessionDir, persistSession: true }), /DIGITAL_HUMAN_SESSION_MISMATCH/);
     } finally {
       rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows only one business query attempt even when the first attempt fails', async () => {
+    let calls = 0;
+    const runtime = await createPiAgentSession({
+      cwd: getPiProjectRoot(),
+      digitalHumanId: 'commerce-analyst',
+      persistSession: false,
+      businessAnalytics: {
+        catalog: { version: 'sales-demo-v2', measures: [{ key: 'net_sales', label: '退款后销售额' }], dimensions: [], limits: { maxMeasures: 3, maxDimensions: 2, maxFilters: 4, maxRows: 50 } },
+        analyze: async () => { calls += 1; throw new Error('query failed'); },
+      },
+    });
+    try {
+      const tool = runtime.session.getToolDefinition('query_business_data');
+      assert.ok(tool);
+      await assert.rejects(() => tool.execute('first', { measures: ['net_sales'], dimensions: [] }, undefined, undefined, undefined as never), /query failed/);
+      await assert.rejects(() => tool.execute('second', { measures: ['net_sales'], dimensions: [] }, undefined, undefined, undefined as never), /已在本轮执行/);
+      assert.equal(calls, 1);
+    } finally {
+      runtime.close();
     }
   });
 });

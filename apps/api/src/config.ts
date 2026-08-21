@@ -6,7 +6,7 @@ import { Type, type Static } from '@sinclair/typebox';
 const schema = Type.Object({
   PORT: Type.Number({ default: 4310, minimum: 1, maximum: 65535 }),
   HOST: Type.String({ default: '127.0.0.1' }),
-  WEB_ORIGIN: Type.String({ default: 'http://localhost:5173' }),
+  WEB_ORIGIN: Type.String({ default: 'https://pi-workbench.localhost' }),
   AUTH_REQUIRED: Type.Boolean({ default: true }),
   AUTH_SESSION_TTL_SECONDS: Type.Optional(Type.Integer({ minimum: 300, maximum: 2_592_000 })),
   AUTH_COOKIE_NAME: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),

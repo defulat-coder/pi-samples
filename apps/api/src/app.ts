@@ -68,7 +68,7 @@ function workspaceResources(): AgentResourceSummary[] {
   const known = new Map<string, AgentResourceSummary>(loadKnowledgeBundle().map((concept) => [concept.path, { path: concept.path, kind: 'knowledge' as const, title: concept.title, status: concept.status }] as const));
   known.set('.pi/skills/pi-workbench/SKILL.md', { path: '.pi/skills/pi-workbench/SKILL.md', kind: 'skill', title: 'Pi 工作台智能体技能', status: 'active' });
   known.set('.pi/prompts/agent-chat.md', { path: '.pi/prompts/agent-chat.md', kind: 'prompt', title: '智能体对话提示词', status: 'active' });
-  return walkPiFiles(resolve(projectRoot(), '.pi'), resolve(projectRoot())).map((path) => known.get(path) ?? inferredResource(path));
+  return walkPiFiles(resolve(projectRoot(), '.pi'), resolve(projectRoot())).filter((path) => !path.startsWith('.pi/sessions/')).map((path) => known.get(path) ?? inferredResource(path));
 }
 
 function readAgentResource(path: string): AgentResourceDocument | undefined {
@@ -94,6 +94,39 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   const digitalHuman = (id: DigitalHumanId) => digitalHumans().find((item) => item.id === id);
   const capabilities = (tools: string[]) => {
     return { ...(tools.includes('search_knowledge') ? { searchKnowledge } : {}), ...(tools.includes('query_business_data') ? { businessAnalytics } : {}) };
+  };
+  const prepareTurn = async (body: DigitalHumanChatRequest, reply: FastifyReply) => {
+    const definition = digitalHuman(body.digitalHumanId);
+    if (!definition) {
+      reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
+      return undefined;
+    }
+    const sessionId = body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
+    try {
+      await sessions.ensureSession(sessionId, body.digitalHumanId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') {
+        reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
+        return undefined;
+      }
+      throw error;
+    }
+    const turnNumber = ((await sessions.getSession(sessionId, body.digitalHumanId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
+    return { digitalHumanId: body.digitalHumanId, sessionId, turnId: body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`, turnNumber, resources: workspaceResources(), injectedCapabilities: capabilities(definition.tools) };
+  };
+  const requireOwnedSession = async (sessionId: string, digitalHumanId: DigitalHumanId, reply: FastifyReply) => {
+    try {
+      const session = await sessions.getSession(sessionId, digitalHumanId);
+      if (session) return session;
+      reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') {
+        reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
+        return undefined;
+      }
+      throw error;
+    }
+    return undefined;
   };
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
@@ -179,38 +212,36 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return sessions.createSession(request.body.digitalHumanId);
     });
 
-    v1.get<{ Params: { id: string } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
-      const session = await sessions.getSession(request.params.id);
-      if (!session) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
-      return session;
+    v1.get<{ Params: { id: string }; Querystring: { digitalHumanId: DigitalHumanId } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }), querystring: Type.Object({ digitalHumanId: DigitalHumanIdSchema }) } }, async (request, reply) => {
+      return requireOwnedSession(request.params.id, request.query.digitalHumanId, reply);
     });
 
-    v1.patch<{ Params: { id: string }; Body: { title: string } }>('/digital-humans/sessions/:id', {
+    v1.patch<{ Params: { id: string }; Body: { digitalHumanId: DigitalHumanId; title: string } }>('/digital-humans/sessions/:id', {
       schema: {
         params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }),
-        body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) }),
+        body: Type.Object({ digitalHumanId: DigitalHumanIdSchema, title: Type.String({ minLength: 1, maxLength: 80 }) }),
       },
     }, async (request, reply) => {
-      const session = await sessions.setSessionTitle(request.params.id, request.body.title);
-      if (!session) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
-      return session;
+      if (!await requireOwnedSession(request.params.id, request.body.digitalHumanId, reply)) return;
+      return sessions.setSessionTitle(request.params.id, request.body.digitalHumanId, request.body.title);
     });
 
-    v1.delete<{ Params: { id: string } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }) } }, async (request, reply) => {
-      if (!await sessions.getSession(request.params.id)) return reply.code(404).send({ error: 'NotFound', message: '会话不存在' });
-      const session = await sessions.getSession(request.params.id);
-      if (session) await piSessionRegistry.close(session.digitalHumanId, request.params.id);
-      await sessions.deleteSession(request.params.id);
+    v1.delete<{ Params: { id: string }; Querystring: { digitalHumanId: DigitalHumanId } }>('/digital-humans/sessions/:id', { schema: { params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 120 }) }), querystring: Type.Object({ digitalHumanId: DigitalHumanIdSchema }) } }, async (request, reply) => {
+      const session = await requireOwnedSession(request.params.id, request.query.digitalHumanId, reply);
+      if (!session) return;
+      await piSessionRegistry.close(session.digitalHumanId, request.params.id);
+      await sessions.deleteSession(request.params.id, request.query.digitalHumanId);
       return reply.code(204).send();
     });
 
-    v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { feedback: AgentFeedback | null } }>('/digital-humans/sessions/:sessionId/messages/:messageId/feedback', {
+    v1.patch<{ Params: { sessionId: string; messageId: string }; Body: { digitalHumanId: DigitalHumanId; feedback: AgentFeedback | null } }>('/digital-humans/sessions/:sessionId/messages/:messageId/feedback', {
       schema: {
         params: Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 120 }), messageId: Type.String({ minLength: 1, maxLength: 160 }) }),
-        body: Type.Object({ feedback: Type.Union([Type.Literal('like'), Type.Literal('dislike'), Type.Null()]) }),
+        body: Type.Object({ digitalHumanId: DigitalHumanIdSchema, feedback: Type.Union([Type.Literal('like'), Type.Literal('dislike'), Type.Null()]) }),
       },
     }, async (request, reply) => {
-      const session = await sessions.setMessageFeedback(request.params.sessionId, request.params.messageId, request.body.feedback);
+      if (!await requireOwnedSession(request.params.sessionId, request.body.digitalHumanId, reply)) return;
+      const session = await sessions.setMessageFeedback(request.params.sessionId, request.body.digitalHumanId, request.params.messageId, request.body.feedback);
       if (!session) return reply.code(404).send({ error: 'NotFound', message: '可反馈的智能体消息不存在' });
       return session;
     });
@@ -222,36 +253,16 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
     });
 
     v1.post<{ Body: DigitalHumanChatRequest }>('/digital-humans/chat', { schema: { body: DigitalHumanChatRequestSchema } }, async (request, reply) => {
-      const digitalHumanId = request.body.digitalHumanId;
-      const definition = digitalHuman(digitalHumanId);
-      if (!definition) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
-      const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
-      const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
-      try {
-        await sessions.ensureSession(sessionId, digitalHumanId);
-      } catch (error) {
-        if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') return reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
-        throw error;
-      }
-      const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-      const response = await askPiAgent(request.body.message, { digitalHumanId, sessionId, resources: workspaceResources(), ...capabilities(definition.tools) }, { turnNumber, thinkingLevel: request.body.thinkingLevel });
-      await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
+      const turn = await prepareTurn(request.body, reply);
+      if (!turn) return;
+      const response = await askPiAgent(request.body.message, { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, resources: turn.resources, ...turn.injectedCapabilities }, { turnNumber: turn.turnNumber, thinkingLevel: request.body.thinkingLevel });
+      await sessions.appendTurnMetadata(turn.sessionId, turn.turnId, response, request.body.message);
       return response;
     });
 
     v1.post<{ Body: DigitalHumanChatRequest }>('/digital-humans/chat/stream', { schema: { body: DigitalHumanChatRequestSchema } }, async (request, reply) => {
-      const digitalHumanId = request.body.digitalHumanId;
-      const definition = digitalHuman(digitalHumanId);
-      if (!definition) return reply.code(404).send({ error: 'NotFound', message: '数字人不存在' });
-      const sessionId = request.body.sessionId ?? `session_${crypto.randomUUID().slice(0, 8)}`;
-      const turnId = request.body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`;
-      try {
-        await sessions.ensureSession(sessionId, digitalHumanId);
-      } catch (error) {
-        if (error instanceof Error && error.message === 'DIGITAL_HUMAN_SESSION_MISMATCH') return reply.code(409).send({ error: 'DigitalHumanSessionMismatch', message: '该会话属于另一个数字人。' });
-        throw error;
-      }
-      const turnNumber = ((await sessions.getSession(sessionId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
+      const turn = await prepareTurn(request.body, reply);
+      if (!turn) return;
       const raw = reply.raw;
       let clientClosed = false;
 
@@ -274,18 +285,18 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       };
 
       const thinkingLevel = request.body.thinkingLevel ?? getPiModelStatus(config.PI_AGENT_ENABLED).thinkingLevel;
-      send('start', { digitalHumanId, sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
+      send('start', { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
       try {
         let sawTextDelta = false;
-        const response = await askPiAgent(request.body.message, { digitalHumanId, sessionId, resources: workspaceResources(), ...capabilities(definition.tools) }, {
-          turnNumber,
+        const response = await askPiAgent(request.body.message, { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, resources: turn.resources, ...turn.injectedCapabilities }, {
+          turnNumber: turn.turnNumber,
           thinkingLevel,
           onEventSummary: (event) => send('event', { event }),
           onTextDelta: (delta) => { if (delta) { sawTextDelta = true; send('text_delta', { delta }); } },
           onThinkingDelta: (delta) => { if (delta) send('thinking_delta', { delta }); },
         });
         if (!sawTextDelta && response.answer) send('text_delta', { delta: response.answer });
-        await sessions.appendTurnMetadata(sessionId, turnId, response, request.body.message);
+        await sessions.appendTurnMetadata(turn.sessionId, turn.turnId, response, request.body.message);
         send('done', { response });
       } catch (error) {
         send('error', { message: error instanceof Error ? error.message : '数字人流式响应失败' });

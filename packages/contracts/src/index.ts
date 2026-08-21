@@ -121,7 +121,7 @@ export type BusinessPresentationIntent = 'auto' | 'trend' | 'comparison' | 'rank
 
 export interface BusinessAnalysisRequest {
   measures: BusinessMeasure[];
-  dimensions?: BusinessDimension[];
+  dimensions: BusinessDimension[];
   time?: { preset?: BusinessTimePreset };
   filters?: Array<{ field: BusinessFilterField; operator: 'eq' | 'in'; values: string[] }>;
   sort?: { field: BusinessMeasure; direction: 'asc' | 'desc' };

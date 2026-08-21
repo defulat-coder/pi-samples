@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "turbo run dev --parallel",
+    "dev:direct": "PORTLESS=0 turbo run dev --parallel",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "portless": "^0.15.5",
     "prettier": "^3.6.2",
     "turbo": "^2.5.6",
     "typescript": "^5.9.2"

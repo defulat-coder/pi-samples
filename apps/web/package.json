@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "portless": { "name": "pi-workbench", "script": "dev:app", "appPort": 5173 },
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "portless",
+    "dev:app": "vite --host 0.0.0.0",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",

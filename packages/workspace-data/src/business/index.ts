@@ -45,7 +45,7 @@ function uniqueCatalogKeys<T extends string>(values: readonly string[], catalog:
 
 function normalizeRequest(input: BusinessAnalysisRequest): BusinessAnalyticalResult['request'] {
   const measures = uniqueCatalogKeys<BusinessMeasure>(input.measures ?? [], measureCatalog, '指标', businessCatalog.limits.maxMeasures);
-  const dimensions = uniqueCatalogKeys<BusinessDimension>(input.dimensions ?? [], dimensionCatalog, '维度', businessCatalog.limits.maxDimensions);
+  const dimensions = uniqueCatalogKeys<BusinessDimension>(input.dimensions, dimensionCatalog, '维度', businessCatalog.limits.maxDimensions);
   const preset = input.time?.preset ?? 'last_30_days';
   if (!timePresets.has(preset)) throw new Error(`不支持的时间范围：${preset}`);
   const presentationIntent = input.presentationIntent ?? 'auto';
@@ -53,6 +53,7 @@ function normalizeRequest(input: BusinessAnalysisRequest): BusinessAnalyticalRes
   if ((input.filters?.length ?? 0) > businessCatalog.limits.maxFilters) throw new Error(`筛选条件最多允许 ${businessCatalog.limits.maxFilters} 个`);
   const filters = (input.filters ?? []).map((filter) => {
     if (!(filter.field in filterValues)) throw new Error(`不支持的筛选字段：${filter.field}`);
+    if (filter.operator !== 'eq' && filter.operator !== 'in') throw new Error(`不支持的筛选操作符：${String(filter.operator)}`);
     const values = [...new Set(filter.values.map((value) => value.trim()).filter(Boolean))];
     if (!values.length) throw new Error(`${filter.field} 至少需要一个筛选值`);
     if (filter.operator === 'eq' && values.length !== 1) throw new Error(`${filter.field} 的 eq 筛选只能包含一个值`);

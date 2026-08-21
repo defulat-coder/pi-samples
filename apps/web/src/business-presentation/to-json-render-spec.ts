@@ -41,7 +41,11 @@ function chartElement(analysis: BusinessAnalysis, block: Extract<BusinessPresent
   const seriesNames = block.seriesField ? [...new Set(analysis.result.rows.map((row) => String(row[block.seriesField!] ?? '全部')))] : [measure.label];
   const series = seriesNames.map((name) => ({
     name,
-    values: labels.map((label) => Number(analysis.result.rows.find((row) => String(row[block.xField] ?? '') === label && (!block.seriesField || String(row[block.seriesField] ?? '全部') === name))?.[block.yField] ?? 0)),
+    values: labels.map((label) => {
+      const row = analysis.result.rows.find((candidate) => String(candidate[block.xField] ?? '') === label && (!block.seriesField || String(candidate[block.seriesField] ?? '全部') === name));
+      const value = row?.[block.yField];
+      return typeof value === 'number' ? value : null;
+    }),
   }));
   return { type: 'LineChart', props: { title: block.title, unit: measure.unit ?? '', labels, series }, children: [] };
 }

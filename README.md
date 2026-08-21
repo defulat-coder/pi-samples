@@ -25,7 +25,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 [http://localhost:5173](http://localhost:5173)。API 默认监听 `http://localhost:4310`，Web 通过 `POST /api/v1/digital-humans/chat/stream` 使用 SSE 发起对话。
+打开 [https://pi-workbench.localhost](https://pi-workbench.localhost)。`pnpm dev` 通过 portless 启动，Web/API 分别暴露在 `https://pi-workbench.localhost` 和 `https://api.pi-workbench.localhost`（API 内部仍监听 `127.0.0.1:4310`）；首次运行会提示信任本地 CA。绕过代理可用 `pnpm dev:direct` 或 `PORTLESS=0 pnpm dev`。Web 通过 `POST /api/v1/digital-humans/chat/stream` 使用 SSE 发起对话。
 
 项目要求启用真实 Pi 模型，不提供本地替代回答：
 

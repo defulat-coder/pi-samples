@@ -267,13 +267,15 @@ export class PiFileSessionStore {
     return existing ?? this.createSession(digitalHumanId, id);
   }
 
-  async getSession(id: string): Promise<DigitalHumanSessionRecord | undefined> {
+  async getSession(id: string, expectedDigitalHumanId?: DigitalHumanId): Promise<DigitalHumanSessionRecord | undefined> {
     const info = await this.findInfo(id);
-    return info ? this.recordFromInfo(info, await this.positionOf(id)) : undefined;
+    const record = info ? await this.recordFromInfo(info, await this.positionOf(id)) : undefined;
+    if (record && expectedDigitalHumanId && record.digitalHumanId !== expectedDigitalHumanId) throw new Error('DIGITAL_HUMAN_SESSION_MISMATCH');
+    return record;
   }
 
   async appendTurnMetadata(sessionId: string, turnId: string, response: DigitalHumanChatResponse, userText: string): Promise<DigitalHumanSessionRecord> {
-    const manager = await this.openOrCreate(sessionId);
+    const manager = await this.openSession(sessionId, response.digitalHumanId);
     const entries = manager.getEntries();
     if (!latestTurnEntry(entries, turnId)) {
       const latestUserIndex = entries.map((entry, index) => ({ entry, index })).reverse().find(({ entry }) => isUserMessage(entry));
@@ -288,24 +290,27 @@ export class PiFileSessionStore {
     return (await this.getSession(sessionId))!;
   }
 
-  async setMessageFeedback(sessionId: string, messageId: string, feedback: AgentFeedback | null): Promise<DigitalHumanSessionRecord | undefined> {
-    const manager = await this.openOrCreate(sessionId);
+  async setMessageFeedback(sessionId: string, digitalHumanId: DigitalHumanId, messageId: string, feedback: AgentFeedback | null): Promise<DigitalHumanSessionRecord | undefined> {
+    const manager = await this.openSession(sessionId, digitalHumanId);
     if (!manager.getEntries().some((entry) => isAssistantMessage(entry) && entry.id === messageId)) return undefined;
     manager.appendCustomEntry(PI_WORKBENCH_FEEDBACK_ENTRY, { messageId, feedback } satisfies FeedbackEntryData);
     return this.getSession(sessionId);
   }
 
-  async setSessionTitle(sessionId: string, title: string): Promise<DigitalHumanSessionRecord | undefined> {
+  async setSessionTitle(sessionId: string, digitalHumanId: DigitalHumanId, title: string): Promise<DigitalHumanSessionRecord | undefined> {
     const info = await this.findInfo(sessionId);
     if (!info) return undefined;
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
+    assertSessionDigitalHumanBinding(manager.getEntries(), digitalHumanId);
     manager.appendCustomEntry(PI_WORKBENCH_SESSION_TITLE_ENTRY, { title: title.trim() } satisfies SessionTitleEntryData);
     return this.getSession(sessionId);
   }
 
-  async deleteSession(sessionId: string): Promise<boolean> {
+  async deleteSession(sessionId: string, digitalHumanId: DigitalHumanId): Promise<boolean> {
     const info = await this.findInfo(sessionId);
     if (!info) return false;
+    const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
+    assertSessionDigitalHumanBinding(manager.getEntries(), digitalHumanId);
     rmSync(info.path);
     return true;
   }
@@ -328,9 +333,12 @@ export class PiFileSessionStore {
     return Math.max(0, infos.findIndex((info) => info.id === id));
   }
 
-  private async openOrCreate(sessionId: string): Promise<SessionManager> {
+  private async openSession(sessionId: string, expectedDigitalHumanId?: DigitalHumanId): Promise<SessionManager> {
     const info = await this.findInfo(sessionId);
-    return info ? SessionManager.open(info.path, this.sessionDir, this.cwd) : SessionManager.create(this.cwd, this.sessionDir, { id: sessionId });
+    if (!info) throw new Error('DIGITAL_HUMAN_SESSION_NOT_FOUND');
+    const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
+    assertSessionDigitalHumanBinding(manager.getEntries(), expectedDigitalHumanId);
+    return manager;
   }
 
   private async recordFromInfo(info: SessionInfo, position: number): Promise<DigitalHumanSessionRecord | undefined> {

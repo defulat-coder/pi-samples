@@ -57,17 +57,17 @@ describe('Pi JSONL session store', () => {
 
     const assistant = persisted?.messages.find((message): message is Extract<typeof message, { kind: 'assistant' }> => message.kind === 'assistant');
     assert.ok(assistant);
-    const liked = await store.setMessageFeedback(created.id, assistant!.id, 'like');
+    const liked = await store.setMessageFeedback(created.id, 'project-steward', assistant!.id, 'like');
     assert.equal(liked?.messages.find((message): message is Extract<typeof message, { kind: 'assistant' }> => message.id === assistant!.id && message.kind === 'assistant')?.feedback, 'like');
     assert.equal(liked?.messages.every((message) => Boolean(message.createdAt)), true);
     assert.equal(liked?.messages.find((message) => message.kind === 'assistant')?.persisted, true);
-    const renamed = await store.setSessionTitle(created.id, '文件检索会话');
+    const renamed = await store.setSessionTitle(created.id, 'project-steward', '文件检索会话');
     assert.equal(renamed?.title, '文件检索会话');
     const reopened = new PiFileSessionStore({ cwd: root, sessionDir: join(root, '.pi', 'sessions') });
     assert.equal((await reopened.listSessions()).length, 1);
     assert.equal((await reopened.getSession(created.id))?.title, '文件检索会话');
     assert.equal((await reopened.getSession(created.id))?.messages.find((message): message is Extract<typeof message, { kind: 'assistant' }> => message.id === assistant!.id && message.kind === 'assistant')?.feedback, 'like');
-    assert.equal(await reopened.deleteSession(created.id), true);
+    assert.equal(await reopened.deleteSession(created.id, 'project-steward'), true);
     assert.equal((await reopened.listSessions()).length, 0);
   });
 

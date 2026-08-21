@@ -46,4 +46,12 @@ describe('business presentation json-render adapter', () => {
     assert.equal(spec.elements.table?.type, 'DataTable');
     assert.deepEqual(spec.elements.table?.props.rows, analysis.result.rows);
   });
+
+  it('preserves missing series points instead of inventing zero values', () => {
+    const sparse = structuredClone(analysis);
+    sparse.result.rows = sparse.result.rows.filter((row) => !(row.month === '2026-07' && row.channel === '直播'));
+    const spec = toJsonRenderSpec(sparse);
+    const series = spec.elements['primary-chart']?.props.series as Array<{ name: string; values: Array<number | null> }>;
+    assert.deepEqual(series[0], { name: '直播', values: [120, null] });
+  });
 });

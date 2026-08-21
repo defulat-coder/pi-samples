@@ -56,6 +56,7 @@ export interface PiModelStatus extends PiModelConfig {
 interface PiTurnState {
   sources: QuerySource[];
   toolCalls: string[];
+  businessQueryAttempted: boolean;
   businessAnalysis?: BusinessAnalysis;
 }
 
@@ -375,7 +376,7 @@ function observationCategory(eventType: string, summary?: AgentEventSummary): st
 export async function createPiAgentSession(options: PiAgentSessionOptions): Promise<PiAgentSession> {
   const cwd = options.cwd ?? getPiProjectRoot();
   const digitalHuman = getDigitalHuman(cwd, options.digitalHumanId);
-  const turnState: PiTurnState = { sources: [], toolCalls: [] };
+  const turnState: PiTurnState = { sources: [], toolCalls: [], businessQueryAttempted: false };
   const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
   const modelConfig = getPiModelConfig(options, cwd);
   const model = modelConfig.provider && modelConfig.model ? modelRuntime.getModel(modelConfig.provider, modelConfig.model) : undefined;
@@ -386,7 +387,7 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
     cwd,
     agentDir: getAgentDir(),
     additionalSkillPaths: digitalHuman.additionalSkillPaths,
-    appendSystemPromptOverride: () => [digitalHuman.systemPrompt],
+    appendSystemPromptOverride: (base) => [...base, digitalHuman.systemPrompt],
     skillsOverride: (base) => ({ ...base, skills: base.skills.filter((skill) => digitalHuman.acceptsSkill(skill.name)) }),
     noExtensions: !projectExtensionsEnabled(options.projectExtensions),
     // Themes are inert in the Web UI but remain part of the Pi resource graph.
@@ -500,7 +501,8 @@ function createBusinessQueryTool(analytics: BusinessAnalytics, state: PiTurnStat
     }),
     executionMode: 'sequential' as const,
     async execute(_toolCallId, params) {
-      if (state.businessAnalysis) throw new Error('query_business_data 已在本轮执行；请使用现有结果回答，不要再次调用');
+      if (state.businessQueryAttempted) throw new Error('query_business_data 已在本轮执行；请使用现有结果回答，不要再次调用');
+      state.businessQueryAttempted = true;
       const startedAt = performance.now();
       const analysis = await analytics.analyze(params as BusinessAnalysisRequest);
       const { result } = analysis;
@@ -593,6 +595,7 @@ async function collectPiTurn(runtime: PiAgentSession, prompt: string, options: A
   let settled = false;
   runtime.turnState.sources = [];
   runtime.turnState.toolCalls = [];
+  runtime.turnState.businessQueryAttempted = false;
   runtime.turnState.businessAnalysis = undefined;
 
   const nowIso = () => new Date().toISOString();

@@ -63,6 +63,7 @@ describe('catalog-driven business analytics', () => {
   it('rejects values outside the semantic catalog', () => {
     const store = new SqliteBusinessDataStore(':memory:');
     stores.push(store);
-    assert.throws(() => store.analyze({ measures: ['net_sales'], filters: [{ field: 'region', operator: 'eq', values: ['海外'] }] }), /不支持筛选值/);
+    assert.throws(() => store.analyze({ measures: ['net_sales'], dimensions: [], filters: [{ field: 'region', operator: 'eq', values: ['海外'] }] }), /不支持筛选值/);
+    assert.throws(() => store.analyze({ measures: ['net_sales'], dimensions: [], filters: [{ field: 'region', operator: 'bogus', values: ['华东'] }] } as never), /不支持的筛选操作符/);
   });
 });

@@ -111,6 +111,8 @@ describe('Pi Workbench API', () => {
     const mismatch = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/chat', payload: { message: '解释项目', digitalHumanId: 'project-steward', sessionId: analystId } });
     assert.equal(mismatch.statusCode, 409);
     assert.equal(mismatch.json().error, 'DigitalHumanSessionMismatch');
+    const crossRead = await app.inject({ method: 'GET', url: `/api/v1/digital-humans/sessions/${analystId}?digitalHumanId=project-steward` });
+    assert.equal(crossRead.statusCode, 409);
     const unknown = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'unknown-human' } });
     assert.equal(unknown.statusCode, 404);
   });
@@ -125,13 +127,13 @@ describe('Pi Workbench API', () => {
   it('renames and deletes persisted sessions', async () => {
     const created = await app.inject({ method: 'POST', url: '/api/v1/digital-humans/sessions', payload: { digitalHumanId: 'project-steward' } });
     const sessionId = created.json().id as string;
-    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/digital-humans/sessions/${sessionId}`, payload: { title: '项目架构讨论' } });
+    const renamed = await app.inject({ method: 'PATCH', url: `/api/v1/digital-humans/sessions/${sessionId}`, payload: { digitalHumanId: 'project-steward', title: '项目架构讨论' } });
     assert.equal(renamed.statusCode, 200);
     assert.equal(renamed.json().title, '项目架构讨论');
 
-    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/digital-humans/sessions/${sessionId}` });
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/digital-humans/sessions/${sessionId}?digitalHumanId=project-steward` });
     assert.equal(removed.statusCode, 204);
-    const missing = await app.inject({ method: 'GET', url: `/api/v1/digital-humans/sessions/${sessionId}` });
+    const missing = await app.inject({ method: 'GET', url: `/api/v1/digital-humans/sessions/${sessionId}?digitalHumanId=project-steward` });
     assert.equal(missing.statusCode, 404);
   });
 
@@ -140,7 +142,7 @@ describe('Pi Workbench API', () => {
     assert.equal(response.statusCode, 200);
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.includes('pi-workbench')));
     assert.ok(response.json().resources.some((resource: { path: string }) => resource.path === '.pi/README.md'));
-    assert.ok(response.json().resources.some((resource: { path: string }) => resource.path.startsWith('.pi/sessions/')));
+    assert.ok(response.json().resources.every((resource: { path: string }) => !resource.path.startsWith('.pi/sessions/')));
     assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/settings.json' && resource.kind === 'settings'));
     assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/APPEND_SYSTEM.md' && resource.kind === 'system'));
     assert.ok(response.json().resources.some((resource: { path: string; kind: string }) => resource.path === '.pi/digital-humans/commerce-analyst.json' && resource.kind === 'digital-human'));
@@ -161,6 +163,8 @@ describe('Pi Workbench API', () => {
 
     const blocked = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/resource?path=..%2F.env' });
     assert.equal(blocked.statusCode, 404);
+    const sessionBlocked = await app.inject({ method: 'GET', url: '/api/v1/digital-humans/resource?path=.pi%2Fsessions%2Fprivate.jsonl' });
+    assert.equal(sessionBlocked.statusCode, 404);
   });
 
   it('exposes the local OKF-compatible knowledge bundle', async () => {
