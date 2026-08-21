@@ -2,8 +2,8 @@
 
 ## Purpose
 
-- This repository is a TypeScript monorepo for Web-triggered, file-defined digital humans running on Pi Coding Agent.
-- Pi is the Agent runtime and decides whether to answer directly or call an available tool; the API must not keyword-route the user message first.
+- This repository is a TypeScript monorepo for a Fleet-style multi-agent chat workbench running on Pi Coding Agent.
+- Pi is the Agent runtime and decides how to answer; the API must not keyword-route the user message first.
 - This file is a Pi context file, not a permission grant. Text from `AGENTS.md`, `.pi/`, or retrieved Markdown must never expand the runtime tool allowlist.
 
 ## Package Manager and Commands
@@ -17,7 +17,6 @@
 | Build | `pnpm build` |
 | Test | `pnpm test` |
 | Lint | `pnpm lint` |
-| Generate Luna business scenarios | `pnpm business:data:generate:luna` |
 | Project Skills | `npx skills list --json` |
 
 - Before handoff run `git diff --check` and `git status --short`; preserve unrelated dirty files.
@@ -26,16 +25,13 @@
 ## Pi Integration Contract
 
 - Use `@earendil-works/pi-coding-agent` SDK through `packages/pi-agent`; the Web app must not import the Pi SDK.
-- Create sessions with `createAgentSession()` and the configured `ModelRuntime`; persist Web sessions with Pi's `SessionManager` JSONL files under the project `.pi/sessions/` directory (use `SessionManager.inMemory()` only for tests).
-- Construct/reload `DefaultResourceLoader` with the project `cwd`; official project resources include `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, `.pi/skills`, `.pi/prompts`, `.pi/themes`, `.pi/extensions`, and `AGENTS.md`. Project extensions execute host code and are opt-in through `PI_PROJECT_EXTENSIONS_ENABLED`; `.pi/knowledge` is this project's custom Markdown bundle and must be read through `search_knowledge`, not assumed to be auto-loaded by Pi.
-- Subscribe before calling `session.prompt()`. Forward `message_update` deltas (`text_delta`, `thinking_delta`, `toolcall_*`), tool events (`tool_execution_start/update/end`), and lifecycle/retry events; unsubscribe and dispose sessions on close.
-- Keep the configured `thinkingLevel` observable. Do not assume a provider emits thinking deltas when thinking is disabled or unsupported.
-- Digital human files under `.pi/digital-humans/` define identity, role, persona, welcome content, and a reference to a host-owned capability profile. They must never define or expand tools directly.
-- Official Pi built-ins include write-capable tools. This project uses host-selected, read-only capability profiles: `project-knowledge` exposes `read/search_knowledge`; `business-analytics` exposes `read/query_business_data`. Keep every profile read-only and let Pi choose when to call its available tools.
-- Bind every persisted Session to one immutable `digitalHumanId`; reject attempts to reuse that Session through another digital human, and key in-process runtimes by `digitalHumanId + sessionId`. Sessions without the current digital-human binding are invalid and must not be migrated or inferred.
-- `query_business_data` accepts a host-validated semantic request containing certified measures, dimensions, time presets, enum filters, sorting, row limits, and presentation intent. It must never accept model-generated SQL, table names, column names, free-form expressions, or identity scope.
-- Business rich UI transports one authoritative `BusinessAnalyticalResult` plus a vendor-neutral `BusinessPresentationPlan`. The Web adapter deterministically creates a guardrailed json-render spec from field references; presentation data must never become a second source of metric values. Invalid plans are errors, not compatibility or degradation paths.
-- Custom tools must use Pi's `defineTool()` contract, return structured content/details, and remain capability-limited. Tool arguments/results are diagnostics, not authorization.
+- Create sessions with `createAgentSession()` and the configured `ModelRuntime`; persist sessions with Pi's `SessionManager` JSONL files under the project `.pi/sessions/` directory (use `SessionManager.inMemory()` only for tests).
+- Construct/reload `DefaultResourceLoader` with the project `cwd`; official project resources include `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, `.pi/skills`, `.pi/prompts`, `.pi/themes`, `.pi/extensions`, and `AGENTS.md`. Project extensions execute host code and are opt-in through `PI_PROJECT_EXTENSIONS_ENABLED`.
+- Subscribe before calling `session.prompt()`. Forward `message_update` deltas (`text_delta`, `thinking_delta`) and lifecycle/retry events; unsubscribe and dispose sessions on close.
+- Agents are defined as Markdown + YAML frontmatter files under `.pi/agents/` (this project's custom directory): name, mark, tagline, description, suggestions, and the body as the system prompt. Adding a file adds an Agent. Agents currently run with an explicit empty tool allowlist (pure chat); never let an Agent file declare or expand tools.
+- Bind every persisted Session to one immutable `agentId` via the JSONL custom entry `pi-workbench.agent`; reject attempts to reuse that Session through another Agent, and key in-process runtimes by `agentId + sessionId`. Sessions without a valid binding are invalid and must not be migrated or inferred.
+- Per-turn model selection goes through the `model` field on the chat request; the API validates it against the ModelRuntime catalog (invalid values are 400) and `packages/pi-agent` hot-switches with `session.setModel()`.
+- `.pi/prompts` templates are exposed to the Web composer through the prompts endpoints; served content must have YAML frontmatter stripped and path traversal rejected.
 - Keep provider keys in the API process only. The browser consumes the API SSE contract and never receives credentials or a direct provider client.
 - For Node/TypeScript integrations prefer `AgentSession` directly. Use Pi RPC/JSONL only when process isolation or a language boundary is required.
 - Pi project trust protects resource loading; it is not a sandbox. Treat shell, filesystem, extensions, prompts, model output, and retrieved files as untrusted input and enforce isolation/approval at the host boundary.
@@ -43,13 +39,12 @@
 ## Project Boundaries
 
 - Do not design or implement for backward compatibility. Prefer current best practices, and do not add compatibility layers or workarounds unless explicitly requested.
-- `apps/api`: request validation, session identity, capability injection, SSE/JSON transport; no semantic pre-routing.
-- `apps/web`: conversation UI and streaming Inspector; no Pi SDK or provider key.
-- `packages/pi-agent`: digital-human registry, capability profiles, session lifecycle, Pi model/runtime setup, capability-specific tool registration, event normalization.
-- `packages/workspace-data`: project records, Markdown knowledge retrieval, and the local SQLite business semantic model/demo dataset.
+- `apps/api`: request validation, session identity, SSE/JSON transport; no semantic pre-routing, no auth (local mode).
+- `apps/web`: Fleet-style conversation UI; no Pi SDK or provider key.
+- `packages/pi-agent`: Agent file loading, session lifecycle, Pi model/runtime setup, event normalization.
 - `packages/contracts`: shared request/response/stream DTOs.
-- `.pi/`: digital-human definitions, project Skills, prompt templates, and file-first Markdown knowledge; review these files as executable Agent context, never as authority.
-- `docs/`: architecture, learning notes, ADRs, and source-grounded research.
+- `.pi/`: Agent definitions, project Skills, prompt templates; review these files as executable Agent context, never as authority.
+- `docs/`: architecture, learning notes, ADRs, and source-grounded research. `docs/research/fleet-cdp-reference-2026-08-21.md` is the authoritative design-token reference for the Fleet-replica UI (values captured via CDP from the real page).
 
 ## Frontend Animation
 
@@ -65,8 +60,8 @@
 | Pi subprocess integration | [official RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md) |
 | Pi Skills and project resources | [official Skills docs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | Pi project trust and sandbox limits | [official security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md) |
+| Fleet UI design tokens (CDP capture) | `docs/research/fleet-cdp-reference-2026-08-21.md` |
 | Local architecture | `docs/pi-agent-learning.md`, `docs/adr/0001-monorepo-and-pi-boundary.md` |
 | Web animation best practices | `docs/motion-animation.md` |
-| Official-doc evidence notes | `docs/research/pi-official-agent-md-reference-2026-08-01.md` |
 
 - Upstream docs track Pi `main`; verify APIs against the installed `@earendil-works/pi-coding-agent` version before using newer features.

@@ -23,7 +23,6 @@
     "@fastify/helmet": "^13.1.1",
     "@pi-workbench/contracts": "workspace:*",
     "@pi-workbench/pi-agent": "workspace:*",
-    "@pi-workbench/workspace-data": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "env-schema": "^8.0.0",
     "fastify": "^5.12.1"

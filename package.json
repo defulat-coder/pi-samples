@@ -2,7 +2,7 @@
   "name": "pi-workbench",
   "private": true,
   "version": "0.1.0",
-  "description": "File-defined digital humans powered by Pi Coding Agent",
+  "description": "Fleet-style multi-agent chat workbench powered by Pi Coding Agent",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "turbo run dev --parallel",
@@ -11,7 +11,6 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "business:data:generate:luna": "node scripts/business/generate-luna-scenarios.mjs",
     "format": "prettier --write .",
     "clean": "turbo run clean"
   },

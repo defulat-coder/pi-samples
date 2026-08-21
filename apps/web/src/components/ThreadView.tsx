@@ -1,0 +1,95 @@
+import { useEffect, useRef, useState } from 'react';
+import { motion } from 'motion/react';
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight';
+import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { ChatMessage } from '../lib/types.js';
+
+const motionEase = [0.23, 1, 0.32, 1] as const;
+
+function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  return (
+    <div className="thinking-block">
+      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>
+          <span className={streaming ? 'thinking-dot active' : 'thinking-dot'} aria-hidden="true" />
+          {streaming ? '正在思考…' : `思考过程 · ${text.length} 字符`}
+          <CaretRight size={12} className="caret" aria-hidden="true" />
+        </summary>
+        <pre>{text}</pre>
+      </details>
+    </div>
+  );
+}
+
+function MessageItem({ message }: { message: ChatMessage }) {
+  if (message.role === 'user') {
+    return (
+      <motion.div
+        className="message-row user"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: motionEase }}
+      >
+        <div className="user-bubble">
+          <p>{message.text}</p>
+        </div>
+      </motion.div>
+    );
+  }
+  return (
+    <motion.div
+      className="message-row assistant"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: motionEase }}
+    >
+      <div className={message.streaming ? 'assistant-body streaming' : 'assistant-body'}>
+        {message.thinking && <ThinkingBlock text={message.thinking} streaming={message.streaming} />}
+        <div className="markdown">
+          <Markdown remarkPlugins={[remarkGfm]}>{message.text || (message.streaming ? '　' : '')}</Markdown>
+        </div>
+        {message.error && (
+          <p className="message-error" role="alert">
+            <WarningCircle size={14} weight="fill" />
+            {message.error}
+          </p>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+export type ThreadViewProps = {
+  messages: ChatMessage[];
+  /** 已持久化但本次页面加载前创建的历史会话：服务端不回放消息，仅提示。 */
+  historyUnavailable: boolean;
+};
+
+export function ThreadView({ messages, historyUnavailable }: ThreadViewProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages]);
+
+  return (
+    <div className="thread-scroll" ref={scrollRef}>
+      <div className="thread-column">
+        {historyUnavailable && (
+          <p className="thread-history-notice">历史消息不回放，继续提问即可接着该会话的上下文聊</p>
+        )}
+        {messages.map((message) => (
+          <MessageItem key={message.id} message={message} />
+        ))}
+        {!messages.length && !historyUnavailable && (
+          <p className="thread-empty-note">输入第一条消息，开始这段对话。</p>
+        )}
+      </div>
+    </div>
+  );
+}
