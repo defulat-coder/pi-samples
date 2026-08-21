@@ -1,13 +1,24 @@
 import { useState } from 'react';
 import type { AgentSummary, SessionSummary } from '@pi-workbench/contracts';
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle';
+import { ChartLine } from '@phosphor-icons/react/dist/icons/ChartLine';
+import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
 import { Info } from '@phosphor-icons/react/dist/icons/Info';
+import { Layout } from '@phosphor-icons/react/dist/icons/Layout';
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
+import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece';
 import { SidebarSimple } from '@phosphor-icons/react/dist/icons/SidebarSimple';
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
-import { groupSessions, matchesQuery } from '../lib/sessions.js';
+import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
+import { Users } from '@phosphor-icons/react/dist/icons/Users';
+import { Warning } from '@phosphor-icons/react/dist/icons/Warning';
+import { filterAttention, groupSessions, matchesQuery } from '../lib/sessions.js';
+import type { ExploreView } from '../lib/explore.js';
+import type { SystemView } from '../lib/types.js';
+
+export type SessionFilter = 'all' | 'attention';
 
 export type SidebarProps = {
   agents: AgentSummary[];
@@ -15,6 +26,13 @@ export type SidebarProps = {
   sessions: SessionSummary[];
   currentSessionId: string | null;
   collapsed: boolean;
+  sessionFilter: SessionFilter;
+  inboxOpen: boolean;
+  inboxCount: number;
+  exploreView: ExploreView | null;
+  systemView: SystemView | null;
+  /** 账户区第二行的真实信息，如 "pi-samples · .pi/sessions"。 */
+  workspaceInfo?: string;
   onToggleCollapsed: () => void;
   onSelectAgent: (agentId: string) => void;
   onSelectSession: (sessionId: string) => void;
@@ -22,6 +40,11 @@ export type SidebarProps = {
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onOpenConfig: (agentId: string) => void;
+  onSessionFilterChange: (filter: SessionFilter) => void;
+  onOpenInbox: () => void;
+  onCloseInbox: () => void;
+  onOpenExplore: (view: ExploreView) => void;
+  onOpenSystem: (view: SystemView) => void;
 };
 
 function SessionRow({ session, active, onSelect, onRename, onDelete }: {
@@ -93,12 +116,15 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { agents, currentAgentId, sessions, currentSessionId, collapsed } = props;
+  const { agents, currentAgentId, sessions, currentSessionId, collapsed, sessionFilter, inboxOpen, inboxCount, exploreView, systemView, workspaceInfo } = props;
   const [query, setQuery] = useState('');
 
   const visibleAgents = agents.filter((agent) => matchesQuery(query, agent.name, agent.tagline));
-  const visibleSessions = sessions.filter((session) => matchesQuery(query, session.title));
+  const filteredSessions = sessionFilter === 'attention' ? filterAttention(sessions) : sessions;
+  const visibleSessions = filteredSessions.filter((session) => matchesQuery(query, session.title));
   const groups = groupSessions(visibleSessions, new Date());
+  const attentionCount = filterAttention(sessions).length;
+  const chatActive = !inboxOpen && !exploreView && !systemView;
 
   return (
     <nav className={collapsed ? 'sidebar collapsed' : 'sidebar'} aria-label="侧边栏">
@@ -129,9 +155,24 @@ export function Sidebar(props: SidebarProps) {
 
       <div className="sidebar-scroll">
         <div className="sidebar-fold">
-          <button type="button" className="nav-row active" aria-current="page">
+          <button
+            type="button"
+            className={chatActive ? 'nav-row active' : 'nav-row'}
+            aria-current={chatActive ? 'page' : undefined}
+            onClick={props.onCloseInbox}
+          >
             <ChatCircle size={12} weight="bold" />
             <span>会话</span>
+          </button>
+          <button
+            type="button"
+            className={inboxOpen ? 'nav-row active' : 'nav-row'}
+            aria-current={inboxOpen ? 'page' : undefined}
+            onClick={props.onOpenInbox}
+          >
+            <Tray size={12} weight="bold" />
+            <span>收件箱</span>
+            {inboxCount > 0 && <span className="nav-badge" aria-label={`${inboxCount} 个会话需要处理`}>{inboxCount}</span>}
           </button>
 
           <div className="group-header">
@@ -166,6 +207,31 @@ export function Sidebar(props: SidebarProps) {
           ))}
           {!visibleAgents.length && <p className="sidebar-empty-hint">没有匹配的 Agent</p>}
 
+          {currentAgentId && chatActive && (
+            <div className="session-tabs" role="tablist" aria-label="会话过滤">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sessionFilter === 'all'}
+                className={sessionFilter === 'all' ? 'session-tab active' : 'session-tab'}
+                onClick={() => props.onSessionFilterChange('all')}
+              >
+                全部
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sessionFilter === 'attention'}
+                className={sessionFilter === 'attention' ? 'session-tab active' : 'session-tab'}
+                onClick={() => props.onSessionFilterChange('attention')}
+              >
+                <Warning size={12} aria-hidden="true" />
+                需处理
+                <span className="session-tab-count">({attentionCount})</span>
+              </button>
+            </div>
+          )}
+
           {groups.map((group) => (
             <div key={group.key}>
               <p className="session-group-label">{group.label}</p>
@@ -181,16 +247,71 @@ export function Sidebar(props: SidebarProps) {
               ))}
             </div>
           ))}
-          {currentAgentId && !visibleSessions.length && <p className="sidebar-empty-hint">暂无会话，点击右上角 + 开始</p>}
+          {currentAgentId && !visibleSessions.length && (
+            <p className="sidebar-empty-hint">
+              {sessionFilter === 'attention' ? '没有需要处理的会话' : '暂无会话，点击右上角 + 开始'}
+            </p>
+          )}
+
+          <div className="group-header">
+            <span className="group-header-label">探索</span>
+          </div>
+          <button
+            type="button"
+            className={exploreView === 'agents' ? 'nav-row active' : 'nav-row'}
+            aria-current={exploreView === 'agents' ? 'page' : undefined}
+            onClick={() => props.onOpenExplore('agents')}
+          >
+            <Users size={12} weight="bold" />
+            <span>Agents</span>
+          </button>
+          <button
+            type="button"
+            className={exploreView === 'templates' ? 'nav-row active' : 'nav-row'}
+            aria-current={exploreView === 'templates' ? 'page' : undefined}
+            onClick={() => props.onOpenExplore('templates')}
+          >
+            <Layout size={12} weight="bold" />
+            <span>模板</span>
+          </button>
+          <button
+            type="button"
+            className={exploreView === 'skills' ? 'nav-row active' : 'nav-row'}
+            aria-current={exploreView === 'skills' ? 'page' : undefined}
+            onClick={() => props.onOpenExplore('skills')}
+          >
+            <PuzzlePiece size={12} weight="bold" />
+            <span>技能</span>
+          </button>
         </div>
       </div>
 
       <div className="sidebar-footer">
-        <div className="account-row" title="本地模式 · 无需登录">
+        <button
+          type="button"
+          className={systemView === 'usage' ? 'nav-row active' : 'nav-row'}
+          aria-current={systemView === 'usage' ? 'page' : undefined}
+          onClick={() => props.onOpenSystem('usage')}
+          title="用量"
+        >
+          <ChartLine size={12} weight="bold" />
+          <span className="sidebar-fold">用量</span>
+        </button>
+        <button
+          type="button"
+          className={systemView === 'settings' ? 'nav-row active' : 'nav-row'}
+          aria-current={systemView === 'settings' ? 'page' : undefined}
+          onClick={() => props.onOpenSystem('settings')}
+          title="设置"
+        >
+          <GearSix size={12} weight="bold" />
+          <span className="sidebar-fold">设置</span>
+        </button>
+        <div className="account-row" title={`本地模式 · 无需登录${workspaceInfo ? ` · ${workspaceInfo}` : ''}`}>
           <span className="account-mark" aria-hidden="true">π</span>
           <span className="account-copy">
             <strong>本地模式</strong>
-            <small>数据保存在本项目内</small>
+            <small>{workspaceInfo ?? '数据保存在本项目内'}</small>
           </span>
         </div>
       </div>

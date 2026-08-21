@@ -42,3 +42,21 @@ export function matchesQuery(query: string, ...fields: Array<string | undefined>
   if (!q) return true;
   return fields.some((field) => field?.toLowerCase().includes(q));
 }
+
+/** Sessions whose last recorded run errored or was aborted. */
+export function filterAttention(sessions: SessionSummary[]): SessionSummary[] {
+  return sessions.filter((session) => session.needsAttention);
+}
+
+/** Compact relative time for inbox rows: 刚刚 / n 分钟前 / n 小时前 / 昨天 / M月d日. */
+export function formatRelativeTime(iso: string, now: Date): string {
+  const time = new Date(iso).getTime();
+  if (Number.isNaN(time)) return '';
+  const diffMs = now.getTime() - time;
+  if (diffMs < 60_000) return '刚刚';
+  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} 分钟前`;
+  if (diffMs < DAY_MS && startOfDay(now) === startOfDay(new Date(time))) return `${Math.floor(diffMs / 3_600_000)} 小时前`;
+  if (time >= startOfDay(now) - DAY_MS) return '昨天';
+  const date = new Date(time);
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}

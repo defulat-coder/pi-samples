@@ -1,0 +1,92 @@
+import { motion } from 'motion/react';
+import type { UsageResponse } from '@pi-workbench/contracts';
+import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
+import { ChartLine } from '@phosphor-icons/react/dist/icons/ChartLine';
+import { formatRelativeTime } from '../lib/sessions.js';
+
+const motionEase = [0.23, 1, 0.32, 1] as const;
+
+export type UsageViewProps = {
+  usage: UsageResponse | null;
+  loading: boolean;
+  onRefresh: () => void;
+};
+
+/** 用量页（§11.7）：4 列统计卡 + 按 Agent 分列的用量表；本地模式无配额概念。 */
+export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
+  const now = new Date();
+  const stats = usage
+    ? [
+        { label: '累计会话', value: usage.totalSessions },
+        { label: '累计提问', value: usage.totalQuestions },
+        { label: 'Agent 数', value: usage.agentCount },
+        { label: '今日提问', value: usage.questionsToday },
+      ]
+    : [];
+
+  return (
+    <div className="system-page">
+      <div className="system-page-header">
+        <div className="system-page-title">
+          <ChartLine size={20} aria-hidden="true" />
+          <div>
+            <h3>用量</h3>
+            <p>本地会话的累计统计，数据来自 .pi/sessions 的持久化记录。</p>
+          </div>
+        </div>
+        <button type="button" className="inbox-refresh" onClick={onRefresh} aria-label="刷新用量" disabled={loading}>
+          <ArrowClockwise size={16} className={loading ? 'spinning' : undefined} />
+        </button>
+      </div>
+
+      {!usage ? (
+        <p className="system-page-loading">{loading ? '正在统计…' : '用量数据暂时无法读取'}</p>
+      ) : (
+        <>
+          <motion.div
+            className="usage-stats"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: motionEase }}
+          >
+            {stats.map((stat) => (
+              <div className="usage-stat" key={stat.label}>
+                <span className="usage-stat-label">{stat.label}</span>
+                <span className="usage-stat-value">{stat.value}</span>
+              </div>
+            ))}
+          </motion.div>
+
+          <h4 className="usage-table-title">按 Agent 分列</h4>
+          <table className="usage-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>会话数</th>
+                <th>提问数</th>
+                <th>最近活跃</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usage.perAgent.map((row) => (
+                <tr key={row.agentId}>
+                  <td>
+                    <span className="usage-table-agent">
+                      <span className="agent-chip" aria-hidden="true">{row.mark.slice(0, 2)}</span>
+                      {row.name}
+                    </span>
+                  </td>
+                  <td className="usage-table-number">{row.sessionCount}</td>
+                  <td className="usage-table-number">{row.questionCount}</td>
+                  <td className="usage-table-time">
+                    {row.lastActiveAt ? formatRelativeTime(row.lastActiveAt, now) : '从未使用'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}

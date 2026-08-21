@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SessionSummary } from '@pi-workbench/contracts';
-import { groupSessions, matchesQuery, sortSessions } from './lib/sessions.js';
+import { filterAttention, formatRelativeTime, groupSessions, matchesQuery, sortSessions } from './lib/sessions.js';
 
 function session(id: string, updatedAt: string, title = id): SessionSummary {
-  return { id, agentId: 'pi-assistant', title, createdAt: updatedAt, updatedAt, questionCount: 1 };
+  return { id, agentId: 'pi-assistant', title, createdAt: updatedAt, updatedAt, questionCount: 1, needsAttention: false };
 }
 
 const NOW = new Date('2026-08-21T15:00:00+08:00');
@@ -52,5 +52,23 @@ describe('matchesQuery', () => {
     assert.equal(matchesQuery('PI', 'Pi 助手'), true);
     assert.equal(matchesQuery('助手', 'Pi 助手', undefined), true);
     assert.equal(matchesQuery('不存在', 'Pi 助手'), false);
+  });
+});
+
+describe('filterAttention', () => {
+  it('只保留 needsAttention 的会话', () => {
+    const items = [session('ok', '2026-08-21T10:00:00+08:00'), { ...session('bad', '2026-08-21T11:00:00+08:00'), needsAttention: true, attentionReason: 'error' as const }];
+    assert.deepEqual(filterAttention(items).map((item) => item.id), ['bad']);
+  });
+});
+
+describe('formatRelativeTime', () => {
+  it('按距今时长给出 刚刚/分钟/小时/昨天/日期', () => {
+    assert.equal(formatRelativeTime('2026-08-21T14:59:30+08:00', NOW), '刚刚');
+    assert.equal(formatRelativeTime('2026-08-21T14:40:00+08:00', NOW), '20 分钟前');
+    assert.equal(formatRelativeTime('2026-08-21T09:00:00+08:00', NOW), '6 小时前');
+    assert.equal(formatRelativeTime('2026-08-20T23:00:00+08:00', NOW), '昨天');
+    assert.equal(formatRelativeTime('2026-08-18T10:00:00+08:00', NOW), '8月18日');
+    assert.equal(formatRelativeTime('not-a-date', NOW), '');
   });
 });

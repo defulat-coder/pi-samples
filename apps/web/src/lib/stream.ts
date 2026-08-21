@@ -40,6 +40,8 @@ export function decodeStreamEvent(block: SseBlock): ChatStreamEvent {
       return { type: 'thinking_delta', delta: String(payload.delta ?? '') };
     case 'done':
       return { type: 'done', answer: String(payload.answer ?? ''), ...(payload.usage ? { usage: payload.usage as ChatUsage } : {}) };
+    case 'retry':
+      return { type: 'retry', attempt: Number(payload.attempt), maxAttempts: Number(payload.maxAttempts), errorMessage: String(payload.errorMessage ?? '') };
     case 'error':
       return { type: 'error', error: String(payload.error ?? '流式响应失败') };
     default:
@@ -54,6 +56,8 @@ export type LiveTurn = {
   sessionId?: string;
   model?: ChatModelLabel;
   usage?: { input: number; output: number; total: number };
+  /** Set while Pi is auto-retrying the turn after a failure. */
+  retry?: { attempt: number; maxAttempts: number; errorMessage: string };
 };
 
 export function createLiveTurn(): LiveTurn {
@@ -70,6 +74,8 @@ export function reduceStreamEvent(turn: LiveTurn, event: ChatStreamEvent): LiveT
       return { ...turn, thinking: turn.thinking + event.delta };
     case 'done':
       return { ...turn, answer: event.answer || turn.answer, ...(event.usage ? { usage: event.usage } : {}) };
+    case 'retry':
+      return { ...turn, retry: { attempt: event.attempt, maxAttempts: event.maxAttempts, errorMessage: event.errorMessage } };
     case 'error':
       return turn;
   }

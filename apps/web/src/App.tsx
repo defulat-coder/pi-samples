@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentSummary, ChatStreamEvent, SessionSummary, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentSummary, ChatStreamEvent, SessionSummary, SettingsResponse, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { AnimatePresence, MotionConfig } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
-import { deleteSession, fetchSessions, fetchWorkspace, renameSession, streamChat } from './lib/api.js';
+import { deleteSession, fetchInbox, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, streamChat } from './lib/api.js';
 import { createLiveTurn, reduceStreamEvent, type LiveTurn } from './lib/stream.js';
 import { sortSessions } from './lib/sessions.js';
-import { newMessageId, type ChatMessage } from './lib/types.js';
-import { Sidebar } from './components/Sidebar.js';
+import type { ExploreView } from './lib/explore.js';
+import { newMessageId, type ChatMessage, type SystemView } from './lib/types.js';
+import { readThinkingPreference } from './lib/configPanel.js';
+import { readUiPreferences, writeUiPreference, type UiPreferences } from './lib/preferences.js';
+import { Sidebar, type SessionFilter } from './components/Sidebar.js';
 import { UsageBar } from './components/UsageBar.js';
 import { Welcome } from './components/Welcome.js';
 import { Composer } from './components/Composer.js';
 import { ThreadView } from './components/ThreadView.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
+import { InboxView } from './components/InboxView.js';
+import { ExploreAgents } from './components/ExploreAgents.js';
+import { TemplatesView } from './components/TemplatesView.js';
+import { SkillsView } from './components/SkillsView.js';
+import { UsageView } from './components/UsageView.js';
+import { SettingsView } from './components/SettingsView.js';
 
 type ThreadState = {
   messages: ChatMessage[];
@@ -29,8 +38,19 @@ export default function App() {
   const [threads, setThreads] = useState<Record<string, ThreadState>>({});
   const [liveTurn, setLiveTurn] = useState<(LiveTurn & { messageId: string }) | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => readUiPreferences());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readUiPreferences().sidebarCollapsed);
   const [configAgentId, setConfigAgentId] = useState<string | null>(null);
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [exploreView, setExploreView] = useState<ExploreView | null>(null);
+  const [systemView, setSystemView] = useState<SystemView | null>(null);
+  const [inboxItems, setInboxItems] = useState<SessionSummary[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [usage, setUsage] = useState<UsageResponse | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [settings, setSettings] = useState<SettingsResponse | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const currentAgent: AgentSummary | undefined = workspace?.agents.find((agent) => agent.id === currentAgentId);
@@ -49,6 +69,43 @@ export default function App() {
     }
   }, []);
 
+  const loadInbox = useCallback(async () => {
+    setInboxLoading(true);
+    try {
+      setInboxItems(await fetchInbox());
+    } catch {
+      // 收件箱失败不阻塞主界面。
+    } finally {
+      setInboxLoading(false);
+    }
+  }, []);
+
+  const loadUsage = useCallback(async () => {
+    setUsageLoading(true);
+    try {
+      setUsage(await fetchUsage());
+    } catch {
+      // 用量页失败时保留旧数据。
+    } finally {
+      setUsageLoading(false);
+    }
+  }, []);
+
+  const loadSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      setSettings(await fetchSettings());
+    } catch {
+      // 设置页失败时保留旧数据。
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, []);
+
+  const handlePreferenceChange = (key: keyof UiPreferences, value: boolean) => {
+    setUiPreferences((current) => writeUiPreference(current, key, value));
+  };
+
   const bootstrap = useCallback(async () => {
     try {
       const snapshot = await fetchWorkspace();
@@ -58,32 +115,83 @@ export default function App() {
         setCurrentAgentId((prev) => prev ?? first.id);
         void loadSessions(first.id);
       }
+      void loadInbox();
+      void loadSettings();
     } catch (error) {
       setFatal(error instanceof Error ? error.message : '工作区信息暂时无法读取');
     }
-  }, [loadSessions]);
+  }, [loadSessions, loadInbox, loadSettings]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
   const selectAgent = (agentId: string) => {
-    if (agentId === currentAgentId) return;
+    if (agentId === currentAgentId && !exploreView && !systemView) return;
     abortRef.current?.abort();
     setLiveTurn(null);
     setCurrentAgentId(agentId);
     setCurrentSessionId(null);
     setConfigAgentId(null);
+    setInboxOpen(false);
+    setExploreView(null);
+    setSystemView(null);
     if (!sessionsByAgent[agentId]) void loadSessions(agentId);
   };
 
   const selectSession = (sessionId: string) => {
-    if (sessionId === currentSessionId) return;
+    if (sessionId === currentSessionId && !exploreView && !systemView) return;
+    setInboxOpen(false);
+    setExploreView(null);
+    setSystemView(null);
     setCurrentSessionId(sessionId);
     setThreads((prev) => prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyUnavailable: true } });
   };
 
   const newSession = () => {
+    setInboxOpen(false);
+    setExploreView(null);
+    setSystemView(null);
     setCurrentSessionId(null);
     setConfigAgentId(null);
+  };
+
+  const openExplore = (view: ExploreView) => {
+    setInboxOpen(false);
+    setConfigAgentId(null);
+    setSystemView(null);
+    setExploreView(view);
+  };
+
+  const openSystem = (view: SystemView) => {
+    setInboxOpen(false);
+    setExploreView(null);
+    setConfigAgentId(null);
+    setSystemView(view);
+    if (view === 'usage') void loadUsage();
+    else void loadSettings();
+  };
+
+  const handleAgentCreated = async () => {
+    try {
+      setWorkspace(await fetchWorkspace());
+    } catch {
+      // 刷新失败时下次进入页面再拉。
+    }
+    setExploreView('agents');
+  };
+
+  const openInboxItem = (agentId: string, sessionId: string) => {
+    setInboxOpen(false);
+    setExploreView(null);
+    setSystemView(null);
+    if (agentId !== currentAgentId) {
+      abortRef.current?.abort();
+      setLiveTurn(null);
+      setCurrentAgentId(agentId);
+      if (!sessionsByAgent[agentId]) void loadSessions(agentId);
+    }
+    setConfigAgentId(null);
+    setCurrentSessionId(sessionId);
+    setThreads((prev) => prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyUnavailable: true } });
   };
 
   const handleRename = async (sessionId: string, title: string) => {
@@ -107,6 +215,7 @@ export default function App() {
         return next;
       });
       await loadSessions(currentAgentId);
+      void loadInbox();
     } catch {
       // 删除失败时列表保持原样。
     }
@@ -146,7 +255,7 @@ export default function App() {
     };
 
     streamChat(
-      { agentId, message: text, ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), ...(selectedModel ? { model: selectedModel } : {}) },
+      { agentId, message: text, thinking: readThinkingPreference(agentId), ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), ...(selectedModel ? { model: selectedModel } : {}) },
       onEvent,
       controller.signal,
     )
@@ -154,16 +263,20 @@ export default function App() {
         finalize(turn.answer || done.answer, undefined);
       })
       .catch((error: Error) => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          finalize(turn.answer, undefined, true);
+          return;
+        }
         finalize(turn.answer, error.message || '流式响应失败');
       })
       .finally(() => {
         abortRef.current = null;
         setLiveTurn(null);
         void loadSessions(agentId);
+        void loadInbox();
       });
 
-    function finalize(answer: string, error: string | undefined) {
+    function finalize(answer: string, error: string | undefined, interrupted = false) {
       const key = resolvedSessionId;
       if (!key) return;
       setThreads((prev) => {
@@ -175,7 +288,7 @@ export default function App() {
             ...thread,
             messages: thread.messages.map((message) =>
               message.id === assistantMessage.id
-                ? { ...message, text: answer, thinking: turn.thinking || undefined, streaming: false, error, model: turn.model, usage: turn.usage }
+                ? { ...message, text: answer, thinking: turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), model: turn.model, usage: turn.usage }
                 : message,
             ),
           },
@@ -209,7 +322,7 @@ export default function App() {
     if (!liveTurn) return base;
     return base.map((message) =>
       message.id === liveTurn.messageId
-        ? { ...message, text: liveTurn.answer, thinking: liveTurn.thinking || undefined, streaming: true }
+        ? { ...message, text: liveTurn.answer, thinking: liveTurn.thinking || undefined, streaming: true, ...(liveTurn.retry ? { retry: liveTurn.retry } : {}) }
         : message,
     );
   })();
@@ -225,6 +338,12 @@ export default function App() {
           sessions={sessions}
           currentSessionId={currentSessionId}
           collapsed={sidebarCollapsed}
+          sessionFilter={sessionFilter}
+          inboxOpen={inboxOpen}
+          inboxCount={inboxItems.length}
+          exploreView={exploreView}
+          systemView={systemView}
+          workspaceInfo={settings ? `${settings.workspace.name} · ${settings.workspace.sessionDir}` : undefined}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           onSelectAgent={selectAgent}
           onSelectSession={selectSession}
@@ -232,60 +351,87 @@ export default function App() {
           onRenameSession={(id, title) => void handleRename(id, title)}
           onDeleteSession={(id) => void handleDelete(id)}
           onOpenConfig={setConfigAgentId}
+          onSessionFilterChange={setSessionFilter}
+          onOpenInbox={() => { setExploreView(null); setSystemView(null); setInboxOpen(true); void loadInbox(); }}
+          onCloseInbox={() => { setInboxOpen(false); setExploreView(null); setSystemView(null); }}
+          onOpenExplore={openExplore}
+          onOpenSystem={openSystem}
         />
 
         <main className="main-area">
           <UsageBar agent={currentAgent} sessions={sessions} />
 
-          {!showWelcome && (
-            <div className="thread-header">
-              <button type="button" className="header-button primary" onClick={newSession}>
-                <Plus size={13} weight="bold" />
-                新会话
-              </button>
-              {currentAgentId && (
-                <button
-                  type="button"
-                  className={configAgentId ? 'header-button active' : 'header-button'}
-                  onClick={() => setConfigAgentId((prev) => (prev ? null : currentAgentId))}
-                >
-                  <SlidersHorizontal size={13} />
-                  配置
-                </button>
-              )}
-            </div>
-          )}
-
-          {showWelcome && currentAgent ? (
-            <>
-              <Welcome agent={currentAgent} onSuggestion={send} />
-              <div className="composer-wrap welcome-composer">
-                <Composer
-                  prompts={workspace.prompts}
-                  models={workspace.models}
-                  disabled={Boolean(liveTurn)}
-                  selectedModel={selectedModel}
-                  onSelectModel={setSelectedModel}
-                  onSend={send}
-                />
-              </div>
-            </>
+          {exploreView === 'agents' ? (
+            <ExploreAgents agents={workspace.agents} onOpenChat={selectAgent} />
+          ) : exploreView === 'templates' ? (
+            <TemplatesView onCreated={() => void handleAgentCreated()} />
+          ) : exploreView === 'skills' ? (
+            <SkillsView prompts={workspace.prompts} />
+          ) : systemView === 'usage' ? (
+            <UsageView usage={usage} loading={usageLoading} onRefresh={() => void loadUsage()} />
+          ) : systemView === 'settings' ? (
+            <SettingsView settings={settings} loading={settingsLoading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
+          ) : inboxOpen ? (
+            <InboxView
+              items={inboxItems}
+              agents={workspace.agents}
+              loading={inboxLoading}
+              onRefresh={() => void loadInbox()}
+              onOpen={openInboxItem}
+            />
           ) : (
             <>
-              <ThreadView messages={threadMessages} historyUnavailable={Boolean(currentThread?.historyUnavailable)} />
-              <div className="composer-wrap">
-                <div className="composer-inner">
-                  <Composer
-                    prompts={workspace.prompts}
-                    models={workspace.models}
-                    disabled={Boolean(liveTurn)}
-                    queued={Boolean(liveTurn)}
-                    selectedModel={selectedModel}
-                    onSelectModel={setSelectedModel}
-                    onSend={send}
-                  />
+              {!showWelcome && (
+                <div className="thread-header">
+                  <button type="button" className="header-button primary" onClick={newSession}>
+                    <Plus size={13} weight="bold" />
+                    新会话
+                  </button>
+                  {currentAgentId && (
+                    <button
+                      type="button"
+                      className={configAgentId ? 'header-button active' : 'header-button'}
+                      onClick={() => setConfigAgentId((prev) => (prev ? null : currentAgentId))}
+                    >
+                      <SlidersHorizontal size={13} />
+                      配置
+                    </button>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {showWelcome && currentAgent ? (
+                <>
+                  <Welcome agent={currentAgent} onSuggestion={send} />
+                  <div className="composer-wrap welcome-composer">
+                    <Composer
+                      prompts={workspace.prompts}
+                      models={workspace.models}
+                      disabled={Boolean(liveTurn)}
+                      selectedModel={selectedModel}
+                      onSelectModel={setSelectedModel}
+                      onSend={send}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <ThreadView messages={threadMessages} historyUnavailable={Boolean(currentThread?.historyUnavailable)} compact={uiPreferences.compactMessages} />
+                  <div className="composer-wrap">
+                    <div className="composer-inner">
+                      <Composer
+                        prompts={workspace.prompts}
+                        models={workspace.models}
+                        disabled={Boolean(liveTurn)}
+                        queued={Boolean(liveTurn)}
+                        selectedModel={selectedModel}
+                        onSelectModel={setSelectedModel}
+                        onSend={send}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
         </main>
@@ -294,6 +440,7 @@ export default function App() {
           {configAgentId && (
             <ConfigPanel
               agentId={configAgentId}
+              models={workspace.models}
               onClose={() => setConfigAgentId(null)}
               onUseSuggestion={(text) => { setConfigAgentId(null); send(text); }}
             />

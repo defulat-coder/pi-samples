@@ -90,4 +90,13 @@ describe('reduceStreamEvent', () => {
     assert.equal(turn.thinking, '想一下');
     assert.equal(turn.answer, '');
   });
+
+  it('retry 事件记录重试进度', () => {
+    const RETRY = 'event: retry\ndata: {"type":"retry","attempt":2,"maxAttempts":3,"errorMessage":"模型超时"}\n\n';
+    const events = consumeChunks([START + RETRY + DONE]);
+    assert.deepEqual(events.map((event) => event.type), ['start', 'retry', 'done']);
+    let turn = createLiveTurn();
+    for (const event of events) turn = reduceStreamEvent(turn, event);
+    assert.deepEqual(turn.retry, { attempt: 2, maxAttempts: 3, errorMessage: '模型超时' });
+  });
 });

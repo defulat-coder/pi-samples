@@ -51,6 +51,35 @@ describe('agent session store', () => {
     assert.equal(session?.title, '解释一下会话生命周期');
   });
 
+  it('flags sessions whose last assistant message errored or was aborted', async () => {
+    const { root, store } = fixture();
+    await store.createSession('pi-assistant', 'attention-session');
+    const info = (await SessionManager.list(root, store.sessionDir)).find((item) => item.id === 'attention-session');
+    assert.ok(info);
+    const manager = SessionManager.open(info.path, store.sessionDir, root);
+
+    const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    const base = { role: 'assistant' as const, content: [], api: 'messages' as const, provider: 'kimi-coding' as const, model: 'kimi-for-coding', usage, timestamp: Date.now() };
+
+    // No assistant message yet: a fresh session never needs attention.
+    assert.equal((await store.getSession('attention-session'))?.needsAttention, false);
+
+    manager.appendMessage({ ...base, stopReason: 'error', errorMessage: '模型超时' });
+    const errored = await store.getSession('attention-session');
+    assert.equal(errored?.needsAttention, true);
+    assert.equal(errored?.attentionReason, 'error');
+    assert.equal(errored?.attentionDetail, '模型超时');
+
+    manager.appendMessage({ ...base, stopReason: 'aborted' });
+    const aborted = await store.getSession('attention-session');
+    assert.equal(aborted?.needsAttention, true);
+    assert.equal(aborted?.attentionReason, 'aborted');
+
+    // A later successful run clears the flag.
+    manager.appendMessage({ ...base, stopReason: 'stop' });
+    assert.equal((await store.getSession('attention-session'))?.needsAttention, false);
+  });
+
   it('rejects cross-agent reuse of a persisted session', async () => {
     const { store } = fixture();
     await store.createSession('pi-assistant', 'owned-session');

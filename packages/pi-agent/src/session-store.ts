@@ -51,6 +51,30 @@ function questionCountFromEntries(entries: SessionEntry[]): number {
   return entries.filter((entry) => entry.type === 'message' && entry.message.role === 'user').length;
 }
 
+type SessionAttention = Pick<SessionSummary, 'needsAttention' | 'attentionReason' | 'attentionDetail'>;
+
+/**
+ * Attention is derived from the last assistant message persisted in the JSONL
+ * session: Pi records stopReason "error" / "aborted" (plus errorMessage) when a
+ * run fails or is interrupted. A later successful run clears the flag.
+ */
+function attentionFromEntries(entries: SessionEntry[]): SessionAttention {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.type !== 'message' || entry.message.role !== 'assistant') continue;
+    const message = entry.message as { stopReason?: unknown; errorMessage?: unknown };
+    if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+      return {
+        needsAttention: true,
+        attentionReason: message.stopReason,
+        ...(typeof message.errorMessage === 'string' && message.errorMessage ? { attentionDetail: message.errorMessage } : {}),
+      };
+    }
+    return { needsAttention: false };
+  }
+  return { needsAttention: false };
+}
+
 export interface AgentSessionStoreOptions {
   cwd: string;
   sessionDir?: string;
@@ -157,6 +181,7 @@ export class AgentSessionStore {
       createdAt: info.created.toISOString(),
       updatedAt: info.modified.toISOString(),
       questionCount: questionCountFromEntries(entries),
+      ...attentionFromEntries(entries),
     };
   }
 }

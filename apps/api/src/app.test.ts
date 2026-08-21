@@ -1,9 +1,9 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSessionStore } from '@pi-workbench/pi-agent';
+import { AgentSessionStore, loadAgents } from '@pi-workbench/pi-agent';
 import { buildApp } from './app.js';
 import type { AppConfig } from './config.js';
 
@@ -54,6 +54,21 @@ describe('Pi Workbench API', () => {
     assert.equal(typeof missing.json().error, 'string');
   });
 
+  it('serves project resources and run statistics per agent', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/agents/pi-assistant/resources' });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.ok(body.prompts.some((prompt: { name: string; path: string }) => prompt.name === 'explain' && prompt.path === '.pi/prompts/explain.md'));
+    assert.ok(Array.isArray(body.skills));
+    assert.equal(typeof body.appendSystem, 'boolean');
+    assert.equal(typeof body.stats.sessionCount, 'number');
+    assert.equal(typeof body.stats.questionCount, 'number');
+    assert.ok(body.stats.questionCount >= 0 && body.stats.sessionCount >= 0);
+
+    const missing = await app.inject({ method: 'GET', url: '/api/v1/agents/no-such-agent/resources' });
+    assert.equal(missing.statusCode, 404);
+  });
+
   it('creates, lists, renames and deletes sessions per agent', async () => {
     const first = await app.inject({ method: 'POST', url: '/api/v1/agents/pi-assistant/sessions' });
     const second = await app.inject({ method: 'POST', url: '/api/v1/agents/pi-assistant/sessions' });
@@ -75,6 +90,32 @@ describe('Pi Workbench API', () => {
     assert.equal(removed.statusCode, 204);
     const missing = await app.inject({ method: 'GET', url: `/api/v1/agents/pi-assistant/sessions/${firstId}` });
     assert.equal(missing.statusCode, 404);
+  });
+
+  it('lists only attention sessions in the inbox, newest first', async () => {
+    const { appendFileSync, readdirSync, readFileSync } = await import('node:fs');
+    const ok = await sessions.createSession('pi-assistant', 'inbox-ok');
+    const failed = await sessions.createSession('other-agent', 'inbox-failed');
+    assert.ok(ok && failed);
+
+    // apps/api 不直接依赖 Pi SDK：直接向 JSONL 追加一条出错的 assistant message entry。
+    const file = readdirSync(sessionRoot)
+      .map((name) => join(sessionRoot, name))
+      .find((path) => path.endsWith('.jsonl') && readFileSync(path, 'utf8').includes('"inbox-failed"'));
+    assert.ok(file);
+    const message = {
+      role: 'assistant', content: [], api: 'messages', provider: 'kimi-coding', model: 'kimi-for-coding',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'error', errorMessage: '模型超时', timestamp: Date.now(),
+    };
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'msg_err1', parentId: null, timestamp: new Date().toISOString(), message })}\n`);
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/inbox' });
+    assert.equal(response.statusCode, 200);
+    const items = response.json().items as Array<{ id: string; needsAttention: boolean; attentionReason?: string }>;
+    assert.deepEqual(items.map((item) => item.id), ['inbox-failed']);
+    assert.equal(items[0]!.needsAttention, true);
+    assert.equal(items[0]!.attentionReason, 'error');
   });
 
   it('isolates sessions between agents and rejects unknown agents', async () => {
@@ -134,5 +175,146 @@ describe('Pi Workbench API', () => {
     await sessions.createSession('other-agent', 'other-bound-session');
     const mismatch = await app.inject({ method: 'POST', url: '/api/v1/chat', payload: { agentId: 'pi-assistant', sessionId: 'other-bound-session', message: '越权' } });
     assert.equal(mismatch.statusCode, 409);
+  });
+});
+
+describe('Usage and settings endpoints', () => {
+  const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-api-usage-'));
+  const sessions = new AgentSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
+  const app = buildApp(config, { sessionStore: sessions });
+
+  before(async () => app.ready());
+  after(async () => { await app.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
+
+  /** Appends a persisted user message so questionCount reflects it. */
+  const appendUserMessage = async (sessionId: string, text: string) => {
+    const { appendFileSync, readdirSync, readFileSync } = await import('node:fs');
+    const file = readdirSync(sessionRoot)
+      .map((name) => join(sessionRoot, name))
+      .find((path) => path.endsWith('.jsonl') && readFileSync(path, 'utf8').includes(`"${sessionId}"`));
+    assert.ok(file, `未找到会话文件：${sessionId}`);
+    const message = { role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() };
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: `msg_${sessionId}`, parentId: null, timestamp: new Date().toISOString(), message })}\n`);
+  };
+
+  it('aggregates usage numbers consistent with the session store', async () => {
+    await sessions.createSession('pi-assistant', 'usage-a');
+    await sessions.createSession('pi-assistant', 'usage-b');
+    await appendUserMessage('usage-a', '第一问');
+    await appendUserMessage('usage-a', '第二问');
+    await appendUserMessage('usage-b', '第三问');
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/usage' });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+
+    const all = await sessions.listSessions();
+    assert.equal(body.totalSessions, all.length);
+    assert.equal(body.totalQuestions, all.reduce((sum, session) => sum + session.questionCount, 0));
+    assert.ok(body.agentCount >= 1);
+    assert.equal(body.agentCount, body.perAgent.length);
+    // 测试里的会话都是今天创建的，今日提问数等于累计提问数。
+    assert.equal(body.questionsToday, body.totalQuestions);
+    assert.equal(body.totalQuestions, 3);
+
+    const row = body.perAgent.find((item: { agentId: string }) => item.agentId === 'pi-assistant');
+    assert.equal(row.sessionCount, 2);
+    assert.equal(row.questionCount, 3);
+    assert.equal(typeof row.lastActiveAt, 'string');
+    assert.ok(body.perAgent.every((item: { lastActiveAt?: string; sessionCount: number }) => item.sessionCount > 0 === Boolean(item.lastActiveAt)));
+  });
+
+  it('serves non-sensitive settings without any credential fields', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/settings' });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+
+    assert.ok(body.model.model);
+    assert.ok(Array.isArray(body.model.available));
+    assert.ok(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(body.thinkingLevel));
+    assert.equal(typeof body.resources.agents, 'number');
+    assert.ok(body.resources.agents >= 1 && body.resources.prompts >= 1 && body.resources.skills >= 0);
+    assert.equal(typeof body.resources.appendSystem, 'boolean');
+    assert.equal(body.workspace.name, 'pi-samples');
+    assert.equal(typeof body.workspace.sessionDir, 'string');
+
+    const raw = JSON.stringify(body);
+    assert.doesNotMatch(raw, /apiKey|api_key|secret|token|password/i);
+  });
+});
+
+describe('Explore endpoints', () => {
+  // A scratch project root keeps these tests away from the real .pi/agents files.
+  const root = mkdtempSync(join(tmpdir(), 'pi-api-explore-'));
+  mkdirSync(join(root, '.pi', 'agents'), { recursive: true });
+  mkdirSync(join(root, '.pi', 'skills'), { recursive: true });
+  const app = buildApp(config, { cwd: root });
+
+  const templateBody = {
+    name: '翻译助手 Pro',
+    mark: '译',
+    tagline: '双语互译',
+    description: '在中英文之间互译。',
+    suggestions: ['把这段话译成英文'],
+    body: '你是翻译助手，专注中英互译。',
+  };
+
+  before(async () => app.ready());
+  after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }); });
+
+  it('creates an agent file that the registry can load back', async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, id: 'translator-pro' } });
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().id, 'translator-pro');
+    const reloaded = loadAgents(root).find((agent) => agent.id === 'translator-pro');
+    assert.equal(reloaded?.name, templateBody.name);
+    assert.deepEqual(reloaded?.suggestions, templateBody.suggestions);
+    assert.equal(reloaded?.body, templateBody.body);
+  });
+
+  it('rejects id conflicts with 409 and never overwrites', async () => {
+    const conflict = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, id: 'translator-pro' } });
+    assert.equal(conflict.statusCode, 409);
+    assert.equal(typeof conflict.json().error, 'string');
+  });
+
+  it('rejects invalid ids and oversized bodies with 400', async () => {
+    const badId = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, id: 'Bad Id' } });
+    assert.equal(badId.statusCode, 400);
+    const underivable = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, name: '翻译助手' } });
+    assert.equal(underivable.statusCode, 400);
+    const tooLarge = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, id: 'big-body', body: '长'.repeat(40 * 1024) } });
+    assert.equal(tooLarge.statusCode, 400);
+  });
+
+  it('derives the id from ascii names when omitted', async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/agents', payload: { ...templateBody, name: 'Review Buddy' } });
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().id, 'review-buddy');
+  });
+
+  it('lists skills: empty directory yields [], SKILL.md entries get parsed', async () => {
+    const empty = await app.inject({ method: 'GET', url: '/api/v1/skills' });
+    assert.equal(empty.statusCode, 200);
+    assert.deepEqual(empty.json(), { items: [], total: 0 });
+
+    mkdirSync(join(root, '.pi', 'skills', 'research'), { recursive: true });
+    writeFileSync(join(root, '.pi', 'skills', 'research', 'SKILL.md'), '---\nname: 调研助手\ndescription: 桌面调研。\n---\n\n先搜一手来源。\n');
+    const filled = await app.inject({ method: 'GET', url: '/api/v1/skills' });
+    assert.equal(filled.statusCode, 200);
+    const items = filled.json().items as Array<{ name: string; path: string; description?: string; preview?: string }>;
+    assert.equal(filled.json().total, 1);
+    assert.equal(items[0]?.name, '调研助手');
+    assert.equal(items[0]?.path, '.pi/skills/research/SKILL.md');
+    assert.equal(items[0]?.description, '桌面调研。');
+    assert.equal(items[0]?.preview, '先搜一手来源。');
+  });
+
+  it('workspace agents carry a real session count', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/workspace' });
+    assert.equal(response.statusCode, 200);
+    const agents = response.json().agents as Array<{ id: string; sessionCount?: number }>;
+    assert.ok(agents.length >= 2);
+    assert.ok(agents.every((agent) => typeof agent.sessionCount === 'number'));
   });
 });

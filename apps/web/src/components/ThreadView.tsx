@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight';
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -52,11 +53,26 @@ function MessageItem({ message }: { message: ChatMessage }) {
         <div className="markdown">
           <Markdown remarkPlugins={[remarkGfm]}>{message.text || (message.streaming ? '　' : '')}</Markdown>
         </div>
-        {message.error && (
-          <p className="message-error" role="alert">
-            <WarningCircle size={14} weight="fill" />
-            {message.error}
+        {message.streaming && message.retry && (
+          <p className="message-retry" role="status">
+            <ArrowsClockwise size={14} className="spinning" aria-hidden="true" />
+            第 {message.retry.attempt}/{message.retry.maxAttempts} 次重试：{message.retry.errorMessage || '请求失败'}
           </p>
+        )}
+        {message.interrupted && (
+          <p className="message-interrupted" role="status">
+            <WarningCircle size={14} weight="fill" />
+            回复已中断，可以重新提问
+          </p>
+        )}
+        {message.error && (
+          <div className="message-error-card" role="alert">
+            <p className="message-error-card-title">
+              <WarningCircle size={14} weight="fill" />
+              本轮回复失败
+            </p>
+            <p className="message-error-card-detail">{message.error}</p>
+          </div>
         )}
       </div>
     </motion.div>
@@ -67,9 +83,11 @@ export type ThreadViewProps = {
   messages: ChatMessage[];
   /** 已持久化但本次页面加载前创建的历史会话：服务端不回放消息，仅提示。 */
   historyUnavailable: boolean;
+  /** 界面偏好「消息紧凑模式」：缩小消息纵向间距。 */
+  compact?: boolean;
 };
 
-export function ThreadView({ messages, historyUnavailable }: ThreadViewProps) {
+export function ThreadView({ messages, historyUnavailable, compact = false }: ThreadViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,7 +97,7 @@ export function ThreadView({ messages, historyUnavailable }: ThreadViewProps) {
 
   return (
     <div className="thread-scroll" ref={scrollRef}>
-      <div className="thread-column">
+      <div className={compact ? 'thread-column compact' : 'thread-column'}>
         {historyUnavailable && (
           <p className="thread-history-notice">历史消息不回放，继续提问即可接着该会话的上下文聊</p>
         )}

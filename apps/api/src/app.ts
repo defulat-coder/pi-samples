@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentThinkingLevel, ChatRequest, ChatStreamEvent } from '@pi-workbench/contracts';
-import { agentSummary, AgentSessionStore, getAgent, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listPrompts, listPiModels, loadAgents, piSessionRegistry, readPrompt, runAgentTurn } from '@pi-workbench/pi-agent';
+import type { AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest } from '@pi-workbench/contracts';
+import { AGENT_BODY_MAX_BYTES, AgentCreateError, agentSummary, AgentSessionStore, createAgent, getAgent, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, piSessionRegistry, readPrompt, runAgentTurn, summarizeUsage } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 
 const AgentIdSchema = Type.String({ pattern: '^[a-z][a-z0-9-]{1,63}$' });
@@ -26,6 +26,17 @@ const ChatRequestSchema = Type.Object({
   message: Type.String({ minLength: 1, maxLength: 4000 }),
   model: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   thinking: Type.Optional(ThinkingLevelSchema),
+});
+
+// maxLength counts UTF-16 code units; createAgent re-checks the 32KB byte cap.
+const CreateAgentSchema = Type.Object({
+  id: Type.Optional(AgentIdSchema),
+  name: Type.String({ minLength: 1, maxLength: 80 }),
+  mark: Type.String({ minLength: 1, maxLength: 8 }),
+  tagline: Type.String({ minLength: 1, maxLength: 120 }),
+  description: Type.String({ minLength: 1, maxLength: 400 }),
+  suggestions: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 8 }),
+  body: Type.String({ minLength: 1, maxLength: AGENT_BODY_MAX_BYTES }),
 });
 
 type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string };
@@ -73,15 +84,75 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
   app.register(async (v1) => {
     v1.get('/workspace', async () => ({
-      agents: loadAgents(cwd).map(agentSummary),
+      agents: await Promise.all(
+        loadAgents(cwd).map(async (agent) => ({
+          ...agentSummary(agent),
+          sessionCount: (await sessions.listSessions(agent.id)).length,
+        })),
+      ),
       prompts: listPrompts(cwd),
       models: { current: getPiModelConfig({}, cwd), available: await listPiModels() },
     }));
+
+    v1.get('/skills', async () => {
+      const items = listSkills(cwd);
+      return { items, total: items.length };
+    });
+
+    v1.get('/usage', async () => summarizeUsage(await sessions.listSessions(), loadAgents(cwd)));
+
+    // Non-sensitive configuration only; provider keys never leave this process.
+    v1.get('/settings', async () => {
+      const resources = listAgentResources(cwd);
+      return {
+        model: { ...getPiModelConfig({}, cwd), available: await listPiModels() },
+        thinkingLevel: getPiThinkingLevel(undefined, cwd),
+        resources: {
+          agents: loadAgents(cwd).length,
+          prompts: resources.prompts.length,
+          skills: resources.skills.length,
+          appendSystem: resources.appendSystem,
+        },
+        workspace: { name: basename(cwd), sessionDir: relative(cwd, sessions.sessionDir) },
+      };
+    });
+
+    v1.post<{ Body: CreateAgentRequest }>('/agents', { schema: { body: CreateAgentSchema } }, async (request, reply) => {
+      try {
+        const agent = createAgent(cwd, request.body);
+        return reply.code(201).send(agent);
+      } catch (error) {
+        if (error instanceof AgentCreateError) {
+          return reply.code(error.code === 'CONFLICT' ? 409 : 400).send({ error: error.message });
+        }
+        throw error;
+      }
+    });
+
+    v1.get('/inbox', async () => {
+      // Inbox = every session whose last recorded run errored or was aborted, newest first.
+      const items = (await sessions.listSessions())
+        .filter((session) => session.needsAttention)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      return { items, total: items.length };
+    });
 
     v1.get<{ Params: { agentId: string } }>('/agents/:agentId', { schema: { params: Type.Object({ agentId: AgentIdSchema }) } }, async (request, reply) => {
       const agent = agentOr404(request.params.agentId, reply);
       if (!agent) return;
       return agent;
+    });
+
+    v1.get<{ Params: { agentId: string } }>('/agents/:agentId/resources', { schema: { params: Type.Object({ agentId: AgentIdSchema }) } }, async (request, reply) => {
+      if (!agentOr404(request.params.agentId, reply)) return;
+      const sessionsForAgent = await sessions.listSessions(request.params.agentId);
+      return {
+        ...listAgentResources(cwd),
+        stats: {
+          sessionCount: sessionsForAgent.length,
+          questionCount: sessionsForAgent.reduce((sum, session) => sum + session.questionCount, 0),
+        },
+      };
     });
 
     v1.get<{ Params: { agentId: string } }>('/agents/:agentId/sessions', { schema: { params: Type.Object({ agentId: AgentIdSchema }) } }, async (request, reply) => {
@@ -186,6 +257,9 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
           ...(request.body.model ? { model: request.body.model } : {}),
           onTextDelta: (delta) => { if (delta) send({ type: 'text_delta', delta }); },
           onThinkingDelta: (delta) => { if (delta) send({ type: 'thinking_delta', delta }); },
+          onEvent: (event) => {
+            if (event.type === 'auto_retry_start') send({ type: 'retry', attempt: event.attempt, maxAttempts: event.maxAttempts, errorMessage: event.errorMessage });
+          },
         });
         send({ type: 'done', answer: result.answer, ...(result.usage ? { usage: result.usage } : {}) });
       } catch (error) {

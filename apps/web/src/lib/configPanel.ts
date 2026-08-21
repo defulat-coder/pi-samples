@@ -1,0 +1,45 @@
+import type { AgentThinkingLevel } from '@pi-workbench/contracts';
+
+export type ConfigSectionId = 'basic' | 'resources' | 'runtime';
+
+/** 默认展开前两节（基本信息、资源），对应 Fleet 面板的首屏重点。 */
+export const DEFAULT_OPEN_SECTIONS: readonly ConfigSectionId[] = ['basic', 'resources'];
+
+/** Toggles one section id in the open-section list. */
+export function toggleSection(open: readonly ConfigSectionId[], id: ConfigSectionId): ConfigSectionId[] {
+  return open.includes(id) ? open.filter((item) => item !== id) : [...open, id];
+}
+
+/** 本地胶囊开关只暴露 off/minimal 两档；其余级别仍是 API 支持的合法值。 */
+export type ThinkingPreference = Extract<AgentThinkingLevel, 'off' | 'minimal'>;
+export const THINKING_PREFERENCE_OPTIONS: readonly ThinkingPreference[] = ['off', 'minimal'];
+
+const THINKING_KEY_PREFIX = 'pi-workbench.thinking.';
+
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
+
+function defaultStorage(): StorageLike | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reads the per-agent default thinking level; anything unknown falls back to 'off'. */
+export function readThinkingPreference(agentId: string, storage: StorageLike | undefined = defaultStorage()): ThinkingPreference {
+  try {
+    return storage?.getItem(THINKING_KEY_PREFIX + agentId) === 'minimal' ? 'minimal' : 'off';
+  } catch {
+    return 'off';
+  }
+}
+
+/** Persists the per-agent default thinking level; storage failures are non-fatal. */
+export function writeThinkingPreference(agentId: string, level: ThinkingPreference, storage: StorageLike | undefined = defaultStorage()): void {
+  try {
+    storage?.setItem(THINKING_KEY_PREFIX + agentId, level);
+  } catch {
+    // 隐私模式 / 配额满时静默降级，偏好只在内存中生效。
+  }
+}

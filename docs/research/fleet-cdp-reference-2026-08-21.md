@@ -271,6 +271,79 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 9. 配置面板是 479px 右侧内嵌面板（非遮罩抽屉），section 折叠头 48px + 12px 圆角灰蓝卡片（#f5f8fb）+ section 间 1px 分隔线。
 10. 图标体系：线性 svg，常用 12/14/16/20px 四档，stroke 1.5–1.8px，弱色 `#64748b`。
 
+## 11. 功能页面（第二轮抓取）
+
+> 第二轮补抓 Inbox / Templates / Integrations / Skills / Usage / Settings 等功能页面，以及 Chat 标签与侧边栏收起态。本轮视口 1512×949（第一轮 1496×846），宽度类数值以本轮实测为准。方法同第一轮：`getComputedStyle()` 实测，原始数据见 `.scratch/fleet-cdp/11-*.json` 至 `20-*.json`。
+
+### 11.1 Inbox 收件箱（`11-inbox.json/.png`）
+
+- 页头：`h3` `text-base font-semibold`（16px / 19.2px / −0.48px 字距）+ 20px 图标；headerRow `pt-space-4 pb-space-1`。
+- 搜索框：wrap 420×33.5，圆角 8px，底 `#edf2f7`（`bg-tertiary` 系），input 13px。
+- 过滤器 segmented tab bar：288.7×25.6，`bg-surface-level-2`（#f5f8fb）+ 1px 边框 + 圆角 3px + padding 2px；tab `rounded-xs`、padding 2px 8px；active（Needs Attention）白底 + 文字 `#0f172a`，inactive 文字 `#334155`。
+- 工具行 sticky：Select all 复选框 14×14、圆角 4px、白底、边框 `#cbd5e1`；Refresh 16px 图标；右侧 "3 threads" 计数。
+- 会话行：`h-11`（1240×44）、padding 0 12px、gap 12px、底部 1px `#e2e8f0` 分隔线；未读/选中行底 `#edf2f7`；行入场 `animate-in fade-in slide-in-from-bottom-1`。
+- 行内结构：18×18 紫色 agent chip（同侧边栏）→ agent 名 13px/`#64748b` 固定 `w-40` → 状态 chip（圆角 full、黄底 `bg-warning-subtle` ≈ `#fef0c7`、橙字 `#cd6002`、12px/500 + 12px 图标）→ 预览文字 13px/`#64748b` truncate → 时间 12px/`#64748b` 右对齐且 `group-hover:invisible`。
+- 另注意：本轮侧边栏新增 "Keyboard Shortcuts" 导航项（第一轮快照中没有）。
+
+### 11.2 Chat 标签 All / Attention（`19-chat-tabs.json`）
+
+- tab：`rounded-xs`、padding 2px 8px、gap 4px、高 19.6px；active 文字 `#0f172a`、inactive `#334155`；14px 图标。
+- 计数 "(4)" 是 tab 内额外 span；本轮页面未渲染出计数（leaves 只有 icon + "Attention"），第一轮 snapshot 曾见 `text "Attention" "(" "4" ")"`。
+
+### 11.3 Workspace Agents 付费墙（`12-workspace-agents.json/.png`）
+
+- "Upgrade required" 胶囊徽标：底 `#e5f4ff`、字 `#0d3d77`、`rounded-full`、padding 4px 8px。
+- h1：24px/500/−0.96px 居中；描述 14px/`#334155`、`max-w-350px` 居中；3 条特性（图标 + p）。
+- CTA："Pricing and Plans" 链接 + "Upgrade to Plus" 主按钮。
+- 布局注意：main 元素 `margin-left: 245px`（侧边栏固定定位，内容区用 margin 让位）。
+
+### 11.4 Templates 模板页（`13-templates.json/.png`）
+
+- 页头：h1 24px/500/−0.96px + 副标题 13px/`#475569`。
+- 卡片网格：`grid lg:grid-cols-2 gap-space-4`。卡片是 `<button>` 408×394.8：圆角 12px、白底、1px `#e2e8f0` 边框、阴影 `0 1px 3px rgba(16,24,40,.1), 0 1px 2px rgba(16,24,40,.06)`、padding 24px、gap 24px。
+- 卡内：16:9 预览图（img `aspect-video rounded-3xl`（24px 圆角）+ 边框）→ 名称 16px/600/−0.48px → 描述 13px/`#334155` line-clamp-2。两张卡：Executive Assistant、Software Engineer。
+- 底部："More templates coming soon"（14px/600 居中）+ 说明 + "Join our community Slack" 次级按钮。
+- 抓取注意：模板卡异步加载，第一次 snapshot 为空，`wait(2.5)` 后再探才有。
+
+### 11.5 Integrations（`14-integrations.json` / `15-integrations-detail.json` + `.png`）
+
+- 左侧第二级导航列：项宽 207px、高 28px、`text-xs`（13px/500）、`rounded-sm`；selected 底 `#edf2f7`（实测 `color(srgb 0.9294 0.949 0.9686)`）；app 按钮带 14px 图标。
+- 列内含：搜索框（29.5px 高、圆角 4px、带边框）+ All/Connected 过滤 + 组头（CATEGORIES / APPS / WORKSPACE，`text-xxs uppercase tracking-wider`：12px/`#334155`/+0.6px）+ 底部 Custom MCP。
+- 详情页（点 "Slack & Teams"，未点 Connect）：右区 `grid md:grid-cols-2 gap-space-4`；section 卡片 `rounded-lg`（8px）+ 边框 + `p-space-4`；标题 13px/600 + "Beta" 徽标（12px/500/`#334155`）+ 右侧 "Add Slack App" 主按钮（蓝底、26px 高）；描述 12px/`#475569`；空态 "No Slack apps configured yet." 12px/`#475569`。
+
+### 11.6 Skills 页（`16-skills.json/.png`）
+
+- 页头：h3 16px/600 + 副标题 12px/`#475569`；右上 "Browse Library" 次级按钮 + "Create Skill" 主按钮（蓝 `#006ddd`、边框 `#1566b8`、26px 高）。
+- 工具行：搜索框（192px 宽、圆角 4px、带边框）+ "All Skills" 过滤按钮（24px 高、12px 字、白底带边框）+ Grid/Table 视图切换（26×26 图标按钮，active 白底带边框+阴影，inactive 透明无边框）。
+- 卡片网格：`grid md:grid-cols-2 lg:grid-cols-3 gap-space-3`。卡片 `<button>` 354.7×142.8：圆角 8px、白底、1px `#e2e8f0` 边框、padding 16px、gap 12px、`focus-visible:ring-brand/30`。
+- 卡内：16px 图标（`#64748b`）+ 名称 13px/600 truncate → 描述 12px/`#475569` line-clamp-2、`min-h-2lh leading-relaxed` → 底部作者行 "You"（4px gap 小图标 + 文字）。
+
+### 11.7 Usage 用量页（`17-usage.json/.png`）
+
+- 页头 + 右上 "Last 7 days" 日期按钮（次级白底、26px 高）；信息横幅同聊天页顶部用量条样式（渐变浅蓝、圆角 6px、padding 12px 16px）。
+- 统计卡区：外层 `overflow-hidden border border-subtle bg-elevated`（960×140.6，白底 + 1px `#e2e8f0` 边框、**直角无圆角**）；内层 `grid grid-cols-4`；每卡 `flex flex-col gap-space-1 px-space-5 py-space-4 border-r border-subtle`（239.5×87.6，padding 16px 24px，最后一张无 `border-r`）。
+  - label（Total Spend / Threads / Runs / Agents）：`text-xs uppercase tracking-wide text-quaternary`——13px/18px/400、`#64748b`（`color(srgb 0.392 0.455 0.545)`）、+0.39px 字距、大写靠 CSS 变换（DOM 原文是 "Total Spend" 首字母大写，第一轮精确匹配 "TOTAL SPEND" 因此落空）。
+  - value：`text-[1.75rem] font-semibold tabular-nums leading-tight`——28px/33.6px/600/`#0f172a`。
+- Spend limits 行：button 958×51、hover `bg-surface-level-2`；内含 Per agent / Per user 小 chip（图标 + label 13px/`#64748b` + 值 13px/600 tabular-nums + "/ week"）+ 右侧 "View limits >" 13px/500/`#475569`。
+- LCU SPEND LIMIT 区：label 同统计卡 label 样式；大数字 28px/600 tabular-nums + "/ 5 limit" 小字；右侧 "5 remaining" 14px/`#475569`；进度条轨道高 **12px**（比聊天页用量条的 8px 大）、圆角 3px、底 `#edf2f7`；底部 "Consumed this month" / "Monthly limit: 5"。
+- "Spend Over Time" section：标题 13px/600；右上 tab bar（Summary/Tool/Model）同 Inbox 的 segmented 控件但**无底板色**：`border border-subtle p-0.5 rounded-[3px]`，active 文字 `#0f172a`。
+- Breakdown：label + By agent/user/tool/model tab + Export as CSV 图标按钮（26×26 白底带边框）；表格 `<table class="w-full caption-bottom text-sm">` 958×173.5（表头：Agent / Model last used / COST（链接色可排序）/ RUNS）。
+
+### 11.8 Settings 设置页（API Keys，`18-settings.json/.png`）
+
+- 左侧设置导航列：链接 158×23.8、圆角 4px、padding 4px 6px、13px/18px；active（API Keys）底 `#edf2f7`，inactive 文字 `#334155`，hover `bg-elevated-hover/80`。
+- 组头按钮（"Access and Security" 等）：182×26、13px/`#64748b`、带 chevron；顶部 "Organizations" label + org 切换器（182×34、圆角 6px、白底带边框）；底部 "Log out" 182×26。
+- 内容区：h2 `text-lg`（18px/500/−0.72px）+ 描述 13px/`#475569`；右上 Personal/Service segmented tab（`rounded-sm`、padding 4px 8px、active `#0f172a` / inactive `#334155`）+ "API docs" 次级按钮（35px 高、14px/−0.56px、圆角 6px）+ "API Key" 主按钮（蓝、35px 高）。
+- 过滤区："Filter by workspace" label 13px/`#475569` + Select workspaces 下拉按钮（288×32、圆角 6px、白底带边框、padding 4px 12px）+ 表格搜索框。
+- 表格：表头行 `grid grid-cols-[1fr,1fr,2fr,1fr,1fr,1fr,1fr,auto]`；单元格 `h-12 bg-secondary`（#f5f8fb）`px-space-5 font-semibold text-tertiary`（48px 高、14px/600/`#475569`、左右 24px padding）；行顶 1px 分隔线。
+- 右下角 "LangSmith Chat" FAB：48×48 正圆、1px `#5fbef8` 边框、`shadow-md`。
+
+### 11.9 侧边栏收起态（`20-sidebar-collapsed.json/.png`）
+
+- header 宽 44px（`transition width 0.2s`）、白底、右分隔线保留；顶部 Expand (⌘B) 按钮 26×26。
+- 导航项变 32×32 纯图标（`size-8 flex-col items-center justify-center`，文字隐藏）；Inbox 未读徽标仍渲染（小容器叠在图标旁）。
+- agent 行 32×32（PC chip 居中）；账户按钮 40×32 只剩头像。点 Expand 后还原为 245px（已实测确认）。
+
 ## 附录：原始数据文件（`.scratch/fleet-cdp/`）
 
 | 文件 | 内容 |
@@ -286,6 +359,16 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 | `07-composer-focus.json` | composer 聚焦前后对比 |
 | `08-misc-fixups.json` / `09-headers-usage.json` | composer 外框、组头、徽标 chip、头像等补抓 |
 | `01-chat-empty.png` … `08-thread-auth-task.png` | 各状态全页截图（1496×846） |
+| `11-inbox.json` / `11-inbox.png` | Inbox 收件箱：页头、搜索、segmented tab、工具行、会话行（§11.1） |
+| `12-workspace-agents.json` / `.png` | Workspace Agents 付费墙（§11.3） |
+| `13-templates.json` / `.png` | Templates 模板卡片网格（§11.4） |
+| `14-integrations.json` / `.png` | Integrations 左侧二级导航列（§11.5） |
+| `15-integrations-detail.json` / `15-integrations-slack-detail.png` | Integrations 详情（Slack & Teams）（§11.5） |
+| `16-skills.json` / `.png` | Skills 页：工具行、视图切换、技能卡片网格（§11.6） |
+| `17-usage.json` / `.png` | Usage 页：统计卡、Spend limits、LCU 进度条、Breakdown 表格（§11.7） |
+| `18-settings.json` / `.png` | Settings API Keys 页：设置导航列、segmented tab、表格（§11.8） |
+| `19-chat-tabs.json` | Chat 页 All/Attention tab（§11.2） |
+| `20-sidebar-collapsed.json` / `.png` | 侧边栏 44px 收起态（§11.9） |
 
 ## 未抓到 / 存疑项
 
@@ -293,3 +376,12 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 - **启用态发送按钮**：未实际输入有效消息发送，启用态背景色未实测（按令牌推断为 `#006ddd`）。
 - **"Fleet" 工作区切换菜单**、**Search ⌘K 面板**、**New agent 创建流程**：未展开，避免产生副作用（用量计数在抓取期间因线程打开从 13 涨到 15，属页面正常行为）。
 - 时间戳：会话行与消息上均未渲染可见时间戳（分组靠 TODAY/YESTERDAY 标题承担）。
+
+第二轮新增：
+
+- **Workspace Agents 真实列表**：付费墙挡住，只抓到 "Upgrade required" 拦截页。
+- **Integrations 各分类详情**：只抓了 "Slack & Teams" 一个详情（未点 Connect，Connect 流程未抓）。
+- **Settings 各子页表单**：只抓了 API Keys 页，Members / Billing 等其余子页未抓。
+- **Inbox 空态**：当前工作区有 3 条会话，看不到空态排版。
+- **Skills 的 Table 视图 / Create Skill 表单**：未切换、未打开，避免副作用。
+- **Usage 统计卡 label 第一轮走查曾 MISSING**：原因是 label 的 DOM 原文为 "Total Spend"（大写靠 CSS `uppercase` 变换），第二轮已用大小写不敏感匹配补抓成功（§11.7）。

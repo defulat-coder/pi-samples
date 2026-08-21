@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentThinkingLevel, ChatRequest, ChatStreamEvent, PromptDocument, SessionSummary, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, PromptDocument, SessionSummary, SettingsResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -23,8 +23,17 @@ export async function fetchAgent(agentId: string): Promise<AgentDetail> {
   return readJson(await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}`), 'Agent 详情暂时无法读取');
 }
 
+export async function fetchAgentResources(agentId: string): Promise<AgentResources> {
+  return readJson(await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/resources`), 'Agent 资源信息暂时无法读取');
+}
+
 export async function fetchSessions(agentId: string): Promise<SessionSummary[]> {
   const payload = await readJson<{ items: SessionSummary[] }>(await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/sessions`), '会话列表暂时无法读取');
+  return payload.items;
+}
+
+export async function fetchInbox(): Promise<SessionSummary[]> {
+  const payload = await readJson<{ items: SessionSummary[] }>(await fetch('/api/v1/inbox'), '收件箱暂时无法读取');
   return payload.items;
 }
 
@@ -46,6 +55,31 @@ export async function deleteSession(agentId: string, sessionId: string): Promise
 
 export async function fetchPrompt(name: string): Promise<PromptDocument> {
   return readJson(await fetch(`/api/v1/prompts/${encodeURIComponent(name)}`), '提示词暂时无法读取');
+}
+
+export async function fetchSkills(): Promise<SkillSummary[]> {
+  const payload = await readJson<{ items: SkillSummary[] }>(await fetch('/api/v1/skills'), '技能列表暂时无法读取');
+  return payload.items;
+}
+
+export async function fetchUsage(): Promise<UsageResponse> {
+  return readJson(await fetch('/api/v1/usage'), '用量数据暂时无法读取');
+}
+
+export async function fetchSettings(): Promise<SettingsResponse> {
+  return readJson(await fetch('/api/v1/settings'), '设置信息暂时无法读取');
+}
+
+/** Creates .pi/agents/<id>.md via the API; server errors (400/409) surface their message. */
+export async function createAgent(request: CreateAgentRequest): Promise<AgentDetail> {
+  return readJson(
+    await fetch('/api/v1/agents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+    'Agent 暂时无法创建',
+  );
 }
 
 /** POSTs a chat turn and streams typed events to `onEvent`; resolves with the final `done` event. */

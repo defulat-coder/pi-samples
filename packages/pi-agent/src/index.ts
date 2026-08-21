@@ -15,6 +15,7 @@ import { assertSessionAgentBinding, getPiSessionDir, PI_WORKBENCH_AGENT_ENTRY } 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 export * from './agents.js';
 export * from './session-store.js';
+export * from './usage.js';
 
 export type PiThinkingLevel = AgentThinkingLevel;
 

@@ -11,6 +11,10 @@ export type ChatMessage = {
   streaming?: boolean;
   /** Set when the turn ended with a stream error. */
   error?: string;
+  /** Set when the turn was interrupted (client aborted the stream). */
+  interrupted?: boolean;
+  /** Present while Pi is auto-retrying the turn. */
+  retry?: { attempt: number; maxAttempts: number; errorMessage: string };
   model?: ChatModelLabel;
   usage?: ChatUsage;
 };
@@ -18,3 +22,6 @@ export type ChatMessage = {
 export function newMessageId(): string {
   return `msg_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+/** 系统页面（用量 / 设置）；同一时间至多打开一个，与会话、收件箱、探索区互斥。 */
+export type SystemView = 'usage' | 'settings';
