@@ -389,6 +389,8 @@ export interface DigitalHumanChatRequest {
   sessionId?: string;
   turnId?: string;
   thinkingLevel?: AgentThinkingLevel;
+  /** Optional model override; the API validates it against the configured provider's catalog. */
+  model?: string;
   debug?: boolean;
 }
 

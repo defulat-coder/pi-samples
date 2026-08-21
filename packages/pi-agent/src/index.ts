@@ -108,6 +108,8 @@ export interface AgentTurnOptions {
   turnNumber?: number;
   /** Explicit per-turn thinking mode selected by the Web client. */
   thinkingLevel?: PiThinkingLevel;
+  /** Explicit per-session model override, validated by the API against the provider catalog. */
+  model?: string;
   onEvent?: (event: AgentSessionEvent) => void;
   onEventSummary?: (event: AgentEventSummary) => void;
   onTextDelta?: (delta: string) => void;
@@ -750,6 +752,12 @@ export class PiSessionRegistry {
   async run(digitalHumanId: DigitalHumanId, sessionId: string, prompt: string, options: AgentTurnOptions = {}, sessionOptions: Omit<PiAgentSessionOptions, 'digitalHumanId' | 'sessionId'> = {}): Promise<AgentTurnResult> {
     const runtime = await this.getOrCreate(digitalHumanId, sessionId, sessionOptions);
     if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
+    if (options.model && runtime.session.model?.id !== options.model) {
+      const { provider } = getPiModelConfig();
+      const model = provider ? runtime.session.modelRuntime.getModel(provider, options.model) : undefined;
+      if (!model) throw new Error(`Pi model not found: ${provider ?? 'default'}/${options.model}`);
+      await runtime.session.setModel(model);
+    }
     return collectPiTurn(runtime, prompt, options);
   }
 
@@ -776,6 +784,21 @@ export function getPiModelStatus(enabled = process.env.PI_AGENT_ENABLED === 'tru
   const providerKeyEnv: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', google: 'GOOGLE_API_KEY', 'google-vertex': 'GOOGLE_API_KEY', 'kimi-coding': 'KIMI_API_KEY' };
   const providerConfigured = config.provider ? Boolean(process.env[providerKeyEnv[config.provider] ?? '']) : Boolean(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || process.env.KIMI_API_KEY);
   return { enabled, providerConfigured, thinkingLevel: getPiThinkingLevel(), ...config };
+}
+
+let catalogRuntimePromise: Promise<ModelRuntime> | undefined;
+
+function getCatalogRuntime(): Promise<ModelRuntime> {
+  catalogRuntimePromise ??= ModelRuntime.create({ allowModelNetwork: false });
+  return catalogRuntimePromise;
+}
+
+/** Static provider catalog for the configured provider; used to render and validate the Web model picker. */
+export async function listPiModels(): Promise<Array<{ id: string; name: string }>> {
+  const { provider } = getPiModelConfig();
+  if (!provider) return [];
+  const runtime = await getCatalogRuntime();
+  return runtime.getModels(provider).map((model) => ({ id: model.id, name: model.name }));
 }
 
 function availableTools(context: PiWorkspaceContext): string[] {

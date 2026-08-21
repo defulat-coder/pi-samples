@@ -24,6 +24,15 @@ import { ThumbsUp } from '@phosphor-icons/react/dist/icons/ThumbsUp';
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { X } from '@phosphor-icons/react/dist/icons/X';
+import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar';
+import { Cpu } from '@phosphor-icons/react/dist/icons/Cpu';
+import { FileText } from '@phosphor-icons/react/dist/icons/FileText';
+import { Info } from '@phosphor-icons/react/dist/icons/Info';
+import { LockKey } from '@phosphor-icons/react/dist/icons/LockKey';
+import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
+import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle';
+import { UserCircle } from '@phosphor-icons/react/dist/icons/UserCircle';
+import { Wrench } from '@phosphor-icons/react/dist/icons/Wrench';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { applyAgentStreamEvent, buildToolActivities, createLiveTurnProcess, isVisibleProcessEvent, type ToolActivity } from './stream-process.js';
@@ -41,7 +50,7 @@ type WorkspaceSnapshot = {
   digitalHumans: DigitalHumanDefinition[];
   resources: AgentResourceSummary[];
   tools: { enabled: string[]; policy: 'read-only' };
-  model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string };
+  model: { enabled: boolean; providerConfigured: boolean; provider?: string; model?: string; thinkingLevel?: string; available?: Array<{ id: string; name: string }> };
   pi?: PiRuntimeResourceSnapshot;
 };
 
@@ -681,7 +690,7 @@ function ResourceViewer({ document, loading, error, onClose }: { document: Agent
   </motion.section>;
 }
 
-function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSession, onRename, onDelete }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void; onNewSession: () => void; onRename: (id: string, title: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
+function SessionList({ sessions, currentSessionId, pending, onSelect, onRename, onDelete }: { sessions: SessionRecord[]; currentSessionId: string; pending: boolean; onSelect: (id: string) => void; onRename: (id: string, title: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
   const [editingId, setEditingId] = useState('');
   const [draftTitle, setDraftTitle] = useState('');
   const [savingId, setSavingId] = useState('');
@@ -699,7 +708,6 @@ function SessionList({ sessions, currentSessionId, pending, onSelect, onNewSessi
   };
 
   return <nav className="workspace-session-list" aria-label="会话列表">
-    <button type="button" className="new-session-button session-new-session" onClick={onNewSession}><Plus size={14} weight="bold" />新建会话</button>
     {sessions.length ? <div className="session-rows"><AnimatePresence initial={false} mode="popLayout">{sessions.map((session) => {
       const isCurrent = session.id === currentSessionId;
       const title = sessionTitle(session);
@@ -720,46 +728,107 @@ function flattenResources(node: FileTreeNode, acc: AgentResourceSummary[] = []):
   return acc;
 }
 
-/** LangSmith-style scope switcher: the current digital human collapses into a trigger row, options live in a dropdown dialog. */
-function DigitalHumanSwitcher({ digitalHumans, currentDigitalHumanId, pending, onSelect }: { digitalHumans: DigitalHumanDefinition[]; currentDigitalHumanId: DigitalHumanId; pending: boolean; onSelect: (digitalHumanId: DigitalHumanId) => void }) {
+/** LangSmith-style agent configure panel: the digital human's host-injected profile, shown as collapsible sections. */
+const digitalHumanToolCatalog: Record<string, { title: string; description: string; icon: ReactNode }> = {
+  read: { title: '读取文件', description: '读取工作区内的项目文件内容', icon: <FileText size={16} /> },
+  search_knowledge: { title: '检索知识库', description: '在项目 Markdown 知识库中检索相关条目', icon: <MagnifyingGlass size={16} /> },
+  query_business_data: { title: '业务数据查询', description: '基于语义模型查询认证业务指标', icon: <ChartBar size={16} /> },
+};
+
+function ConfigSection({ icon, title, defaultOpen = false, children }: { icon: ReactNode; title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="config-section">
+      <button type="button" className="config-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        {icon}<strong>{title}</strong>
+        <motion.span className="config-section-chevron" animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.16, ease: motionEase }}><CaretDown size={13} weight="bold" /></motion.span>
+      </button>
+      <AnimatePresence initial={false}>{open ? (
+        <motion.div className="config-section-body" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0, transition: { duration: 0.14, ease: motionEase } }} transition={{ duration: 0.22, ease: motionEase }}>
+          <div className="config-card">{children}</div>
+        </motion.div>
+      ) : null}</AnimatePresence>
+    </section>
+  );
+}
+
+function DigitalHumanConfigPanel({ digitalHuman, model, onClose }: { digitalHuman: DigitalHumanDefinition; model: WorkspaceSnapshot['model']; onClose: () => void }) {
+  return (
+    <motion.aside className="config-panel" aria-label={`${digitalHuman.displayName} 配置`} initial={{ x: 24, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { duration: 0.22, ease: motionEase } }} exit={{ x: 24, opacity: 0, transition: { duration: 0.12, ease: motionEase } }}>
+      <div className="config-agent-card">
+        <span className={`config-agent-avatar digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span>
+        <div className="config-agent-meta"><strong>{digitalHuman.displayName}</strong><span>{digitalHuman.tagline}</span></div>
+        <button type="button" className="config-panel-close" onClick={onClose} aria-label="关闭配置面板"><X size={15} /></button>
+      </div>
+      <div className="config-panel-scroll">
+        <ConfigSection icon={<Wrench size={15} />} title="能力工具" defaultOpen>
+          <p className="config-card-desc">由宿主按需注入的工具，全部为只读能力，不会修改项目文件。</p>
+          {digitalHuman.tools.map((tool) => {
+            const meta = digitalHumanToolCatalog[tool];
+            return (
+              <div className="config-row" key={tool}>
+                <span className="config-row-icon" aria-hidden="true">{meta?.icon ?? <Wrench size={16} />}</span>
+                <div className="config-row-meta">
+                  <strong>{meta?.title ?? tool}<span className="config-row-badge"><LockKey size={9} weight="bold" />只读</span></strong>
+                  <span>{meta?.description ?? tool}</span>
+                </div>
+              </div>
+            );
+          })}
+        </ConfigSection>
+        <ConfigSection icon={<UserCircle size={15} />} title="角色档案">
+          <p className="config-card-desc">{digitalHuman.persona.mission}</p>
+          <div className="config-chips">{digitalHuman.persona.traits.map((trait) => <span className="config-chip" key={trait}>{trait}</span>)}</div>
+          <p className="config-card-desc">{digitalHuman.persona.communicationStyle}</p>
+        </ConfigSection>
+        <ConfigSection icon={<Sparkle size={15} />} title="技能">
+          {digitalHuman.skills.map((skill) => (
+            <div className="config-row" key={skill}>
+              <span className="config-row-icon" aria-hidden="true"><Sparkle size={15} /></span>
+              <div className="config-row-meta"><strong>{skill}</strong></div>
+            </div>
+          ))}
+        </ConfigSection>
+        <ConfigSection icon={<Cpu size={15} />} title="运行时">
+          <div className="config-kv"><span>模型</span><strong>{model.model ?? '未配置'}</strong></div>
+          <div className="config-kv"><span>思考级别</span><strong>{model.thinkingLevel ?? 'off'}</strong></div>
+          <div className="config-kv"><span>能力档案</span><strong>{digitalHuman.capabilityLabel}</strong></div>
+        </ConfigSection>
+      </div>
+    </motion.aside>
+  );
+}
+
+/** LangSmith-style model picker in the composer toolbar: switches among the configured provider's catalog. */
+function ModelPicker({ models, current, disabled, onSelect }: { models: Array<{ id: string; name: string }>; current: string; disabled: boolean; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const current = digitalHumans.find((digitalHuman) => digitalHuman.id === currentDigitalHumanId);
-  const normalized = query.trim().toLocaleLowerCase();
-  const filtered = normalized ? digitalHumans.filter((digitalHuman) => `${digitalHuman.displayName} ${digitalHuman.role} ${digitalHuman.tagline}`.toLocaleLowerCase().includes(normalized)) : digitalHumans;
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [open]);
-  const choose = (id: DigitalHumanId) => { setOpen(false); setQuery(''); onSelect(id); };
-  return <div className="switcher" ref={rootRef}>
-    <button type="button" className="switcher-trigger" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen((value) => !value); setQuery(''); }}>
-      {current ? <span className={`agent-selector-mark digital-human-accent-${current.avatar.accent}`} aria-hidden="true">{current.avatar.initials}</span> : null}
-      <span className="switcher-trigger-label">{current ? `${current.displayName} · ${current.role}` : '选择数字人'}</span>
-      <CaretDown size={13} aria-hidden="true" />
+  const active = models.find((model) => model.id === current);
+  return <div className="model-picker" ref={rootRef}>
+    <button type="button" className="composer-tool-button model-picker-trigger" aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((value) => !value)} title={active ? `${active.name}（${active.id}）` : current}>
+      <Cpu size={13} /><span className="model-picker-label">{current || '未配置'}</span><CaretDown size={11} aria-hidden="true" />
     </button>
-    <AnimatePresence>{open ? <motion.div className="switcher-panel" role="dialog" aria-label="切换数字人" initial={{ opacity: 0, scale: 0.97, y: -2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: -2, transition: { duration: 0.1, ease: motionEase } }} transition={{ duration: 0.18, ease: motionEase }} style={{ transformOrigin: 'top center' }} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); setQuery(''); } }}>
-      {digitalHumans.length > 4 ? <label className="switcher-search"><MagnifyingGlass size={13} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索数字人" aria-label="搜索数字人" /></label> : null}
-      <div className="switcher-options" role="listbox" aria-label="数字人列表">
-        {filtered.map((digitalHuman) => {
-          const selected = digitalHuman.id === currentDigitalHumanId;
-          return <button type="button" role="option" aria-selected={selected} key={digitalHuman.id} className={selected ? 'switcher-option switcher-option-active' : 'switcher-option'} disabled={pending && !selected} onClick={() => choose(digitalHuman.id)}>
-            <span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span>
-            <span className="switcher-option-copy"><strong>{digitalHuman.displayName} · {digitalHuman.role}</strong><small>{digitalHuman.tagline}</small></span>
+    <AnimatePresence>{open ? <motion.div className="model-picker-panel" role="dialog" aria-label="选择模型" initial={{ opacity: 0, scale: 0.97, y: 2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 2, transition: { duration: 0.1, ease: motionEase } }} transition={{ duration: 0.16, ease: motionEase }} style={{ transformOrigin: 'bottom left' }} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
+      <div className="model-picker-options" role="listbox" aria-label="可用模型">
+        {models.map((model) => {
+          const selected = model.id === current;
+          return <button type="button" role="option" aria-selected={selected} key={model.id} className={selected ? 'model-picker-option model-picker-option-active' : 'model-picker-option'} onClick={() => { setOpen(false); onSelect(model.id); }}>
+            <span className="model-picker-option-copy"><strong>{model.name}</strong><small>{model.id}</small></span>
             {selected ? <Check size={13} weight="bold" aria-hidden="true" /> : null}
           </button>;
         })}
-        {!filtered.length ? <p className="switcher-empty">没有匹配的数字人。</p> : null}
       </div>
     </motion.div> : null}</AnimatePresence>
   </div>;
 }
 
 type PaletteItem = { id: string; group: string; label: string; hint?: string; icon?: ReactNode; run: () => void };
-
 type CommandPaletteProps = {
   open: boolean;
   onClose: () => void;
@@ -828,13 +897,6 @@ function WorkspacePanel({ state, actions }: WorkspacePanelProps) {
   const currentDigitalHuman = digitalHumans.find((digitalHuman) => digitalHuman.id === currentDigitalHumanId);
   const normalizedFilter = filter.trim().toLocaleLowerCase();
   const hasMatchingResource = treeHasMatch(tree, normalizedFilter);
-  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const nextView = event.key === 'Home' || (event.key === 'ArrowLeft' && showingSessions) || (event.key === 'ArrowRight' && !showingSessions) ? 'sessions' : 'files';
-    onViewChange(nextView);
-    requestAnimationFrame(() => document.getElementById(`workspace-tab-${nextView}`)?.focus());
-  };
   const handleTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const current = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="treeitem"]');
@@ -878,29 +940,42 @@ function WorkspacePanel({ state, actions }: WorkspacePanelProps) {
             </button>
           </header>
           <div className="workspace-nav-section">
-            <span className="workspace-nav-label">数字人</span>
-            <DigitalHumanSwitcher digitalHumans={digitalHumans} currentDigitalHumanId={currentDigitalHumanId} pending={pending} onSelect={onSelectDigitalHuman} />
             <button type="button" className="workspace-search-trigger" onClick={onOpenPalette} aria-keyshortcuts="meta+k ctrl+k"><MagnifyingGlass size={15} /><span>搜索</span><kbd>⌘K</kbd></button>
           </div>
-          <nav className="workspace-tabs" aria-label="工作区视图" role="tablist" aria-orientation="horizontal">
-            <button type="button" id="workspace-tab-sessions" role="tab" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={showingSessions} tabIndex={showingSessions ? 0 : -1}>
-              {showingSessions ? <motion.span className="workspace-tab-pill" layoutId="workspace-tab-pill" transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} aria-hidden="true" /> : null}
+          <nav className="workspace-tabs" aria-label="工作区视图">
+            <button type="button" className={showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('sessions')} aria-current={showingSessions ? 'page' : undefined}>
               <ChatCircle size={14} weight={showingSessions ? 'fill' : 'regular'} />
               <span>会话</span>
               <small>{sessions.length}</small>
             </button>
-            <button type="button" id="workspace-tab-files" role="tab" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} onKeyDown={handleTabKeyDown} aria-controls="workspace-view-panel" aria-selected={!showingSessions} tabIndex={showingSessions ? -1 : 0}>
-              {!showingSessions ? <motion.span className="workspace-tab-pill" layoutId="workspace-tab-pill" transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} aria-hidden="true" /> : null}
+            <button type="button" className={!showingSessions ? 'workspace-tab workspace-tab-active' : 'workspace-tab'} onClick={() => onViewChange('files')} aria-current={!showingSessions ? 'page' : undefined}>
               <FolderOpen size={14} weight={!showingSessions ? 'fill' : 'regular'} />
               <span>项目文件</span>
               <small>{workspace.resources.length}</small>
             </button>
           </nav>
-          <div id="workspace-view-panel" className="workspace-view-panel" role="tabpanel" aria-labelledby={showingSessions ? 'workspace-tab-sessions' : 'workspace-tab-files'} tabIndex={0}>
+          <div className="workspace-group" aria-label="数字人">
+            <div className="workspace-group-header"><span>数字人</span></div>
+            <div className="workspace-group-rows" role="listbox" aria-label="数字人列表">
+              {digitalHumans.map((digitalHuman) => {
+                const selected = digitalHuman.id === currentDigitalHumanId;
+                return <button type="button" role="option" aria-selected={selected} key={digitalHuman.id} className={selected ? 'agent-row agent-row-active' : 'agent-row'} disabled={pending && !selected} onClick={() => onSelectDigitalHuman(digitalHuman.id)}>
+                  <span className={`agent-selector-mark digital-human-accent-${digitalHuman.avatar.accent}`} aria-hidden="true">{digitalHuman.avatar.initials}</span>
+                  <span className="agent-row-copy"><strong>{digitalHuman.displayName}</strong><small>{digitalHuman.role}</small></span>
+                  {selected ? <Check size={13} weight="bold" aria-hidden="true" /> : null}
+                </button>;
+              })}
+            </div>
+          </div>
+          <div id="workspace-view-panel" className="workspace-view-panel">
             {showingSessions ? (
-              <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onNewSession={onNewSession} onRename={onRenameSession} onDelete={onDeleteSession} />
+              <>
+                <div className="workspace-group-header"><span>会话</span><button type="button" className="workspace-group-action" onClick={onNewSession} aria-label="新建会话" title="新建会话"><Plus size={13} weight="bold" /></button></div>
+                <SessionList sessions={sessions} currentSessionId={currentSessionId} pending={pending} onSelect={onSelectSession} onRename={onRenameSession} onDelete={onDeleteSession} />
+              </>
             ) : (
               <>
+                <div className="workspace-group-header"><span>项目文件</span></div>
                 <div className="workspace-toolbar">
                   <label className="workspace-search">
                     <MagnifyingGlass size={14} />
@@ -963,6 +1038,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const [resourceError, setResourceError] = useState('');
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('');
   const resourceRequestRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -979,9 +1056,30 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   useEffect(() => () => window.clearTimeout(workspaceAnimTimerRef.current), []);
   const fileTree = useMemo(() => buildFileTree(workspace.resources), [workspace.resources]);
   const flatResources = useMemo(() => flattenResources(fileTree), [fileTree]);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashPrompts = useMemo(() => flatResources.filter((resource) => resource.kind === 'prompt'), [flatResources]);
+  const slashQuery = prompt.startsWith('/') ? prompt.slice(1) : null;
+  const slashMatches = useMemo(() => (slashQuery === null ? [] : slashPrompts.filter((resource) => `${resourceTitle(resource.title)} ${resource.path}`.toLocaleLowerCase().includes(slashQuery.toLocaleLowerCase()))), [slashQuery, slashPrompts]);
+  const slashOpen = slashQuery !== null && !pending && sessionsReady;
+  useEffect(() => setSlashIndex(0), [slashQuery]);
+
+  /** Fills the composer with a .pi/prompts template, LangSmith "type / for skills" style. */
+  async function chooseSlashPrompt(resource: AgentResourceSummary) {
+    try {
+      const response = await fetch(`/api/v1/digital-humans/resource?path=${encodeURIComponent(resource.path)}`);
+      if (!response.ok) throw new Error('prompt fetch failed');
+      const document = (await response.json()) as AgentResourceDocument;
+      setPrompt(document.content.replace(/^---\n[\s\S]*?\n---\n*/, '').trim());
+    } catch {
+      setPrompt(resourceTitle(resource.title));
+    }
+    setSlashIndex(0);
+    requestAnimationFrame(() => promptInputRef.current?.focus());
+  }
   const digitalHumans = workspace.digitalHumans;
   const currentDigitalHuman = digitalHumans.find((digitalHuman) => digitalHuman.id === digitalHumanId);
   const sessions = useMemo(() => sortSessionRecords(sessionRecords), [sessionRecords]);
+  const totalQuestions = useMemo(() => sessions.reduce((total, session) => total + session.messages.filter((message) => message.kind === 'user').length, 0), [sessions]);
   const currentSession = sessionRecords.find((session) => session.id === sessionId);
 
   useEffect(() => {
@@ -1288,7 +1386,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       streamFrame = null;
     };
     try {
-      const response = await fetch('/api/v1/digital-humans/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, digitalHumanId, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', debug: true }) });
+      const response = await fetch('/api/v1/digital-humans/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ message: text, digitalHumanId, sessionId, turnId: assistantId, thinkingLevel: thinkingEnabled ? enabledThinkingLevel : 'off', ...(selectedModel ? { model: selectedModel } : {}), debug: true }) });
       if (!response.ok) throw new Error('数字人网关返回错误');
       const data = await consumeAgentStream(response, (event) => {
         streamedProcess = applyAgentStreamEvent(streamedProcess, event);
@@ -1319,12 +1417,33 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
   const composerNode = (
     <motion.div layoutId="composer" className={showWelcome ? 'composer-wrap composer-welcome' : 'composer-wrap'} transition={{ type: 'spring', duration: 0.5, bounce: 0.1 }}>
       <div className="composer">
-        <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={sessionsReady ? `向${currentDigitalHuman.displayName}提问…` : '正在加载会话…'} aria-label={`向${currentDigitalHuman.displayName}提问`} rows={1} disabled={!sessionsReady || pending || !workspace.model.enabled} />
+        <AnimatePresence initial={false}>{slashOpen ? (
+          <motion.div className="slash-panel" role="listbox" aria-label="提示词模板" initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.98, transition: { duration: 0.1, ease: motionEase } }} transition={{ duration: 0.16, ease: motionEase }} style={{ transformOrigin: 'bottom left' }}>
+            {slashMatches.length ? slashMatches.map((resource, index) => (
+              <button type="button" role="option" aria-selected={index === slashIndex} key={resource.path} className={index === slashIndex ? 'slash-option slash-option-active' : 'slash-option'} onMouseEnter={() => setSlashIndex(index)} onClick={() => void chooseSlashPrompt(resource)}>
+                <FileText size={13} aria-hidden="true" /><span className="slash-option-copy"><strong>{resourceTitle(resource.title)}</strong><small>{resource.path}</small></span>
+              </button>
+            )) : <p className="slash-empty">没有匹配的提示词模板。</p>}
+          </motion.div>
+        ) : null}</AnimatePresence>
+        <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => {
+          if (slashOpen && slashMatches.length) {
+            if (event.key === 'ArrowDown') { event.preventDefault(); setSlashIndex((index) => (index + 1) % slashMatches.length); return; }
+            if (event.key === 'ArrowUp') { event.preventDefault(); setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length); return; }
+            if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); void chooseSlashPrompt(slashMatches[slashIndex] ?? slashMatches[0]!); return; }
+            if (event.key === 'Escape') { event.preventDefault(); setPrompt(''); return; }
+          }
+          if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
+        }} placeholder={sessionsReady ? `向${currentDigitalHuman.displayName}提问，或输入 / 使用提示词…` : '正在加载会话…'} aria-label={`向${currentDigitalHuman.displayName}提问`} rows={1} disabled={!sessionsReady || pending || !workspace.model.enabled} />
         <div className="composer-toolbar">
           <button type="button" className="composer-tool-button" onClick={() => openWorkspace('files')}><FolderOpen size={14} />浏览文件</button>
           <button type="button" className={thinkingEnabled ? 'composer-tool-button composer-thinking-toggle composer-tool-active' : 'composer-tool-button composer-thinking-toggle'} onClick={() => setThinkingEnabled((enabled) => !enabled)} aria-pressed={thinkingEnabled} aria-label={thinkingEnabled ? '下一轮已开启深入思考，点击关闭' : '为下一轮开启深入思考'} title={thinkingEnabled ? '下一轮使用 minimal reasoning' : '下一轮不请求 reasoning'}><span className="thinking-switch-indicator" aria-hidden="true" />深入思考</button>
           <span className="composer-toolbar-spacer" />
-          <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '未配置'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '模型未配置'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '未配置'}</span></div>
+          {workspace.model.available?.length ? (
+            <ModelPicker models={workspace.model.available} current={selectedModel || workspace.model.model || ''} disabled={!workspace.model.enabled} onSelect={setSelectedModel} />
+          ) : (
+            <div className="model-status" role="status" aria-label={`当前模型 ${workspace.model.model ?? '未配置'}`} title={workspace.model.providerConfigured ? '模型已就绪' : '模型未配置'}><span aria-hidden="true" /><span className="model-choice-label">{workspace.model.model ?? '未配置'}</span></div>
+          )}
           <button type="button" className="send-button" onClick={() => void send()} disabled={pending || !sessionsReady || !prompt.trim() || !workspace.model.enabled} aria-label="发送"><ArrowUpRight size={18} weight="bold" /></button>
         </div>
       </div>
@@ -1337,7 +1456,8 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
       <WorkspacePanel state={{ workspace, digitalHumans, currentDigitalHumanId: digitalHumanId, sessions, currentSessionId: sessionId, view: workspaceView, tree: fileTree, filter: resourceFilter, selectedResource, collapsedPaths, pending, refreshing: workspaceRefreshing, authUser, open: workspaceOpen, animating: workspaceAnimating }} actions={{ toggleOpen: toggleWorkspace, selectDigitalHuman: (nextDigitalHumanId) => { void selectDigitalHuman(nextDigitalHumanId); }, changeView: setWorkspaceView, changeFilter: setResourceFilter, toggleResource: togglePath, selectResource: openResource, selectSession, newSession: resetSession, renameSession, deleteSession, refreshWorkspace: () => { if (!workspaceRefreshing) void refreshWorkspace(); }, openPalette: () => setPaletteOpen(true), logout: onLogout }} />
       <main className="session-panel">
         <AnimatePresence initial={false} mode="wait">{resourceDocument || resourceLoading || resourceError ? <ResourceViewer key="resource" document={resourceDocument} loading={resourceLoading} error={resourceError} onClose={closeResourceViewer} /> : <motion.section key="conversation" className="conversation-stage" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, x: 4, transition: { duration: 0.08, ease: motionEase } }}>
-          <header className="conversation-header"><div><strong>{currentDigitalHuman.displayName} · {currentDigitalHuman.role}</strong><span>{currentDigitalHuman.tagline} · {currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentDigitalHuman.capabilityLabel}</span></header>
+          {sessionsReady ? <div className="usage-bar"><Info size={13} weight="fill" aria-hidden="true" /><span>{currentDigitalHuman.displayName} 累计 {sessions.length} 个会话 · {totalQuestions} 次提问 · 项目资源 {workspace.resources.length} 个文件</span></div> : null}
+          <header className="conversation-header"><div><strong>{currentDigitalHuman.displayName} · {currentDigitalHuman.role}</strong><span>{currentDigitalHuman.tagline} · {currentSession ? sessionTitle(currentSession) : '新对话'} · {currentSession?.messages.filter((message) => message.kind === 'user').length ?? 0} 次提问</span></div><div className="conversation-header-actions"><span className="read-only-status"><ShieldCheck size={14} weight="duotone" />{currentDigitalHuman.capabilityLabel}</span><button type="button" className={configOpen ? 'config-toggle config-toggle-active' : 'config-toggle'} onClick={() => setConfigOpen((open) => !open)} aria-pressed={configOpen} aria-label={configOpen ? '关闭数字人配置面板' : '打开数字人配置面板'}><SlidersHorizontal size={14} />配置</button></div></header>
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={(event) => {
             const node = event.currentTarget;
             followConversationRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
@@ -1360,6 +1480,7 @@ function WorkbenchApp({ authUser, onLogout }: { authUser?: AuthUser; onLogout: (
           </div>
           {!showWelcome ? composerNode : null}
         </motion.section>}</AnimatePresence>
+        <AnimatePresence initial={false}>{configOpen ? <DigitalHumanConfigPanel key="config" digitalHuman={currentDigitalHuman} model={workspace.model} onClose={() => setConfigOpen(false)} /> : null}</AnimatePresence>
       </main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} digitalHumans={digitalHumans} sessions={sessions} resources={flatResources} actions={{ selectDigitalHuman: (id) => { void selectDigitalHuman(id); }, selectSession: (id) => { setWorkspaceOpen(true); setWorkspaceView('sessions'); selectSession(id); }, openResource: (path) => void openResource(path), newSession: () => { setWorkspaceOpen(true); setWorkspaceView('sessions'); resetSession(); }, browseFiles: () => openWorkspace('files') }} />
       <AnimatePresence>{error && <motion.div className="error-toast" role="alert" initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.18, ease: motionEase } }} exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.12, ease: motionEase } }}><WarningCircle size={17} weight="fill" /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={14} /></button></motion.div>}</AnimatePresence>

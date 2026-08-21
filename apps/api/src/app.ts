@@ -6,7 +6,7 @@ import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
 import type { AgentFeedback, AgentResourceDocument, AgentResourceSummary, DigitalHumanChatRequest, DigitalHumanChatStreamEvent, DigitalHumanId, WorkspaceRecordQuery } from '@pi-workbench/contracts';
 import { businessDataStore, loadKnowledgeBundle, searchKnowledge, workspaceStore } from '@pi-workbench/workspace-data';
-import { askPiAgent, getDigitalHumans, getPiModelStatus, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry } from '@pi-workbench/pi-agent';
+import { askPiAgent, getDigitalHumans, getPiModelStatus, listPiModels, loadPiResourceSnapshot, piFileSessionStore, piSessionRegistry } from '@pi-workbench/pi-agent';
 import type { PiFileSessionStore } from '@pi-workbench/pi-agent';
 import { createFeishuAuth } from './auth.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -33,6 +33,7 @@ const DigitalHumanChatRequestSchema = Type.Object({
     Type.Literal('xhigh'),
     Type.Literal('max'),
   ])),
+  model: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   debug: Type.Optional(Type.Boolean()),
 });
 
@@ -112,7 +113,14 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       throw error;
     }
     const turnNumber = ((await sessions.getSession(sessionId, body.digitalHumanId))?.messages.filter((item) => item.kind === 'user').length ?? 0) + 1;
-    return { digitalHumanId: body.digitalHumanId, sessionId, turnId: body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`, turnNumber, resources: workspaceResources(), injectedCapabilities: capabilities(definition.tools) };
+    if (body.model) {
+      const available = await listPiModels();
+      if (!available.some((entry) => entry.id === body.model)) {
+        reply.code(400).send({ error: 'UnknownModel', message: `模型不在可用列表中：${body.model}` });
+        return undefined;
+      }
+    }
+    return { digitalHumanId: body.digitalHumanId, sessionId, turnId: body.turnId ?? `turn_${crypto.randomUUID().slice(0, 8)}`, turnNumber, resources: workspaceResources(), injectedCapabilities: capabilities(definition.tools), ...(body.model ? { model: body.model } : {}) };
   };
   const requireOwnedSession = async (sessionId: string, digitalHumanId: DigitalHumanId, reply: FastifyReply) => {
     try {
@@ -192,7 +200,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
         resources: workspaceResources(),
         digitalHumans: definitions,
         tools: { enabled: [...new Set(definitions.flatMap((item) => item.tools))], policy: 'read-only' as const },
-        model: getPiModelStatus(config.PI_AGENT_ENABLED),
+        model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), available: await listPiModels() },
         pi: await loadPiResourceSnapshot(projectRoot(), { projectExtensions: config.PI_PROJECT_EXTENSIONS_ENABLED }),
         data: { kind: 'local-sqlite', records: workspaceStore.listRecords({ pageSize: 100 }).total },
         sessions: { kind: 'pi-jsonl', directory: relative(process.cwd(), sessions.sessionDir) || '.' },
@@ -255,7 +263,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
     v1.post<{ Body: DigitalHumanChatRequest }>('/digital-humans/chat', { schema: { body: DigitalHumanChatRequestSchema } }, async (request, reply) => {
       const turn = await prepareTurn(request.body, reply);
       if (!turn) return;
-      const response = await askPiAgent(request.body.message, { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, resources: turn.resources, ...turn.injectedCapabilities }, { turnNumber: turn.turnNumber, thinkingLevel: request.body.thinkingLevel });
+      const response = await askPiAgent(request.body.message, { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, resources: turn.resources, ...turn.injectedCapabilities }, { turnNumber: turn.turnNumber, thinkingLevel: request.body.thinkingLevel, model: turn.model });
       await sessions.appendTurnMetadata(turn.sessionId, turn.turnId, response, request.body.message);
       return response;
     });
@@ -285,12 +293,13 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       };
 
       const thinkingLevel = request.body.thinkingLevel ?? getPiModelStatus(config.PI_AGENT_ENABLED).thinkingLevel;
-      send('start', { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), thinkingLevel } });
+      send('start', { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, model: { ...getPiModelStatus(config.PI_AGENT_ENABLED), ...(turn.model ? { model: turn.model } : {}), thinkingLevel } });
       try {
         let sawTextDelta = false;
         const response = await askPiAgent(request.body.message, { digitalHumanId: turn.digitalHumanId, sessionId: turn.sessionId, resources: turn.resources, ...turn.injectedCapabilities }, {
           turnNumber: turn.turnNumber,
           thinkingLevel,
+          model: turn.model,
           onEventSummary: (event) => send('event', { event }),
           onTextDelta: (delta) => { if (delta) { sawTextDelta = true; send('text_delta', { delta }); } },
           onThinkingDelta: (delta) => { if (delta) send('thinking_delta', { delta }); },

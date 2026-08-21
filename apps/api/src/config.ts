@@ -36,5 +36,7 @@ export type AppConfig = Static<typeof schema>;
 
 export function loadConfig(): AppConfig {
   const envPath = [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')].find((candidate) => existsSync(candidate));
-  return envSchema<AppConfig>({ schema, dotenv: envPath ? { path: envPath } : true });
+  // env-schema 8 reads .env via util.parseEnv, which no longer mutates process.env; load it explicitly so non-schema keys (e.g. KIMI_API_KEY) stay visible.
+  if (envPath) process.loadEnvFile(envPath);
+  return envSchema<AppConfig>({ schema });
 }
