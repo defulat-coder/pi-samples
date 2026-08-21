@@ -256,6 +256,12 @@ Fleet 是四栏壳层：左侧固定 245px 侧边栏（收起后 44px，导航�
 - 分组头为 10px 全大写 Label
 - 侧边栏整体 245px↔44px 收起展开（0.2s 宽度过渡），收起后导航项 32×32 纯图标、未读徽标仍渲染
 
+### Command Palette（⌘K）
+
+- 顶部对齐弹层（距顶约 18vh）、560px 宽、popover 阴影、大圆角；输入行 44px 高 + 底部分隔线
+- 列表分组头沿用 10px 全大写 Label；行 13px，active 行雾灰底；右侧 hint 用四级灰弱提示
+- ↑↓ 移动、Enter 执行、Esc 关闭；过滤命中 label 或 hint（大小写不敏感）
+
 ### Capsule Switch（签名组件）
 
 - 全圆角白底胶囊组，4px 内边距、2px 间距；选项 10px/600 字，active 项信号浅底 + 品牌深蓝。用于配置面板的二元切换（Thinking 开/关）

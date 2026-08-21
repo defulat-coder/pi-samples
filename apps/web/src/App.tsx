@@ -10,7 +10,11 @@ import type { ExploreView } from './lib/explore.js';
 import { newMessageId, type ChatMessage, type SystemView } from './lib/types.js';
 import { readThinkingPreference } from './lib/configPanel.js';
 import { readUiPreferences, writeUiPreference, type UiPreferences } from './lib/preferences.js';
-import { Sidebar, type SessionFilter } from './components/Sidebar.js';
+import { Sidebar } from './components/Sidebar.js';
+import { InboxColumn, type SessionFilter } from './components/InboxColumn.js';
+import { CommandPalette } from './components/CommandPalette.js';
+import { ShortcutsModal } from './components/ShortcutsModal.js';
+import type { PaletteAction } from './lib/palette.js';
 import { UsageBar } from './components/UsageBar.js';
 import { Welcome } from './components/Welcome.js';
 import { Composer } from './components/Composer.js';
@@ -40,6 +44,9 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => readUiPreferences());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readUiPreferences().sidebarCollapsed);
+  const [inboxColumnCollapsed, setInboxColumnCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [configAgentId, setConfigAgentId] = useState<string | null>(null);
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -59,6 +66,12 @@ export default function App() {
     [sessionsByAgent, currentAgentId],
   );
   const currentThread: ThreadState | undefined = currentSessionId ? threads[currentSessionId] : undefined;
+  /** 每个 Agent 的待处理会话数，来自收件箱数据。 */
+  const attentionByAgent = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const item of inboxItems) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
+    return map;
+  }, [inboxItems]);
 
   const loadSessions = useCallback(async (agentId: string) => {
     try {
@@ -192,6 +205,34 @@ export default function App() {
     setConfigAgentId(null);
     setCurrentSessionId(sessionId);
     setThreads((prev) => prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyUnavailable: true } });
+  };
+
+  const handlePaletteAction = (action: PaletteAction) => {
+    switch (action.kind) {
+      case 'chat':
+        setInboxOpen(false);
+        setExploreView(null);
+        setSystemView(null);
+        break;
+      case 'inbox':
+        setExploreView(null);
+        setSystemView(null);
+        setInboxOpen(true);
+        void loadInbox();
+        break;
+      case 'explore':
+        openExplore(action.view);
+        break;
+      case 'system':
+        openSystem(action.view);
+        break;
+      case 'agent':
+        selectAgent(action.agentId);
+        break;
+      case 'session':
+        openInboxItem(action.agentId, action.sessionId);
+        break;
+    }
   };
 
   const handleRename = async (sessionId: string, title: string) => {
@@ -335,28 +376,39 @@ export default function App() {
         <Sidebar
           agents={workspace.agents}
           currentAgentId={currentAgentId}
-          sessions={sessions}
-          currentSessionId={currentSessionId}
           collapsed={sidebarCollapsed}
-          sessionFilter={sessionFilter}
           inboxOpen={inboxOpen}
           inboxCount={inboxItems.length}
+          attentionByAgent={attentionByAgent}
           exploreView={exploreView}
           systemView={systemView}
           workspaceInfo={settings ? `${settings.workspace.name} · ${settings.workspace.sessionDir}` : undefined}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           onSelectAgent={selectAgent}
-          onSelectSession={selectSession}
-          onNewSession={newSession}
-          onRenameSession={(id, title) => void handleRename(id, title)}
-          onDeleteSession={(id) => void handleDelete(id)}
           onOpenConfig={setConfigAgentId}
-          onSessionFilterChange={setSessionFilter}
+          onNewAgent={() => openExplore('templates')}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
           onOpenInbox={() => { setExploreView(null); setSystemView(null); setInboxOpen(true); void loadInbox(); }}
           onCloseInbox={() => { setInboxOpen(false); setExploreView(null); setSystemView(null); }}
           onOpenExplore={openExplore}
           onOpenSystem={openSystem}
         />
+
+        {!exploreView && !systemView && !inboxOpen && currentAgent && (
+          <InboxColumn
+            title={currentAgent.name}
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            filter={sessionFilter}
+            collapsed={inboxColumnCollapsed}
+            onToggleCollapsed={() => setInboxColumnCollapsed((value) => !value)}
+            onSelectSession={selectSession}
+            onRenameSession={(id, title) => void handleRename(id, title)}
+            onDeleteSession={(id) => void handleDelete(id)}
+            onFilterChange={setSessionFilter}
+          />
+        )}
 
         <main className="main-area">
           <UsageBar agent={currentAgent} sessions={sessions} />
@@ -435,6 +487,15 @@ export default function App() {
             </>
           )}
         </main>
+
+        <CommandPalette
+          open={paletteOpen}
+          agents={workspace.agents}
+          sessionsByAgent={sessionsByAgent}
+          onAction={handlePaletteAction}
+          onClose={() => setPaletteOpen(false)}
+        />
+        <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
         <AnimatePresence>
           {configAgentId && (
