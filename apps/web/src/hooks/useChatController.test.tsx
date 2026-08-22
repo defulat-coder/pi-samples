@@ -1,0 +1,191 @@
+import { afterEach, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { useChatController } from './useChatController.js';
+
+/** useChatController 经 streamChat 走全局 fetch 消费 SSE；测试在 fetch 这一层打桩。 */
+
+const originalFetch = globalThis.fetch;
+
+const MODEL = { provider: 'kimi-coding', model: 'kimi-for-coding', thinkingLevel: 'off' } as const;
+
+/** 可手动推进的 SSE 响应流：emit 推事件、close 结束、fail 让 reader 拒绝。 */
+function sseChannel() {
+  const encoder = new TextEncoder();
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c; } });
+  return {
+    response: new Response(stream),
+    emit(event: string, data: unknown) {
+      controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+    },
+    close() {
+      controller.close();
+    },
+    fail(error: Error) {
+      controller.error(error);
+    },
+  };
+}
+
+function setup() {
+  const notifications: string[] = [];
+  const settled: string[] = [];
+  const view = renderHook(() =>
+    useChatController({
+      notify: (text) => notifications.push(text),
+      onTurnSettled: (agentId) => settled.push(agentId),
+    }),
+  );
+  return { ...view, notifications, settled };
+}
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+describe('useChatController', () => {
+  it('新会话正常流：start 迁移草稿线程，delta 依次上屏，done 落定', async () => {
+    const channel = sseChannel();
+    globalThis.fetch = (async () => channel.response) as typeof fetch;
+    const { result, settled } = setup();
+
+    act(() => result.current.send('你好', 'agent-one'));
+    assert.ok(result.current.liveTurn, 'send 后 liveTurn 应立即存在');
+    assert.deepEqual(
+      result.current.threadMessages.map((message) => [message.role, message.text]),
+      [['user', '你好'], ['assistant', '']],
+      '草稿线程应立即承载用户消息与流式占位',
+    );
+
+    await act(async () => {
+      channel.emit('start', { sessionId: 's1', agentId: 'agent-one', model: MODEL });
+    });
+    assert.equal(result.current.currentSessionId, 's1', 'start 后草稿线程迁移到服务端 sessionId');
+
+    await act(async () => {
+      channel.emit('text_delta', { delta: '你好' });
+      channel.emit('text_delta', { delta: '世界' });
+    });
+    assert.equal(result.current.liveTurn?.answer, '你好世界');
+    assert.equal(result.current.threadMessages[1]!.text, '你好世界', 'liveTurn 增量叠加到 assistant 消息');
+
+    await act(async () => {
+      channel.emit('done', { answer: '你好世界' });
+      channel.close();
+    });
+    assert.equal(result.current.liveTurn, null);
+    const assistant = result.current.threadMessages[1]!;
+    assert.equal(assistant.text, '你好世界');
+    assert.equal(assistant.streaming, false);
+    assert.equal(assistant.model?.model, 'kimi-for-coding');
+    assert.deepEqual(settled, ['agent-one']);
+  });
+
+  it('start 之前失败：用户消息与错误留在草稿线程，并触发 notify', async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(String(init?.body));
+      return new Response(JSON.stringify({ error: '模型不在可用列表中' }), { status: 400 });
+    }) as typeof fetch;
+    const { result, notifications, settled } = setup();
+
+    act(() => result.current.send('保留我', 'agent-one'));
+    await waitFor(() => assert.ok(notifications.includes('模型不在可用列表中')));
+
+    const [user, assistant] = result.current.threadMessages;
+    assert.equal(user!.text, '保留我', '用户消息不能静默丢失');
+    assert.equal(assistant!.error, '模型不在可用列表中');
+    assert.equal(assistant!.streaming, false);
+    assert.equal(result.current.liveTurn, null);
+    assert.ok(result.current.currentSessionId, '草稿线程成为当前会话');
+    assert.deepEqual(settled, ['agent-one']);
+
+    // 从草稿线程重发：仍按新会话请求（不带 sessionId），start 后整体迁移到真实 sessionId。
+    const channel = sseChannel();
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(String(init?.body));
+      return channel.response;
+    }) as typeof fetch;
+    act(() => result.current.send('再来一次', 'agent-one'));
+    assert.equal(JSON.parse(bodies[1]!).sessionId, undefined);
+
+    await act(async () => {
+      channel.emit('start', { sessionId: 's2', agentId: 'agent-one', model: MODEL });
+      channel.emit('done', { answer: '好的' });
+      channel.close();
+    });
+    assert.equal(result.current.currentSessionId, 's2');
+    assert.deepEqual(
+      result.current.threadMessages.map((message) => [message.role, message.text, message.error ?? '']),
+      [
+        ['user', '保留我', ''],
+        ['assistant', '', '模型不在可用列表中'],
+        ['user', '再来一次', ''],
+        ['assistant', '好的', ''],
+      ],
+      '草稿线程的失败现场随迁移保留',
+    );
+  });
+
+  it('interrupt 中止进行中的 turn：消息标记 interrupted，liveTurn 清空', async () => {
+    const channel = sseChannel();
+    globalThis.fetch = (async (_url, init) => {
+      init?.signal?.addEventListener('abort', () => channel.fail(new DOMException('The operation was aborted', 'AbortError')));
+      return channel.response;
+    }) as typeof fetch;
+    const { result } = setup();
+
+    act(() => result.current.send('打断我', 'agent-one'));
+    await act(async () => {
+      channel.emit('start', { sessionId: 's3', agentId: 'agent-one', model: MODEL });
+      channel.emit('text_delta', { delta: '半句' });
+    });
+    assert.equal(result.current.liveTurn?.answer, '半句');
+
+    act(() => result.current.interrupt());
+    await waitFor(() => {
+      const assistant = result.current.threadMessages[1];
+      assert.equal(assistant?.interrupted, true);
+    });
+    assert.equal(result.current.liveTurn, null);
+    const assistant = result.current.threadMessages[1]!;
+    assert.equal(assistant.text, '半句');
+    assert.equal(assistant.streaming, false);
+  });
+
+  it('openSession 回放历史，closeSession 清空当前视图状态', async () => {
+    globalThis.fetch = (async (url) => {
+      const href = String(url);
+      if (href.includes('/sessions/s1/messages')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              { id: 'm1', role: 'user', content: '历史问题', timestamp: '2026-01-01T00:00:00Z' },
+              { id: 'm2', role: 'assistant', content: '历史回答', timestamp: '2026-01-01T00:00:01Z' },
+            ],
+          }),
+        );
+      }
+      if (href.includes('/sessions/s4/messages')) {
+        return new Response(
+          JSON.stringify({ items: [{ id: 'm3', role: 'user', content: '另一条线', timestamp: '2026-01-01T00:00:02Z' }] }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+
+    const { result } = setup();
+    act(() => result.current.openSession('agent-one', 's1'));
+    await waitFor(() => assert.equal(result.current.threadMessages.length, 2));
+    assert.equal(result.current.threadMessages[0]!.text, '历史问题');
+
+    act(() => result.current.openSession('agent-one', 's4'));
+    assert.equal(result.current.currentSessionId, 's4');
+    await waitFor(() => assert.deepEqual(result.current.threadMessages.map((message) => message.text), ['另一条线']));
+
+    act(() => result.current.closeSession());
+    assert.equal(result.current.currentSessionId, null);
+    assert.deepEqual(result.current.threadMessages, []);
+  });
+});

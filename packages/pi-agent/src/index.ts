@@ -174,6 +174,11 @@ export class PiSessionRegistry {
     if (existing) return existing;
     const created = createPiAgentSession({ ...options, agentId, sessionId, persistSession: true });
     this.sessions.set(key, created);
+    // 创建失败（如 model not found）时不能缓存 rejected Promise，否则该 session 后续所有
+    // turn 都命中同一个失败；仅在自己仍是 map 里的条目时摘除，避免竞态误删新条目。
+    created.catch(() => {
+      if (this.sessions.get(key) === created) this.sessions.delete(key);
+    });
     return created;
   }
 

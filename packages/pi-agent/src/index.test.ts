@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, KeyedExecutor, listPiModels } from './index.js';
+import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, KeyedExecutor, listPiModels, PiSessionRegistry } from './index.js';
 
 const roots: string[] = [];
 
@@ -81,5 +81,28 @@ describe('KeyedExecutor', () => {
     const executor = new KeyedExecutor();
     await assert.rejects(() => executor.run('a', async () => { throw new Error('boom'); }), /boom/);
     assert.equal(await executor.run('a', async () => 'ok'), 'ok');
+  });
+});
+
+describe('PiSessionRegistry', () => {
+  it('创建失败不缓存 rejected Promise：同 key 重试会重新创建', async () => {
+    const cwd = fixtureCwd();
+    const sessionDir = join(cwd, '.pi', 'sessions');
+    const registry = new PiSessionRegistry();
+    try {
+      await assert.rejects(
+        () => registry.run('agent-one', 'retry-session', '你好', {}, { cwd, sessionDir, model: 'no-such-model' }),
+        /no-such-model/,
+      );
+      // 若 rejected Promise 被缓存，第二次仍会报 no-such-model；重新创建才会看到新的模型名。
+      await assert.rejects(
+        () => registry.run('agent-one', 'retry-session', '你好', {}, { cwd, sessionDir, model: 'still-missing' }),
+        /still-missing/,
+      );
+      // 失败条目已摘除，abort 不应因残留的 rejected Promise 而上抛。
+      await registry.abort('agent-one', 'retry-session');
+    } finally {
+      await registry.closeAll();
+    }
   });
 });

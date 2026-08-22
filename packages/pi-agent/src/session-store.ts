@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SessionManager, type SessionEntry, type SessionHeader, type SessionInfo } from '@earendil-works/pi-coding-agent';
 import { AGENT_ID_PATTERN, type SessionMessage, type SessionSummary } from '@pi-workbench/contracts';
@@ -168,6 +168,11 @@ export interface AgentSessionStoreOptions {
 export class AgentSessionStore {
   readonly cwd: string;
   readonly sessionDir: string;
+  /**
+   * JSONL 解析结果按 path+mtimeMs 缓存：listSessions/recordFromInfo 不再为每个会话文件
+   * 重复 open+parse。进行中的会话会让文件 mtime 变化，天然触发重解析；无 watch 需求。
+   */
+  private readonly entriesCache = new Map<string, { mtimeMs: number; entries: SessionEntry[] }>();
 
   constructor(options: AgentSessionStoreOptions) {
     this.cwd = resolve(options.cwd);
@@ -176,6 +181,11 @@ export class AgentSessionStore {
 
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
     const infos = await this.sortedInfos();
+    // 清掉已删除会话的缓存条目，避免 map 随删除操作无限增长。
+    const livePaths = new Set(infos.map((info) => info.path));
+    for (const key of this.entriesCache.keys()) {
+      if (!livePaths.has(key)) this.entriesCache.delete(key);
+    }
     const records = await Promise.all(infos.map((info) => this.recordFromInfo(info)));
     const defined = records.filter((record): record is SessionSummary => Boolean(record));
     return agentId ? defined.filter((record) => record.agentId === agentId) : defined;
@@ -250,9 +260,18 @@ export class AgentSessionStore {
     return manager;
   }
 
+  /** Parses one session JSONL once per file version; mtime changes force a re-parse. */
+  private entriesFor(path: string): SessionEntry[] {
+    const mtimeMs = statSync(path).mtimeMs;
+    const cached = this.entriesCache.get(path);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.entries;
+    const entries = SessionManager.open(path, this.sessionDir, this.cwd).getEntries();
+    this.entriesCache.set(path, { mtimeMs, entries });
+    return entries;
+  }
+
   private async recordFromInfo(info: SessionInfo): Promise<SessionSummary | undefined> {
-    const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
-    const entries = manager.getEntries();
+    const entries = this.entriesFor(info.path);
     let agentId: string;
     try {
       agentId = assertSessionAgentBinding(entries);

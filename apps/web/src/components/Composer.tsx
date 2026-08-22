@@ -97,8 +97,9 @@ export function Composer({ prompts, models, disabled, selectedModel, onSelectMod
       const document = await fetchPrompt(name);
       setText(document.content.trim());
       textareaRef.current?.focus();
-    } catch {
-      setText('');
+    } catch (error) {
+      // 拉取失败不清空用户已输入的内容；Composer 没有 notify 通道，先打日志保留现场。
+      console.error('提示词暂时无法读取', error);
     } finally {
       setLoadingPrompt(false);
     }

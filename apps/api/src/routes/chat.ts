@@ -55,7 +55,8 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
     }
     // Once the client is gone we abort the Pi turn instead of burning tokens into the void.
     sse.onDisconnect(() => {
-      void piSessionRegistry.abort(agent.id, session.id);
+      // abort 可能因会话创建失败或运行时已关闭而 reject；断开回调里没有上抛通道，吞掉即可。
+      void piSessionRegistry.abort(agent.id, session.id).catch(() => undefined);
     });
     sse.send({ type: 'start', sessionId: session.id, agentId: agent.id, model: modelLabel });
     try {

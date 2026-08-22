@@ -9,6 +9,8 @@ export type ThreadState = {
   messages: ChatMessage[];
   /** true 表示历史消息已从服务端回放完成（或本次会话内产生，无需回放）。 */
   historyLoaded: boolean;
+  /** 本地草稿线程：服务端 start 前新会话没有 sessionId；start 到达后迁移并清除该标记。 */
+  pending?: boolean;
 };
 
 export interface ChatControllerOptions {
@@ -89,16 +91,20 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
 
     const userMessage: ChatMessage = { id: newMessageId(), role: 'user', text };
     const assistantMessage: ChatMessage = { id: newMessageId(), role: 'assistant', text: '', streaming: true };
-    const sessionKey = currentSessionId;
+    // 草稿线程没有服务端 sessionId：下一轮仍按新会话发起，不能把草稿 key 发给服务端。
+    const pendingKey = currentSessionId && threads[currentSessionId]?.pending ? currentSessionId : null;
+    const sessionKey = currentSessionId && !pendingKey ? currentSessionId : null;
+    const threadKey = sessionKey ?? pendingKey ?? `draft-${newMessageId()}`;
 
-    const appendToThread = (key: string, items: ChatMessage[]) => {
+    const appendToThread = (key: string, items: ChatMessage[], pending = false) => {
       setThreads((prev) => {
         const thread = prev[key] ?? { messages: [], historyLoaded: true };
-        return { ...prev, [key]: { ...thread, messages: [...thread.messages, ...items], historyLoaded: true } };
+        return { ...prev, [key]: { ...thread, messages: [...thread.messages, ...items], historyLoaded: true, ...(pending ? { pending: true } : {}) } };
       });
     };
 
-    if (sessionKey) appendToThread(sessionKey, [userMessage, assistantMessage]);
+    appendToThread(threadKey, [userMessage, assistantMessage], !sessionKey);
+    if (!sessionKey && !pendingKey) setCurrentSessionId(threadKey);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -111,7 +117,14 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
       if (event.type === 'start' && !resolvedSessionId) {
         resolvedSessionId = event.sessionId;
         setCurrentSessionId(event.sessionId);
-        appendToThread(event.sessionId, [userMessage, assistantMessage]);
+        // 草稿线程整体迁移到服务端 session id；草稿中途被移除时退回直接落消息。
+        setThreads((prev) => {
+          const draft = prev[threadKey];
+          const next = { ...prev };
+          if (threadKey !== event.sessionId) delete next[threadKey];
+          next[event.sessionId] = { messages: draft ? draft.messages : [userMessage, assistantMessage], historyLoaded: true };
+          return next;
+        });
       }
       setLiveTurn({ ...turn, messageId: assistantMessage.id });
     };
@@ -129,7 +142,10 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
           finalize(turn.answer, undefined, true);
           return;
         }
-        finalize(turn.answer, error.message || '流式响应失败');
+        const message = error.message || '流式响应失败';
+        finalize(turn.answer, message);
+        // start 之前的失败此前会被静默丢弃：草稿线程落错误消息之外再 toast 一次。
+        if (!resolvedSessionId) notify(message);
       })
       .finally(() => {
         abortRef.current = null;
@@ -138,8 +154,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
       });
 
     function finalize(answer: string, error: string | undefined, interrupted = false) {
-      const key = resolvedSessionId;
-      if (!key) return;
+      const key = resolvedSessionId ?? threadKey;
       setThreads((prev) => {
         const thread = prev[key];
         if (!thread) return prev;
