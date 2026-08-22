@@ -1,11 +1,13 @@
 {
   // 试点策略：只读工具放行，bash 一律走人工审批（转发到工作台收件箱），其余默认拒绝。
+  // subagent 委派本身只是编排（放行）；子会话里的 bash 等仍按上面规则各自审批。
   // schema: pi-permission-system 包内 schemas/permissions.schema.json
   "tools": {
     "read": "allow",
     "grep": "allow",
     "find": "allow",
-    "ls": "allow"
+    "ls": "allow",
+    "subagent": "allow"
   },
   "bash": { "*": "ask" },
   "defaultPolicy": { "tools": "deny", "bash": "ask", "mcp": "deny", "skills": "deny" }

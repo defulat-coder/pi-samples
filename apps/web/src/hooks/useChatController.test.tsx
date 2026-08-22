@@ -91,7 +91,9 @@ describe('useChatController', () => {
     const { result, notifications, settled } = setup();
 
     act(() => result.current.send('保留我', 'agent-one'));
-    await waitFor(() => assert.ok(notifications.includes('模型不在可用列表中')));
+    // 先等 React 把 finalize 的错误状态渲染出来，再断言同步发生的 notify，避免轮询竞态。
+    await waitFor(() => assert.equal(result.current.threadMessages[1]?.error, '模型不在可用列表中'));
+    assert.ok(notifications.includes('模型不在可用列表中'));
 
     const [user, assistant] = result.current.threadMessages;
     assert.equal(user!.text, '保留我', '用户消息不能静默丢失');

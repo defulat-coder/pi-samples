@@ -1,5 +1,6 @@
 import type { ChatModelLabel, ChatUsage } from '@pi-workbench/contracts';
 import type { ExploreView } from './explore.js';
+import type { LiveToolCall } from './stream.js';
 
 /** One rendered message in the thread view. */
 export type ChatMessage = {
@@ -16,6 +17,8 @@ export type ChatMessage = {
   interrupted?: boolean;
   /** Present while Pi is auto-retrying the turn. */
   retry?: { attempt: number; maxAttempts: number; errorMessage: string };
+  /** 本轮发生的工具/委派调用卡片（仅流式期间可见；历史回放不含工具事件）。 */
+  tools?: LiveToolCall[];
   model?: ChatModelLabel;
   usage?: ChatUsage;
 };

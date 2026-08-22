@@ -47,7 +47,8 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   app.register(helmet, { contentSecurityPolicy: false });
   app.addHook('onClose', async () => {
     events.close();
-    approvalBridge.close();
+    // 先排空审批桥的在途扫描（scan 会写库），再关 db，否则关闭竞态打到已关闭的连接。
+    await approvalBridge.close();
     db.close();
   });
 

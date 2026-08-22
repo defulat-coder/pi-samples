@@ -429,6 +429,30 @@ input, textarea { font: inherit; color: inherit; }
 .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
 .thinking-dot.active { animation: caret-blink 0.9s ease-in-out infinite; }
 
+/* 工具/委派调用卡片 */
+.tool-card { margin-top: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-secondary); overflow: hidden; }
+.tool-card summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+  padding: 7px 10px; font-size: 12px; font-weight: 500; color: var(--text-tertiary);
+  transition: background var(--duration-normal);
+}
+.tool-card summary::-webkit-details-marker { display: none; }
+.tool-card summary:hover { background: var(--bg-tertiary); }
+.tool-card summary .caret { margin-left: auto; transition: transform var(--duration-normal); }
+.tool-card[open] > summary .caret { transform: rotate(90deg); }
+.tool-card-icon { display: inline-flex; color: var(--text-quaternary); flex: none; }
+.tool-card-title { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-card-status { flex: none; display: inline-flex; align-items: center; }
+.tool-card-status .running { animation: retry-spin 1.2s linear infinite; color: var(--text-quaternary); }
+.tool-card-status .ok { color: var(--text-quaternary); }
+.tool-card-status .fail { color: var(--error-text); }
+.tool-card-body { border-top: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-3); }
+.tool-card-body pre {
+  margin: 0; max-height: 200px; overflow: auto; font-size: 12px; line-height: 1.6;
+  color: var(--text-tertiary); white-space: pre-wrap; word-break: break-word;
+}
+.tool-card-body .tool-card-label { font-size: 11px; font-weight: 600; color: var(--text-quaternary); margin: 4px 0 2px; }
+
 /* markdown 排版 */
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
@@ -964,10 +988,10 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
   .thinking-block summary:active { transform: none; }
   .sidebar, .inbox-column,
   .group-header-chevron, .config-section-chevron,
-  .thinking-block summary .caret, .toggle-thumb {
+  .thinking-block summary .caret, .tool-card summary .caret, .toggle-thumb {
     transition-duration: 0.01ms !important;
   }
   /* 循环动画降速变缓（gentler），不完全禁掉以保留状态反馈 */
   .assistant-body.streaming::after, .thinking-dot.active { animation-duration: 2.4s; }
-  .message-retry .spinning, .spinning { animation-duration: 2.4s; }
+  .message-retry .spinning, .spinning, .tool-card-status .running { animation-duration: 2.4s; }
 }

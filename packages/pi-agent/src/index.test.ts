@@ -41,7 +41,7 @@ describe('pi agent runtime', () => {
     const runtime = await createPiAgentSession({ cwd: fixtureCwd(), agentId: 'agent-one', persistSession: false });
     try {
       assert.equal(runtime.agentId, 'agent-one');
-      assert.deepEqual([...runtime.session.getActiveToolNames()].sort(), ['bash', 'find', 'grep', 'ls', 'read']);
+      assert.deepEqual([...runtime.session.getActiveToolNames()].sort(), ['bash', 'find', 'grep', 'ls', 'read', 'subagent']);
       assert.match(runtime.session.systemPrompt, /你是 agent-one。/);
     } finally {
       runtime.close();

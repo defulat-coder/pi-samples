@@ -153,6 +153,11 @@ export type ChatStreamEvent =
   | { type: 'start'; sessionId: string; agentId: string; model: ChatModelLabel }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
+  /**
+   * 工具执行生命周期帧（subagent 委派、bash 等工具卡片用）。
+   * args/result 是截断后的 JSON 文本（API 侧 4KB 上限），可能不是完整 JSON，渲染按纯文本处理。
+   */
+  | { type: 'tool'; phase: 'start' | 'update' | 'end'; toolCallId: string; toolName: string; args?: string; result?: string; isError?: boolean }
   | { type: 'done'; answer: string; usage?: ChatUsage }
   /** Pi auto-retry lifecycle: emitted when a failed turn is retried. */
   | { type: 'retry'; attempt: number; maxAttempts: number; errorMessage: string }

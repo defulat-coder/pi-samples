@@ -38,6 +38,16 @@ export function decodeStreamEvent(block: SseBlock): ChatStreamEvent {
       return { type: 'text_delta', delta: String(payload.delta ?? '') };
     case 'thinking_delta':
       return { type: 'thinking_delta', delta: String(payload.delta ?? '') };
+    case 'tool':
+      return {
+        type: 'tool',
+        phase: payload.phase === 'update' || payload.phase === 'end' ? payload.phase : 'start',
+        toolCallId: String(payload.toolCallId ?? ''),
+        toolName: String(payload.toolName ?? ''),
+        ...(payload.args !== undefined ? { args: String(payload.args) } : {}),
+        ...(payload.result !== undefined ? { result: String(payload.result) } : {}),
+        ...(payload.isError !== undefined ? { isError: Boolean(payload.isError) } : {}),
+      };
     case 'done':
       return { type: 'done', answer: String(payload.answer ?? ''), ...(payload.usage ? { usage: payload.usage as ChatUsage } : {}) };
     case 'retry':
@@ -49,6 +59,17 @@ export function decodeStreamEvent(block: SseBlock): ChatStreamEvent {
   }
 }
 
+/** 一次工具调用在流式 turn 里的可见状态（委派卡片、bash 卡片共用）。 */
+export type LiveToolCall = {
+  id: string;
+  name: string;
+  args?: string;
+  result?: string;
+  isError?: boolean;
+  /** end 帧到达后置真；运行中用于 spinner。 */
+  done: boolean;
+};
+
 /** Accumulates the visible state of one streaming assistant turn. */
 export type LiveTurn = {
   answer: string;
@@ -58,10 +79,29 @@ export type LiveTurn = {
   usage?: { input: number; output: number; total: number };
   /** Set while Pi is auto-retrying the turn after a failure. */
   retry?: { attempt: number; maxAttempts: number; errorMessage: string };
+  /** 本论已发生的工具调用，按 toolCallId 去重、按到达顺序排列。 */
+  tools: LiveToolCall[];
 };
 
 export function createLiveTurn(): LiveTurn {
-  return { answer: '', thinking: '' };
+  return { answer: '', thinking: '', tools: [] };
+}
+
+function reduceToolEvent(turn: LiveTurn, event: ChatStreamEvent & { type: 'tool' }): LiveTurn {
+  const tools = [...turn.tools];
+  const index = tools.findIndex((tool) => tool.id === event.toolCallId);
+  const current = tools[index] ?? { id: event.toolCallId, name: event.toolName, done: false };
+  const next: LiveToolCall = {
+    ...current,
+    name: event.toolName || current.name,
+    ...(event.args !== undefined ? { args: event.args } : {}),
+    ...(event.result !== undefined ? { result: event.result } : {}),
+    ...(event.isError !== undefined ? { isError: event.isError } : {}),
+    done: current.done || event.phase === 'end',
+  };
+  if (index >= 0) tools[index] = next;
+  else tools.push(next);
+  return { ...turn, tools };
 }
 
 export function reduceStreamEvent(turn: LiveTurn, event: ChatStreamEvent): LiveTurn {
@@ -72,6 +112,8 @@ export function reduceStreamEvent(turn: LiveTurn, event: ChatStreamEvent): LiveT
       return { ...turn, answer: turn.answer + event.delta };
     case 'thinking_delta':
       return { ...turn, thinking: turn.thinking + event.delta };
+    case 'tool':
+      return reduceToolEvent(turn, event);
     case 'done':
       return { ...turn, answer: event.answer || turn.answer, ...(event.usage ? { usage: event.usage } : {}) };
     case 'retry':

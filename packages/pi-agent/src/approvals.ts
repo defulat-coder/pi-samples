@@ -94,6 +94,8 @@ export class ApprovalBridge {
   private timer: NodeJS.Timeout | undefined;
   /** scan 串行化：watch 事件与轮询可能并发触发。 */
   private scanQueue: Promise<void> = Promise.resolve();
+  /** close 后不再接受新扫描；close 会等在途队列排空。 */
+  private closed = false;
 
   constructor(options: ApprovalBridgeOptions) {
     this.db = options.db;
@@ -134,17 +136,22 @@ export class ApprovalBridge {
     }
   }
 
-  close(): void {
+  /** 停止 watch/轮询并等在途扫描排空；此后 enqueueScan/scan 均为空操作。 */
+  async close(): Promise<void> {
+    this.closed = true;
     this.watcher?.close();
     if (this.timer) clearInterval(this.timer);
+    await this.scanQueue.catch(() => undefined);
   }
 
   private enqueueScan(): void {
+    if (this.closed) return;
     this.scanQueue = this.scanQueue.then(() => this.scan());
   }
 
   /** 扫一遍转发树：新请求落库并回调；文件已消失的 pending 记录标记 expired。 */
   async scan(): Promise<void> {
+    if (this.closed) return;
     let targetDirs: string[];
     try {
       targetDirs = readdirSync(this.sessionsDir);

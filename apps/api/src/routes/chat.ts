@@ -5,6 +5,20 @@ import { ChatRequestSchema } from '../schemas.js';
 import { agentOr404, type AppContext } from '../context.js';
 import { startSse } from '../plugins/sse.js';
 
+/** 工具 payload 序列化上限：超出部分截断，避免 SSE 帧被大结果撑爆。 */
+const TOOL_PAYLOAD_LIMIT = 4096;
+
+function truncateToolPayload(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  let text: string;
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > TOOL_PAYLOAD_LIMIT ? `${text.slice(0, TOOL_PAYLOAD_LIMIT)}…` : text;
+}
+
 export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post<{ Body: ChatRequest }>('/chat', { schema: { body: ChatRequestSchema } }, async (request, reply) => {
     const agent = agentOr404(ctx, request.body.agentId, reply);
@@ -67,6 +81,9 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
         onThinkingDelta: (delta) => { if (delta) sse.send({ type: 'thinking_delta', delta }); },
         onEvent: (event) => {
           if (event.type === 'auto_retry_start') sse.send({ type: 'retry', attempt: event.attempt, maxAttempts: event.maxAttempts, errorMessage: event.errorMessage });
+          if (event.type === 'tool_execution_start') sse.send({ type: 'tool', phase: 'start', toolCallId: event.toolCallId, toolName: event.toolName, args: truncateToolPayload(event.args) });
+          if (event.type === 'tool_execution_update') sse.send({ type: 'tool', phase: 'update', toolCallId: event.toolCallId, toolName: event.toolName, result: truncateToolPayload(event.partialResult) });
+          if (event.type === 'tool_execution_end') sse.send({ type: 'tool', phase: 'end', toolCallId: event.toolCallId, toolName: event.toolName, result: truncateToolPayload(event.result), isError: event.isError });
         },
       });
       sse.send({ type: 'done', answer: result.answer, ...(result.usage ? { usage: result.usage } : {}) });

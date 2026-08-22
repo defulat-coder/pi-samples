@@ -3,9 +3,13 @@ import { motion } from 'motion/react';
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight';
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
+import { Check } from '@phosphor-icons/react/dist/icons/Check';
+import { Robot } from '@phosphor-icons/react/dist/icons/Robot';
+import { Wrench } from '@phosphor-icons/react/dist/icons/Wrench';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from '../lib/types.js';
+import type { LiveToolCall } from '../lib/stream.js';
 import { cx } from '../lib/cx.js';
 import { MOTION_EASE } from '../lib/motion.js';
 
@@ -23,6 +27,70 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
         <pre>{text}</pre>
       </details>
     </div>
+  );
+}
+
+/** args/result 是 API 侧截断过的 JSON 文本，解析失败就按纯文本展示。 */
+function tryParseToolPayload(text?: string): Record<string, unknown> | undefined {
+  if (!text) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toolCardTitle(tool: LiveToolCall): string {
+  const args = tryParseToolPayload(tool.args);
+  if (tool.name === 'subagent') {
+    const agent = typeof args?.agent === 'string' ? args.agent : undefined;
+    if (args?.action && args.action !== 'run') return `子代理管理 · ${String(args.action)}`;
+    return agent ? `委派给 ${agent}` : '子代理委派';
+  }
+  if (tool.name === 'bash' && typeof args?.command === 'string') return `bash · ${args.command}`;
+  return tool.name;
+}
+
+function ToolCard({ tool }: { tool: LiveToolCall }) {
+  const [open, setOpen] = useState(false);
+  const status = !tool.done ? 'running' : tool.isError ? 'fail' : 'ok';
+  return (
+    <motion.details
+      className="tool-card"
+      open={open}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: MOTION_EASE }}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="tool-card-icon" aria-hidden="true">
+          {tool.name === 'subagent' ? <Robot size={14} /> : <Wrench size={14} />}
+        </span>
+        <span className="tool-card-title">{toolCardTitle(tool)}</span>
+        <span className="tool-card-status" aria-hidden="true">
+          {status === 'running' && <ArrowsClockwise size={13} className="running" />}
+          {status === 'ok' && <Check size={13} className="ok" weight="bold" />}
+          {status === 'fail' && <WarningCircle size={13} className="fail" weight="fill" />}
+        </span>
+        <CaretRight size={12} className="caret" aria-hidden="true" />
+      </summary>
+      <div className="tool-card-body">
+        {tool.args && (
+          <>
+            <p className="tool-card-label">参数</p>
+            <pre>{tool.args}</pre>
+          </>
+        )}
+        {tool.result && (
+          <>
+            <p className="tool-card-label">结果</p>
+            <pre>{tool.result}</pre>
+          </>
+        )}
+      </div>
+    </motion.details>
   );
 }
 
@@ -50,6 +118,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
     >
       <div className={cx('assistant-body', message.streaming && 'streaming')}>
         {message.thinking && <ThinkingBlock text={message.thinking} streaming={message.streaming} />}
+        {message.tools?.map((tool) => <ToolCard key={tool.id} tool={tool} />)}
         <div className="markdown">
           <Markdown remarkPlugins={[remarkGfm]}>{message.text || (message.streaming ? '　' : '')}</Markdown>
         </div>

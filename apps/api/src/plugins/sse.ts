@@ -12,8 +12,8 @@ export interface SseConnection<TEvent extends { type: string }> {
 
 /**
  * Hijacks the reply as an SSE stream with a comment-frame heartbeat so long
- * thinking turns survive proxies. 'aborted' is deprecated since Node 18;
- * 'close' covers disconnects.
+ * thinking turns survive proxies. 客户端断连监听 response 的 'close'
+ * （request 的 'close' 在 Node 18+ 表示请求体读完，不是断连）。
  */
 export function startSse<TEvent extends { type: string }>(request: FastifyRequest, reply: FastifyReply): SseConnection<TEvent> {
   const raw = reply.raw;
@@ -38,7 +38,10 @@ export function startSse<TEvent extends { type: string }>(request: FastifyReques
     }
   }, 15000);
 
-  request.raw.once('close', () => {
+  // 监听 response（而非 request）的 close：Node 18+ 里 request.raw 在请求体被
+  // fastify 消费完就会触发 'close'，不能用作客户端断连信号；response 的 close 只在
+  // 底层连接终止时触发（raw.end() 后 finished=true 走守卫，客户端断开才置 closed）。
+  raw.once('close', () => {
     if (finished) return;
     closed = true;
     for (const callback of disconnectCallbacks) callback();

@@ -166,6 +166,9 @@ before(async () => {
     tools: ['bash'],
   });
   session = created.session;
+  // createAgentSession 不代发 session_start（CLI 模式内部才调 bindExtensions）；
+  // 缺了它 pi-permission-system 不会用 ctx.cwd 重建 PermissionManager，项目策略不加载。
+  await session.bindExtensions({});
   // 绕过真实 provider：主循环的 streamFn 直接走 faux 脚本。
   session.agent.streamFunction = faux.streamSimple;
 });

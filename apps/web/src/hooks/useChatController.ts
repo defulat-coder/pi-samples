@@ -141,7 +141,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
             ...thread,
             messages: thread.messages.map((message) =>
               message.id === assistantMessage.id
-                ? { ...message, text: answer, thinking: progress.turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), model: progress.turn.model, usage: progress.turn.usage }
+                ? { ...message, text: answer, thinking: progress.turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), ...(progress.turn.tools.length ? { tools: progress.turn.tools } : {}), model: progress.turn.model, usage: progress.turn.usage }
                 : message,
             ),
           },
@@ -217,7 +217,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
     if (!liveTurn) return base;
     return base.map((message) =>
       message.id === liveTurn.messageId
-        ? { ...message, text: liveTurn.answer, thinking: liveTurn.thinking || undefined, streaming: true, ...(liveTurn.retry ? { retry: liveTurn.retry } : {}) }
+        ? { ...message, text: liveTurn.answer, thinking: liveTurn.thinking || undefined, streaming: true, ...(liveTurn.tools.length ? { tools: liveTurn.tools } : {}), ...(liveTurn.retry ? { retry: liveTurn.retry } : {}) }
         : message,
     );
   })();

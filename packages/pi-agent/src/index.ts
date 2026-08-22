@@ -10,6 +10,7 @@ import { getAgent } from './agents.js';
 import { getModelRuntime, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, type PiThinkingLevel } from './model-config.js';
 import { loadPermissionExtension } from './permissions.js';
 import { assertSessionAgentBinding, getPiSessionDir, initializeSessionFile } from './session-store.js';
+import { loadSubagentsExtension } from './subagents.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 export { getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listPiModels } from './model-config.js';
@@ -80,11 +81,12 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
 
   // 审批扩展必须在构造 ResourceLoader 前加载（进程级转发 env 在 import 扩展前设置）。
   const permissionExtension = await loadPermissionExtension(cwd);
+  const subagentsExtension = await loadSubagentsExtension();
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
     appendSystemPromptOverride: (base) => [...base, agent.body],
-    extensionFactories: [permissionExtension],
+    extensionFactories: [subagentsExtension, permissionExtension],
     noExtensions: !projectExtensionsEnabled(options.projectExtensions),
     // Themes are inert in the Web UI but remain part of the Pi resource graph.
     noThemes: false,
@@ -113,9 +115,16 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
     resourceLoader,
     model,
     // 试点工具白名单：宿主控制，agent 文件不得声明或扩展工具（契约不变）。
-    tools: ['read', 'grep', 'find', 'ls', 'bash'],
+    // subagent 由 pi-subagents 扩展注册，allowlist 语义是「只启用列出的名字」，必须显式列出。
+    tools: ['read', 'grep', 'find', 'ls', 'bash', 'subagent'],
     thinkingLevel: getPiThinkingLevel(options.thinkingLevel, cwd),
   });
+
+  // createAgentSession 不会代发 session_start（只有 CLI 的 print/interactive/rpc 模式
+  // 内部调 bindExtensions）。SDK 宿主必须自己调一次：pi-permission-system 在
+  // session_start 里才用 ctx.cwd 重建 PermissionManager，缺了这一步项目策略文件
+  // （.pi/agent/pi-permissions.jsonc）永远不会被加载，全部工具退回 DEFAULT_POLICY(ask)。
+  await session.bindExtensions({});
 
   return { cwd, agentId: agent.id, session, sessionManager, close: () => session.dispose() };
 }

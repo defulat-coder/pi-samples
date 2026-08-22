@@ -99,4 +99,20 @@ describe('reduceStreamEvent', () => {
     for (const event of events) turn = reduceStreamEvent(turn, event);
     assert.deepEqual(turn.retry, { attempt: 2, maxAttempts: 3, errorMessage: '模型超时' });
   });
+
+  it('tool 事件按 toolCallId 折叠为一张调用卡片', () => {
+    const TOOL_START = 'event: tool\ndata: {"type":"tool","phase":"start","toolCallId":"call_1","toolName":"subagent","args":"{\\"agent\\":\\"reviewer\\",\\"task\\":\\"看下这个 diff\\"}"}\n\n';
+    const TOOL_END = 'event: tool\ndata: {"type":"tool","phase":"end","toolCallId":"call_1","toolName":"subagent","result":"{\\"ok\\":true}","isError":false}\n\n';
+    const events = consumeChunks([START + TOOL_START + TOOL_END + DONE]);
+    assert.deepEqual(events.map((event) => event.type), ['start', 'tool', 'tool', 'done']);
+    let turn = createLiveTurn();
+    for (const event of events) turn = reduceStreamEvent(turn, event);
+    assert.equal(turn.tools.length, 1);
+    const tool = turn.tools[0]!;
+    assert.equal(tool.name, 'subagent');
+    assert.equal(tool.done, true);
+    assert.equal(tool.isError, false);
+    assert.match(tool.args ?? '', /reviewer/);
+    assert.match(tool.result ?? '', /"ok"/);
+  });
 });

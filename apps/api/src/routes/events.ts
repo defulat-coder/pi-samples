@@ -34,8 +34,9 @@ export class WorkbenchEventBus {
     // 心跳不得阻止进程退出（测试与关闭场景）。
     heartbeat.unref();
     this.clients.set(raw, heartbeat);
-    // 'aborted' 自 Node 18 起废弃，'close' 覆盖断开场景。
-    request.raw.once('close', () => this.remove(raw));
+    // 断连监听 response 的 close：request 的 'close' 在 Node 18+ 表示请求体读完
+    // （GET 连接上几乎立刻触发），会把客户端误移除；response close 才是真的连接终止。
+    raw.once('close', () => this.remove(raw));
   }
 
   private remove(raw: FastifyReply['raw']): void {
