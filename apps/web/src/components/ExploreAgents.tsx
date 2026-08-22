@@ -30,6 +30,7 @@ export function ExploreAgents({ onOpenChat }: ExploreAgentsProps) {
               className="agent-card"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
+              whileTap={{ scale: 0.97 }}
               transition={{ duration: 0.25, ease: MOTION_EASE, delay: index * 0.04 }}
               onClick={() => onOpenChat(agent.id)}
             >

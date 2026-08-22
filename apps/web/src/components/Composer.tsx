@@ -138,39 +138,37 @@ export function Composer({ disabled, selectedModel, onSelectModel, onSend }: Com
 
   return (
     <div className="composer">
-      <AnimatePresence>
-        {panelOpen && (
-          <motion.div
-            className="prompt-panel"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2, ease: MOTION_EASE }}
-          >
-            <p className="prompt-panel-label">提示词</p>
-            <div className="prompt-panel-list" role="listbox" aria-label="提示词列表">
-              {filtered.map((prompt, index) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === activePrompt}
-                  key={prompt.name}
-                  className={cx('prompt-row', index === activePrompt && 'active')}
-                  onMouseEnter={() => setActivePrompt(index)}
-                  onClick={() => void applyPrompt(prompt.name)}
-                >
-                  <Terminal size={16} />
-                  <span className="prompt-row-copy">
-                    <span className="prompt-row-name">/{prompt.name}</span>
-                    {prompt.description && <span className="prompt-row-desc">{prompt.description}</span>}
-                  </span>
-                </button>
-              ))}
-              {!filtered.length && <p className="prompt-panel-empty">没有匹配的提示词</p>}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <motion.div
+        className="prompt-panel"
+        initial={false}
+        animate={{ opacity: panelOpen ? 1 : 0, height: panelOpen ? 'auto' : 0 }}
+        transition={{ duration: 0.2, ease: MOTION_EASE }}
+        style={{ overflow: 'hidden', pointerEvents: panelOpen ? 'auto' : 'none', borderBottomWidth: panelOpen ? 1 : 0 }}
+        inert={!panelOpen}
+        aria-hidden={!panelOpen}
+      >
+        <p className="prompt-panel-label">提示词</p>
+        <div className="prompt-panel-list" role="listbox" aria-label="提示词列表">
+          {filtered.map((prompt, index) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={index === activePrompt}
+              key={prompt.name}
+              className={cx('prompt-row', index === activePrompt && 'active')}
+              onMouseEnter={() => setActivePrompt(index)}
+              onClick={() => void applyPrompt(prompt.name)}
+            >
+              <Terminal size={16} />
+              <span className="prompt-row-copy">
+                <span className="prompt-row-name">/{prompt.name}</span>
+                {prompt.description && <span className="prompt-row-desc">{prompt.description}</span>}
+              </span>
+            </button>
+          ))}
+          {!filtered.length && <p className="prompt-panel-empty">没有匹配的提示词</p>}
+        </div>
+      </motion.div>
 
       <textarea
         ref={textareaRef}
