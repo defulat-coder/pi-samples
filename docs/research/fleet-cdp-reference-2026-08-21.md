@@ -415,3 +415,34 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 - `packages/pi-agent` 新增 `updateAgent(cwd, id, patch)`：原子重写 agent 文件，序列化与校验逻辑和 `createAgent` 共用。
 - API 新增 `PATCH /api/v1/agents/:agentId`，404/400 映射与 POST /agents 一致。
 - Web ConfigPanel 头部加「编辑」按钮，编辑态字段对齐 frontmatter：name/mark/tagline/description 为 input、suggestions 为可增删列表、body 为 textarea；保存走 PATCH，失败 toast。
+
+## 2026-08-22 Inbox（收件箱）
+
+第四轮抓取：`/agents/inbox` 全宽视图与行交互（CDP 实测，含双击分栏详情）。
+
+### Fleet 侧结构
+
+- **定位**：不是「出错会话列表」，而是**待办分流队列**——agent 运行被打断（需授权 / 需批准 / 出错）的 thread 进 Needs Attention，处理完进 Completed。
+- **页头**：信封图标 + `Inbox` 标题；居中 `Search threads` 搜索框（右侧过滤器按钮）。
+- **分段 tabs**：`Needs Attention`（警告圈图标）/ `Completed`（勾选圈图标）/ `All`（归档图标），选中态有底色药丸。
+- **工具行**：全选 checkbox + 刷新按钮，右侧 `N threads` 计数。
+- **行**（`h-11`=44px，`px-3`，`gap-3`，`border-b`）：agent 头像（18px 圆角 5px 图标块，品牌色 12% 底 + 35% 边）+ agent 名 + **状态药丸**（如橙色 `Needs sign in`，带链接图标）+ 预览文本 + 右侧时间戳（今天显示时刻，更早显示 `Aug 21` 式日期）。
+- **行交互**：
+  - 未读 = 粗体、无预览；**单击标记已读**并就地显示预览；
+  - hover 时行尾浮现三个图标按钮：`Select thread` / `Mark as read|unread` / `Delete`，头像位 hover 变为 checkbox（`group-hover:scale-75 opacity-0` 过渡）；
+  - **双击打开分栏详情**：URL 追加 `?threadId=…&agentId=…`，列表收窄为左栏，右栏为完整线程——中断卡片（如 "Authenticate Google"：说明文案 + 涉及工具列表 + 连接选择 + `Resume` 按钮）、任务进度条（`Task 1 of 5` + 当前任务名）、底部 composer；右栏头部为 agent 图标+名 + 展开/全屏/关闭按钮。
+- **行数据形态**（Completed/All tab）：agent 名 + **thread 标题**（粗体）+ ` — ` + 首条消息预览 + 时间戳；Completed 行无状态药丸。
+- **侧边栏**：Inbox 项带未读计数徽标（蓝色圆点数字）。
+
+### 本地语义映射
+
+| Fleet 元素 | 本地处理 | 说明 |
+| --- | --- | --- |
+| Needs Attention / Completed / All 三分段 | **做** | needsAttention = 最后一次 run 出错或被中断且未被标记完成；成功新 run 自动转入 Completed |
+| 已读/未读 + Mark as read/unread | **做** | 通用工作台数据，存 SQLite `workbench.db`（不进 Pi JSONL） |
+| Search threads 搜索框 | **做** | 按 agent 名 / 会话标题 / 预览过滤 |
+| 全选 + 批量操作、Refresh | **做 Refresh，批量做删除** | 全选后的批量动作收敛为删除 |
+| 双击分栏线程详情 | **做** | 右栏复用现有会话视图 |
+| 状态药丸（Needs sign in 等） | **做（语义替换）** | 本地无第三方授权语义，药丸显示 `运行出错` / `已中断` |
+| 侧边栏未读计数徽标 | **做** | |
+| 中断卡片（Authenticate + Resume）、任务进度条 | **跳过** | 依赖 Fleet 的集成授权与任务系统，本地无对应语义；右栏直接显示会话与错误/中断提示 |

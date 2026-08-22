@@ -127,6 +127,38 @@ describe('agent session store', () => {
     await assert.rejects(() => store.listMessages('no-such-session', 'pi-assistant'), /AGENT_SESSION_NOT_FOUND/);
   });
 
+  it('derives a single-line preview from the last assistant text, falling back to the user text', async () => {
+    const { root, store } = fixture();
+    await store.createSession('pi-assistant', 'preview-session');
+    const info = (await SessionManager.list(root, store.sessionDir)).find((item) => item.id === 'preview-session');
+    assert.ok(info);
+    const manager = SessionManager.open(info.path, store.sessionDir, root);
+    const assistantBase = {
+      role: 'assistant' as const,
+      api: 'messages' as const,
+      provider: 'kimi-coding' as const,
+      model: 'kimi-for-coding',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'stop' as const,
+      timestamp: Date.now(),
+    };
+
+    // 没有任何消息时不产出 preview 字段。
+    assert.equal((await store.getSession('preview-session'))?.preview, undefined);
+
+    manager.appendMessage({ role: 'user', content: [{ type: 'text', text: '  多行\n问题   文本 ' }], timestamp: Date.now() });
+    manager.appendMessage({ ...assistantBase, content: [{ type: 'text', text: '第一行\n\n第二行   结束' }] });
+    assert.equal((await store.getSession('preview-session'))?.preview, '第一行 第二行 结束');
+
+    // 最后一条 assistant 没有文本（如出错）时退回最后一条 user 文本。
+    manager.appendMessage({ ...assistantBase, content: [], stopReason: 'error', errorMessage: '模型超时' });
+    assert.equal((await store.getSession('preview-session'))?.preview, '多行 问题 文本');
+
+    // 超长文本截断到 120 字符。
+    manager.appendMessage({ ...assistantBase, content: [{ type: 'text', text: '长'.repeat(200) }] });
+    assert.equal((await store.getSession('preview-session'))?.preview?.length, 120);
+  });
+
   it('rejects cross-agent reuse of a persisted session', async () => {
     const { store } = fixture();
     await store.createSession('pi-assistant', 'owned-session');

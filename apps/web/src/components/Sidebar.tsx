@@ -159,7 +159,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <NavIcon><Tray size={12} weight="bold" /></NavIcon>
           <span className="sidebar-fold">收件箱</span>
-          {inboxCount > 0 && <span className="nav-badge" aria-label={`${inboxCount} 个会话需要处理`}>{inboxCount}</span>}
+          {inboxCount > 0 && <span className="nav-badge" aria-label={`${inboxCount} 个未读会话`}>{inboxCount}</span>}
         </button>
         <button
           type="button"

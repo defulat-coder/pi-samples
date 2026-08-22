@@ -23,6 +23,7 @@ const globals: Record<string, unknown> = {
   document: window.document,
   navigator: window.navigator,
   Node: window.Node,
+  Element: window.Element,
   HTMLElement: window.HTMLElement,
   KeyboardEvent: window.KeyboardEvent,
   MouseEvent: window.MouseEvent,

@@ -85,16 +85,16 @@ export default function App() {
     [sessionsByAgent, currentAgentId],
   );
 
-  const inbox = useAsyncData(fetchInbox, { onError: () => notify('收件箱暂时无法读取') });
+  const inbox = useAsyncData(() => fetchInbox('attention'), { onError: () => notify('收件箱暂时无法读取') });
   const usage = useAsyncData(fetchUsage);
   const settings = useAsyncData(fetchSettings);
   const { reload: reloadInbox } = inbox;
   const { reload: reloadSettings } = settings;
 
-  /** 每个 Agent 的待处理会话数，来自收件箱数据。 */
+  /** 每个 Agent 的待处理会话数，来自收件箱（attention tab）数据。 */
   const attentionByAgent = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const item of inbox.data ?? []) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
+    for (const item of inbox.data?.items ?? []) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
     return map;
   }, [inbox.data]);
 
@@ -226,6 +226,12 @@ export default function App() {
     chat.openSession(agentId, sessionId);
   };
 
+  /** 收件箱内变更（已读/删除）后：刷新徽标数据，并同步当前 Agent 的会话列表。 */
+  const handleInboxChanged = () => {
+    void reloadInbox();
+    if (currentAgentId) void loadSessions(currentAgentId);
+  };
+
   const handlePaletteAction = (action: PaletteAction) => {
     switch (action.kind) {
       case 'chat':
@@ -303,7 +309,7 @@ export default function App() {
           currentAgentId={currentAgentId}
           collapsed={sidebarCollapsed}
           inboxOpen={inboxOpen}
-          inboxCount={(inbox.data ?? []).length}
+          inboxCount={inbox.data?.unreadCount ?? 0}
           attentionByAgent={attentionByAgent}
           exploreView={exploreView}
           systemView={systemView}
@@ -358,10 +364,8 @@ export default function App() {
               <SettingsView settings={settings.data} loading={settings.loading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
             ) : inboxOpen ? (
               <InboxView
-                items={inbox.data ?? []}
-                loading={inbox.loading}
-                onRefresh={() => void inbox.reload()}
                 onOpen={openInboxItem}
+                onInboxChanged={handleInboxChanged}
               />
             ) : (
               <>

@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxItem, InboxResponse, InboxTab, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdateInboxStateRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -41,9 +41,22 @@ export async function fetchSessionMessages(agentId: string, sessionId: string): 
   return payload.items;
 }
 
-export async function fetchInbox(): Promise<SessionSummary[]> {
-  const payload = await readJson<InboxResponse>(await fetch('/api/v1/inbox'), '收件箱暂时无法读取');
-  return payload.items;
+export async function fetchInbox(tab: InboxTab = 'attention', q?: string): Promise<InboxResponse> {
+  const params = new URLSearchParams({ tab });
+  if (q) params.set('q', q);
+  return readJson(await fetch(`/api/v1/inbox?${params.toString()}`), '收件箱暂时无法读取');
+}
+
+/** PATCHes one session's inbox read/completed state; resolves with the latest InboxItem. */
+export async function updateInboxState(agentId: string, sessionId: string, patch: UpdateInboxStateRequest): Promise<InboxItem> {
+  return readJson(
+    await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/inbox`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+    '收件箱状态暂时无法保存',
+  );
 }
 
 export async function renameSession(agentId: string, sessionId: string, title: string): Promise<SessionSummary> {

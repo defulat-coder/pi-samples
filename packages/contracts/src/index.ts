@@ -65,6 +65,8 @@ export interface SessionSummary {
   attentionReason?: 'error' | 'aborted';
   /** Provider error message recorded on that message, when available. */
   attentionDetail?: string;
+  /** 收件箱预览：最后一条 assistant 文本（无则最后一条 user 文本），压缩成单行并截断；为空时省略。 */
+  preview?: string;
 }
 
 /** Payload of GET /api/v1/agents/:agentId/sessions. */
@@ -73,10 +75,29 @@ export interface SessionListResponse {
   total: number;
 }
 
-/** Payload of GET /api/v1/inbox: sessions whose last recorded run errored or was aborted. */
+/** 收件箱分段：Needs Attention / Completed / All。 */
+export type InboxTab = 'attention' | 'completed' | 'all';
+
+/** 收件箱条目：SessionSummary 叠加 SQLite inbox_state 里的已读/完成状态。 */
+export interface InboxItem extends SessionSummary {
+  /** 已读 = 用户已查看且此后没有新的出错/中断。 */
+  read: boolean;
+  /** 被标记完成（或出错/中断后又有成功运行）的时间；未完成为 undefined。 */
+  completedAt?: string;
+}
+
+/** Payload of GET /api/v1/inbox; items 按 tab 过滤、updatedAt 倒序。 */
 export interface InboxResponse {
-  items: SessionSummary[];
+  items: InboxItem[];
   total: number;
+  /** attention tab 中未读条数；不受 q 过滤影响。 */
+  unreadCount: number;
+}
+
+/** Payload of PATCH /api/v1/agents/:agentId/sessions/:sessionId/inbox; 至少一个字段。 */
+export interface UpdateInboxStateRequest {
+  read?: boolean;
+  completed?: boolean;
 }
 
 /** Payload of PATCH /api/v1/agents/:agentId/sessions/:sessionId. */

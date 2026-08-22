@@ -41,6 +41,17 @@ export const UpdateAgentSchema = Type.Object({
 export const AgentParamsSchema = Type.Object({ agentId: AgentIdSchema });
 export const SessionParamsSchema = Type.Object({ agentId: AgentIdSchema, sessionId: SessionIdSchema });
 export const RenameSessionSchema = Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) });
+
+// GET /inbox 的 query：tab 默认 attention，q 对 title/preview 做大小写不敏感包含过滤。
+export const InboxQuerySchema = Type.Object({
+  tab: Type.Optional(Type.Union([Type.Literal('attention'), Type.Literal('completed'), Type.Literal('all')])),
+  q: Type.Optional(Type.String({ maxLength: 200 })),
+});
+// 至少一个字段（minProperties），否则 400。
+export const UpdateInboxStateSchema = Type.Object(
+  { read: Type.Optional(Type.Boolean()), completed: Type.Optional(Type.Boolean()) },
+  { minProperties: 1 },
+);
 export const PromptNameSchema = Type.Object({ name: Type.String({ pattern: '^[a-z0-9-]{1,80}$' }) });
 
 export const UpdatePromptSchema = Type.Object({

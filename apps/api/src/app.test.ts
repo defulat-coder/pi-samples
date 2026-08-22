@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSessionStore, loadAgents, openWorkbenchDb, piSessionRegistry, recordUsageEvent } from '@pi-workbench/pi-agent';
+import { AgentSessionStore, getInboxStates, loadAgents, openWorkbenchDb, piSessionRegistry, recordUsageEvent } from '@pi-workbench/pi-agent';
 import { buildApp } from './app.js';
 import type { AppConfig } from './config.js';
 
@@ -19,7 +19,24 @@ const config: AppConfig = {
 describe('Pi Workbench API', () => {
   const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-api-sessions-'));
   const sessions = new AgentSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
-  const app = buildApp(config, { sessionStore: sessions, db: openWorkbenchDb(':memory:') });
+  const db = openWorkbenchDb(':memory:');
+  const app = buildApp(config, { sessionStore: sessions, db });
+
+  /** 向指定会话的 JSONL 追加一条 message entry（apps/api 不直接依赖 Pi SDK）。 */
+  const appendMessage = async (sessionId: string, message: unknown, id: string) => {
+    const { appendFileSync, readdirSync, readFileSync } = await import('node:fs');
+    const file = readdirSync(sessionRoot)
+      .map((name) => join(sessionRoot, name))
+      .find((path) => path.endsWith('.jsonl') && readFileSync(path, 'utf8').includes(`"${sessionId}"`));
+    assert.ok(file, `未找到会话文件：${sessionId}`);
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id, parentId: null, timestamp: new Date().toISOString(), message })}\n`);
+  };
+
+  const assistantMessage = (overrides: Record<string, unknown>) => ({
+    role: 'assistant', content: [], api: 'messages', provider: 'kimi-coding', model: 'kimi-for-coding',
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    timestamp: Date.now(), ...overrides,
+  });
 
   before(async () => app.ready());
   after(async () => { await app.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
@@ -144,10 +161,100 @@ describe('Pi Workbench API', () => {
 
     const response = await app.inject({ method: 'GET', url: '/api/v1/inbox' });
     assert.equal(response.statusCode, 200);
-    const items = response.json().items as Array<{ id: string; needsAttention: boolean; attentionReason?: string }>;
+    const body = response.json();
+    const items = body.items as Array<{ id: string; needsAttention: boolean; attentionReason?: string; read: boolean }>;
     assert.deepEqual(items.map((item) => item.id), ['inbox-failed']);
     assert.equal(items[0]!.needsAttention, true);
     assert.equal(items[0]!.attentionReason, 'error');
+    assert.equal(items[0]!.read, false);
+    assert.equal(body.unreadCount, 1);
+  });
+
+  it('filters the inbox by tab and query', async () => {
+    await sessions.createSession('pi-assistant', 'tab-failed-a');
+    await appendMessage('tab-failed-a', { role: 'user', content: [{ type: 'text', text: '苹果出错了' }], timestamp: Date.now() }, 'msg_tab_a_u');
+    await appendMessage('tab-failed-a', assistantMessage({ stopReason: 'error', errorMessage: '模型超时' }), 'msg_tab_a_e');
+    await sessions.createSession('pi-assistant', 'tab-failed-b');
+    await appendMessage('tab-failed-b', { role: 'user', content: [{ type: 'text', text: '香蕉出错了' }], timestamp: Date.now() }, 'msg_tab_b_u');
+    await appendMessage('tab-failed-b', assistantMessage({ stopReason: 'aborted' }), 'msg_tab_b_e');
+    await sessions.createSession('pi-assistant', 'tab-ok');
+    await appendMessage('tab-ok', { role: 'user', content: [{ type: 'text', text: '普通问题' }], timestamp: Date.now() }, 'msg_tab_ok_u');
+    await appendMessage('tab-ok', assistantMessage({ stopReason: 'stop', content: [{ type: 'text', text: '正常回答' }] }), 'msg_tab_ok_a');
+
+    // tab-failed-b 标记完成：离开 attention，进入 completed，并顺带标记已读。
+    const completed = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/tab-failed-b/inbox', payload: { completed: true } });
+    assert.equal(completed.statusCode, 200);
+    assert.equal(completed.json().read, true);
+    assert.equal(typeof completed.json().completedAt, 'string');
+
+    const attention = await app.inject({ method: 'GET', url: '/api/v1/inbox' });
+    assert.equal(attention.statusCode, 200);
+    assert.deepEqual(attention.json().items.map((item: { id: string }) => item.id), ['tab-failed-a', 'inbox-failed']);
+    assert.equal(attention.json().unreadCount, 2);
+
+    const completedTab = await app.inject({ method: 'GET', url: '/api/v1/inbox?tab=completed' });
+    assert.deepEqual(completedTab.json().items.map((item: { id: string }) => item.id), ['tab-failed-b']);
+    assert.equal(typeof completedTab.json().items[0].completedAt, 'string');
+
+    const all = await app.inject({ method: 'GET', url: '/api/v1/inbox?tab=all' });
+    const allIds = all.json().items.map((item: { id: string }) => item.id);
+    assert.deepEqual([...allIds].sort(), ['inbox-failed', 'tab-failed-a', 'tab-failed-b']);
+    assert.equal(all.json().unreadCount, 2, 'unreadCount 始终按 attention 集合统计');
+
+    // q 过滤 title/preview（大小写不敏感包含），不影响 unreadCount。
+    const queried = await app.inject({ method: 'GET', url: '/api/v1/inbox?q=苹果' });
+    assert.deepEqual(queried.json().items.map((item: { id: string }) => item.id), ['tab-failed-a']);
+    assert.equal(queried.json().unreadCount, 2);
+    const noHit = await app.inject({ method: 'GET', url: '/api/v1/inbox?q=不存在的关键词' });
+    assert.equal(noHit.json().total, 0);
+    const badTab = await app.inject({ method: 'GET', url: '/api/v1/inbox?tab=weird' });
+    assert.equal(badTab.statusCode, 400);
+  });
+
+  it('marks items read and auto-completes after a later successful run', async () => {
+    const patched = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/tab-failed-a/inbox', payload: { read: true } });
+    assert.equal(patched.statusCode, 200);
+    assert.equal(patched.json().read, true);
+    assert.equal(patched.json().completedAt, undefined);
+
+    const inbox = await app.inject({ method: 'GET', url: '/api/v1/inbox' });
+    assert.equal(inbox.json().unreadCount, 1, '已读后 unreadCount 下降');
+    assert.equal(inbox.json().items.find((item: { id: string }) => item.id === 'tab-failed-a').read, true);
+
+    // 出错/中断之后又有成功运行：下一次 GET /inbox 自动视为已处理。
+    await appendMessage('tab-failed-a', assistantMessage({ stopReason: 'stop', content: [{ type: 'text', text: '已恢复' }] }), 'msg_tab_a_ok');
+    const after = await app.inject({ method: 'GET', url: '/api/v1/inbox' });
+    assert.ok(after.json().items.every((item: { id: string }) => item.id !== 'tab-failed-a'));
+    const completedTab = await app.inject({ method: 'GET', url: '/api/v1/inbox?tab=completed' });
+    const recovered = completedTab.json().items.find((item: { id: string }) => item.id === 'tab-failed-a');
+    assert.equal(typeof recovered?.completedAt, 'string');
+  });
+
+  it('deleting a session also clears its inbox_state row', async () => {
+    assert.equal(getInboxStates(db).has('tab-failed-b'), true);
+    const removed = await app.inject({ method: 'DELETE', url: '/api/v1/agents/pi-assistant/sessions/tab-failed-b' });
+    assert.equal(removed.statusCode, 204);
+    assert.equal(getInboxStates(db).has('tab-failed-b'), false);
+  });
+
+  it('PATCH inbox validates the body, maps unknown agents/sessions to 404 and returns state for non-inbox sessions', async () => {
+    const empty = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/tab-failed-a/inbox', payload: {} });
+    assert.equal(empty.statusCode, 400);
+    const wrongType = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/tab-failed-a/inbox', payload: { read: 'yes' } });
+    assert.equal(wrongType.statusCode, 400);
+    const unknownAgent = await app.inject({ method: 'PATCH', url: '/api/v1/agents/no-such-agent/sessions/tab-failed-a/inbox', payload: { read: true } });
+    assert.equal(unknownAgent.statusCode, 404);
+    const missing = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/no-such-session/inbox', payload: { read: true } });
+    assert.equal(missing.statusCode, 404);
+
+    // 不在收件箱任一集合的会话也照常返回最新状态字段。
+    await sessions.createSession('pi-assistant', 'inbox-plain');
+    const plain = await app.inject({ method: 'PATCH', url: '/api/v1/agents/pi-assistant/sessions/inbox-plain/inbox', payload: { completed: true } });
+    assert.equal(plain.statusCode, 200);
+    assert.equal(plain.json().id, 'inbox-plain');
+    assert.equal(plain.json().needsAttention, false);
+    assert.equal(plain.json().read, true, 'completed=true 顺带标记已读');
+    assert.equal(typeof plain.json().completedAt, 'string');
   });
 
   it('replays persisted session messages and enforces the binding contract', async () => {

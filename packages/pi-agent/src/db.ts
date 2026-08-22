@@ -27,6 +27,14 @@ const MIGRATIONS: readonly string[] = [
     value_json TEXT NOT NULL
   );
   `,
+  `
+  CREATE TABLE inbox_state (
+    session_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    read_at TEXT,
+    completed_at TEXT
+  );
+  `,
 ];
 
 export function openWorkbenchDb(path: string): WorkbenchDb {
@@ -113,4 +121,47 @@ export function setPreference(db: WorkbenchDb, key: string, value: unknown): voi
 /** Removes one preference row; used for「跟随全局默认」semantics (e.g. model.<agentId>). */
 export function deletePreference(db: WorkbenchDb, key: string): void {
   db.prepare('DELETE FROM preferences WHERE key = ?').run(key);
+}
+
+/** inbox_state 单行：收件箱的已读/完成是通用工作台数据，不进 Pi 的 JSONL。 */
+export interface InboxState {
+  agentId: string;
+  readAt: string | null;
+  completedAt: string | null;
+}
+
+/** Reads every inbox_state row keyed by session id. */
+export function getInboxStates(db: WorkbenchDb): Map<string, InboxState> {
+  const rows = db.prepare('SELECT session_id AS sessionId, agent_id AS agentId, read_at AS readAt, completed_at AS completedAt FROM inbox_state').all() as Array<{
+    sessionId: string;
+    agentId: string;
+    readAt: string | null;
+    completedAt: string | null;
+  }>;
+  return new Map(rows.map((row) => [row.sessionId, { agentId: row.agentId, readAt: row.readAt, completedAt: row.completedAt }]));
+}
+
+/** 标记已读/未读：read=true 写入当前时间，false 清空 read_at；按 session_id upsert。 */
+export function setInboxRead(db: WorkbenchDb, sessionId: string, agentId: string, read: boolean): void {
+  db.prepare(
+    `INSERT INTO inbox_state (session_id, agent_id, read_at) VALUES (?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET agent_id = excluded.agent_id, read_at = excluded.read_at`,
+  ).run(sessionId, agentId, read ? new Date().toISOString() : null);
+}
+
+/** 标记完成/未完成：completed=true 写入当前时间，且 read_at 未设时一并标记已读；false 仅清空 completed_at。 */
+export function setInboxCompleted(db: WorkbenchDb, sessionId: string, agentId: string, completed: boolean): void {
+  const now = completed ? new Date().toISOString() : null;
+  db.prepare(
+    `INSERT INTO inbox_state (session_id, agent_id, read_at, completed_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       agent_id = excluded.agent_id,
+       read_at = COALESCE(inbox_state.read_at, excluded.read_at),
+       completed_at = excluded.completed_at`,
+  ).run(sessionId, agentId, now, now);
+}
+
+/** Session 删除时清理对应的收件箱状态。 */
+export function deleteInboxState(db: WorkbenchDb, sessionId: string): void {
+  db.prepare('DELETE FROM inbox_state WHERE session_id = ?').run(sessionId);
 }

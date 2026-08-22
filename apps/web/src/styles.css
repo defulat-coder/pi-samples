@@ -613,18 +613,35 @@ input, textarea { font: inherit; color: inherit; }
 .header-button.primary:hover { background: var(--brand-hover); }
 .header-button.active { background: var(--brand-secondary); border-color: transparent; color: var(--text-brand); box-shadow: none; }
 
-/* ===== 收件箱（§11.1） ===== */
+/* ===== 收件箱（§11.1 + 2026-08-22 Inbox 实测：页头居中搜索 / 分段 tabs / 44px 行 / 双击分栏详情） ===== */
 .inbox { display: flex; flex: 1; flex-direction: column; overflow: hidden; }
 .inbox-header {
+  position: relative;
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-4) var(--space-4) var(--space-1); color: var(--text-primary);
 }
+.inbox-title-group { display: flex; align-items: center; gap: var(--space-2); }
 .inbox-header h3 { margin: 0; font-size: 16px; line-height: 19.2px; letter-spacing: -0.48px; font-weight: 600; }
+.inbox-search {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; width: 320px; height: 28px;
+  padding: 0 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  background: var(--bg-secondary); color: var(--text-quaternary);
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+.inbox-search:focus-within { border-color: var(--brand); background: var(--bg-primary); }
+.inbox-search input { flex: 1; min-width: 0; border: none; background: transparent; outline: none; font-size: 13px; color: var(--text-primary); }
+.inbox-tabs { margin: var(--space-2) var(--space-4) 0; }
+.inbox-body { display: flex; flex: 1; min-height: 0; }
+.inbox-list-pane { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.inbox-body.split .inbox-list-pane { flex: none; width: 352px; border-right: 1px solid var(--border-subtle); }
+.inbox-body.split .inbox-agent { display: none; }
 .inbox-toolbar {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   position: sticky; top: 0; background: var(--bg-primary);
 }
+.inbox-toolbar-left { display: flex; align-items: center; gap: var(--space-2); }
 .inbox-refresh {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; border-radius: var(--radius-sm); color: var(--text-quaternary);
@@ -637,23 +654,53 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-row {
   display: flex; align-items: center; gap: var(--space-3); width: 100%; height: 44px;
   padding: 0 var(--space-3); border-bottom: 1px solid var(--border-subtle); text-align: left;
+  cursor: pointer;
   transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .inbox-row:hover { background: var(--bg-secondary); }
-.inbox-agent { flex: none; width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--text-quaternary); }
+.inbox-row.selected { background: var(--bg-secondary); }
+.inbox-agent { flex: none; width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-quaternary); }
 .inbox-status {
   display: inline-flex; align-items: center; gap: var(--space-1); flex: none;
   border-radius: var(--radius-full); background: var(--warning-bg); color: var(--warning-text);
   padding: 2px var(--space-2); font-size: 12px; font-weight: 500;
 }
-.inbox-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-quaternary); }
+.inbox-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.inbox-title-text { color: var(--text-secondary); }
+.inbox-row.unread .inbox-title-text { font-weight: 600; color: var(--text-primary); }
+.inbox-preview { color: var(--text-quaternary); }
 .inbox-time { flex: none; font-size: 12px; color: var(--text-quaternary); }
+.inbox-row-actions {
+  display: flex; align-items: center; gap: 2px; flex: none;
+  opacity: 0; transition: opacity var(--duration-fast) var(--ease-out);
+}
+.inbox-row:hover .inbox-row-actions, .inbox-row.selected .inbox-row-actions, .inbox-row-actions:focus-within { opacity: 1; }
+.inbox-checkbox { width: 14px; height: 14px; margin: 0; flex: none; accent-color: var(--brand); cursor: pointer; }
 .inbox-empty {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2);
   padding: 0 var(--space-4) var(--space-9); color: var(--text-quaternary); text-align: center;
 }
 .inbox-empty-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
 .inbox-empty-hint { margin: 0; font-size: 12px; color: var(--text-quaternary); }
+
+/* 双击行打开的分栏详情：右栏线程 + 需处理提示条 */
+.inbox-detail { display: flex; flex: 1; flex-direction: column; min-width: 0; background: var(--bg-primary); }
+.inbox-detail-header {
+  display: flex; align-items: center; gap: var(--space-2); flex: none;
+  padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-subtle);
+}
+.inbox-detail-agent { flex: none; font-size: 13px; color: var(--text-quaternary); }
+.inbox-detail-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+}
+.inbox-detail-banner {
+  display: flex; align-items: center; gap: var(--space-2); flex: none;
+  margin: var(--space-3) var(--space-4) 0; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md); background: var(--warning-bg); color: var(--warning-text); font-size: 13px;
+}
+.inbox-detail-banner p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-detail-loading { margin: var(--space-8) auto; font-size: 13px; color: var(--text-quaternary); }
 
 /* ===== 探索区：Agents / Templates / Skills（§11.4、§11.6） ===== */
 .explore { display: flex; flex: 1; flex-direction: column; overflow-y: auto; padding: var(--space-5) var(--space-5) var(--space-9); }

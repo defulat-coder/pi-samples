@@ -1,14 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPreferences, openWorkbenchDb, recordUsageEvent, setPreference, summarizeTokenUsage } from './db.js';
+import { deleteInboxState, getInboxStates, getPreferences, openWorkbenchDb, recordUsageEvent, setInboxCompleted, setInboxRead, setPreference, summarizeTokenUsage } from './db.js';
 
 describe('openWorkbenchDb', () => {
-  it('creates the usage_events and preferences tables on an in-memory database', () => {
+  it('creates the usage_events, preferences and inbox_state tables on an in-memory database', () => {
     const db = openWorkbenchDb(':memory:');
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>).map(
       (row) => row.name,
     );
-    assert.deepEqual(tables, ['preferences', 'usage_events']);
+    assert.deepEqual(tables, ['inbox_state', 'preferences', 'usage_events']);
   });
 
   it('is idempotent: reopening an existing database keeps the schema and data', () => {
@@ -59,5 +59,54 @@ describe('preferences', () => {
   it('returns an empty object when nothing is stored', () => {
     const db = openWorkbenchDb(':memory:');
     assert.deepEqual(getPreferences(db), {});
+  });
+});
+
+describe('inbox_state', () => {
+  it('upserts read state: true stamps read_at, false clears it', () => {
+    const db = openWorkbenchDb(':memory:');
+    setInboxRead(db, 's1', 'writer', true);
+    const first = getInboxStates(db).get('s1');
+    assert.equal(first?.agentId, 'writer');
+    assert.equal(typeof first?.readAt, 'string');
+    assert.equal(first?.completedAt, null);
+
+    setInboxRead(db, 's1', 'writer', false);
+    const cleared = getInboxStates(db).get('s1');
+    assert.equal(cleared?.readAt, null);
+  });
+
+  it('completed=true also stamps read_at when unset, and keeps an existing one', () => {
+    const db = openWorkbenchDb(':memory:');
+    setInboxCompleted(db, 's1', 'writer', true);
+    const auto = getInboxStates(db).get('s1');
+    assert.equal(typeof auto?.completedAt, 'string');
+    assert.equal(auto?.readAt, auto?.completedAt);
+
+    setInboxRead(db, 's2', 'writer', true);
+    const before = getInboxStates(db).get('s2')!.readAt;
+    setInboxCompleted(db, 's2', 'writer', true);
+    const kept = getInboxStates(db).get('s2');
+    assert.equal(kept?.readAt, before, '已有的 read_at 不被完成时间覆盖');
+    assert.equal(typeof kept?.completedAt, 'string');
+  });
+
+  it('completed=false clears only completed_at', () => {
+    const db = openWorkbenchDb(':memory:');
+    setInboxCompleted(db, 's1', 'writer', true);
+    setInboxCompleted(db, 's1', 'writer', false);
+    const state = getInboxStates(db).get('s1');
+    assert.equal(state?.completedAt, null);
+    assert.equal(typeof state?.readAt, 'string', '取消完成不清除已读标记');
+  });
+
+  it('deleteInboxState removes the row', () => {
+    const db = openWorkbenchDb(':memory:');
+    setInboxCompleted(db, 's1', 'writer', true);
+    setInboxRead(db, 's2', 'writer', true);
+    deleteInboxState(db, 's1');
+    const states = getInboxStates(db);
+    assert.equal(states.has('s1'), false);
+    assert.equal(states.has('s2'), true);
   });
 });

@@ -123,6 +123,21 @@ function textFromContent(content: unknown, blockType: string, field: string): st
     .join('');
 }
 
+function lastTextFromEntries(entries: SessionEntry[], role: 'user' | 'assistant'): string {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.type !== 'message' || entry.message.role !== role) continue;
+    return textFromContent((entry.message as { content?: unknown }).content, 'text', 'text');
+  }
+  return '';
+}
+
+/** 收件箱预览：最后一条 assistant 文本，为空退回最后一条 user 文本；压缩成单行截 120 字符。 */
+function previewFromEntries(entries: SessionEntry[]): string | undefined {
+  const collapsed = (lastTextFromEntries(entries, 'assistant') || lastTextFromEntries(entries, 'user')).replace(/\s+/g, ' ').trim();
+  return collapsed ? collapsed.slice(0, 120) : undefined;
+}
+
 /** Maps a Pi JSONL message entry onto the replay contract; tool calls are pure-chat absent. */
 function sessionMessageFromEntry(id: string, timestamp: string, message: unknown): SessionMessage | undefined {
   if (!message || typeof message !== 'object') return undefined;
@@ -309,6 +324,7 @@ export class AgentSessionStore {
       return undefined;
     }
     const title = sessionTitleFromEntries(entries) ?? info.firstMessage.trim().slice(0, 40) ?? '';
+    const preview = previewFromEntries(entries);
     return {
       id: info.id,
       agentId,
@@ -317,6 +333,7 @@ export class AgentSessionStore {
       updatedAt: info.modified.toISOString(),
       questionCount: questionCountFromEntries(entries),
       ...attentionFromEntries(entries),
+      ...(preview ? { preview } : {}),
     };
   }
 }
