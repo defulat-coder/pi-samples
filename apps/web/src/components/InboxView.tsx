@@ -1,4 +1,4 @@
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import type { AgentSummary, SessionSummary } from '@pi-workbench/contracts';
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
@@ -47,28 +47,32 @@ export function InboxView({ items, agents, loading, onRefresh, onOpen }: InboxVi
         </div>
       ) : (
         <div className="inbox-list" role="list">
-          {rows.map((session) => (
-            <motion.button
-              type="button"
-              role="listitem"
-              key={session.id}
-              className="inbox-row"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: MOTION_EASE }}
-              onClick={() => onOpen(session.agentId, session.id)}
-              title={session.attentionDetail ?? session.title}
-            >
-              <AgentChip mark={agentMark(session.agentId)} />
-              <span className="inbox-agent">{agentName(session.agentId)}</span>
-              <span className="inbox-status">
-                <WarningCircle size={12} weight="fill" aria-hidden="true" />
-                {attentionLabel(session)}
-              </span>
-              <span className="inbox-title">{session.title}</span>
-              <span className="inbox-time">{formatRelativeTime(session.updatedAt, now)}</span>
-            </motion.button>
-          ))}
+          <AnimatePresence initial={false}>
+            {rows.map((session) => (
+              <motion.button
+                type="button"
+                role="listitem"
+                key={session.id}
+                className="inbox-row"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, x: -8, transition: { duration: 0.15, ease: MOTION_EASE } }}
+                whileTap={{ scale: 0.97 }}
+                transition={{ duration: 0.2, ease: MOTION_EASE }}
+                onClick={() => onOpen(session.agentId, session.id)}
+                title={session.attentionDetail ?? session.title}
+              >
+                <AgentChip mark={agentMark(session.agentId)} />
+                <span className="inbox-agent">{agentName(session.agentId)}</span>
+                <span className="inbox-status">
+                  <WarningCircle size={12} weight="fill" aria-hidden="true" />
+                  {attentionLabel(session)}
+                </span>
+                <span className="inbox-title">{session.title}</span>
+                <span className="inbox-time">{formatRelativeTime(session.updatedAt, now)}</span>
+              </motion.button>
+            ))}
+          </AnimatePresence>
         </div>
       )}
     </div>

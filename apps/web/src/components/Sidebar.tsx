@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentSummary } from '@pi-workbench/contracts';
+import { AnimatePresence, motion } from 'motion/react';
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle';
 import { ChartLine } from '@phosphor-icons/react/dist/icons/ChartLine';
@@ -15,6 +16,7 @@ import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { Users } from '@phosphor-icons/react/dist/icons/Users';
 import type { ExploreView } from '../lib/explore.js';
 import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
 import type { SystemView } from '../lib/types.js';
 import { useDismissable } from '../hooks/useDismissable.js';
 import { AgentChip } from './AgentChip.js';
@@ -95,13 +97,24 @@ export function Sidebar(props: SidebarProps) {
             <span className="workspace-name">Pi 工作台</span>
             <CaretDown size={12} className="workspace-chevron" />
           </button>
-          {workspaceOpen && (
-            <div className="workspace-popover" role="dialog" aria-label="工作区信息">
-              <p className="workspace-popover-title">本地工作区</p>
-              <p className="workspace-popover-line">本地模式 · 无需登录</p>
-              {workspaceInfo && <p className="workspace-popover-line">{workspaceInfo}</p>}
-            </div>
-          )}
+          <AnimatePresence>
+            {workspaceOpen && (
+              <motion.div
+                className="workspace-popover"
+                role="dialog"
+                aria-label="工作区信息"
+                initial={{ opacity: 0, scale: 0.97 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.97 }}
+                transition={{ duration: 0.15, ease: MOTION_EASE }}
+                style={{ transformOrigin: 'top left' }}
+              >
+                <p className="workspace-popover-title">本地工作区</p>
+                <p className="workspace-popover-line">本地模式 · 无需登录</p>
+                {workspaceInfo && <p className="workspace-popover-line">{workspaceInfo}</p>}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         <button
           type="button"
@@ -164,40 +177,48 @@ export function Sidebar(props: SidebarProps) {
             <span className="group-header-label">探索</span>
           </button>
         </div>
-        {exploreOpen && (
-          <>
-            <button
-              type="button"
-              className={cx('nav-row', exploreView === 'agents' && 'active')}
-              aria-current={exploreView === 'agents' ? 'page' : undefined}
-              onClick={() => props.onOpenExplore('agents')}
-              title="Agents"
+        <AnimatePresence initial={false}>
+          {exploreOpen && (
+            <motion.div
+              className="sidebar-group"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: MOTION_EASE }}
             >
-              <NavIcon><Users size={12} weight="bold" /></NavIcon>
-              <span className="sidebar-fold">Agents</span>
-            </button>
-            <button
-              type="button"
-              className={cx('nav-row', exploreView === 'templates' && 'active')}
-              aria-current={exploreView === 'templates' ? 'page' : undefined}
-              onClick={() => props.onOpenExplore('templates')}
-              title="模板"
-            >
-              <NavIcon><Layout size={12} weight="bold" /></NavIcon>
-              <span className="sidebar-fold">模板</span>
-            </button>
-            <button
-              type="button"
-              className={cx('nav-row', exploreView === 'skills' && 'active')}
-              aria-current={exploreView === 'skills' ? 'page' : undefined}
-              onClick={() => props.onOpenExplore('skills')}
-              title="技能"
-            >
-              <NavIcon><PuzzlePiece size={12} weight="bold" /></NavIcon>
-              <span className="sidebar-fold">技能</span>
-            </button>
-          </>
-        )}
+              <button
+                type="button"
+                className={cx('nav-row', exploreView === 'agents' && 'active')}
+                aria-current={exploreView === 'agents' ? 'page' : undefined}
+                onClick={() => props.onOpenExplore('agents')}
+                title="Agents"
+              >
+                <NavIcon><Users size={12} weight="bold" /></NavIcon>
+                <span className="sidebar-fold">Agents</span>
+              </button>
+              <button
+                type="button"
+                className={cx('nav-row', exploreView === 'templates' && 'active')}
+                aria-current={exploreView === 'templates' ? 'page' : undefined}
+                onClick={() => props.onOpenExplore('templates')}
+                title="模板"
+              >
+                <NavIcon><Layout size={12} weight="bold" /></NavIcon>
+                <span className="sidebar-fold">模板</span>
+              </button>
+              <button
+                type="button"
+                className={cx('nav-row', exploreView === 'skills' && 'active')}
+                aria-current={exploreView === 'skills' ? 'page' : undefined}
+                onClick={() => props.onOpenExplore('skills')}
+                title="技能"
+              >
+                <NavIcon><PuzzlePiece size={12} weight="bold" /></NavIcon>
+                <span className="sidebar-fold">技能</span>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="sidebar-divider" role="separator" />
 
@@ -210,38 +231,46 @@ export function Sidebar(props: SidebarProps) {
             <Plus size={12} weight="bold" />
           </button>
         </div>
-        {agentsOpen && (
-          <>
-            {agents.map((agent) => (
-              <div
-                role="button"
-                tabIndex={0}
-                key={agent.id}
-                className={cx('agent-row', agent.id === currentAgentId && 'active')}
-                title={agent.name}
-                onClick={() => props.onSelectAgent(agent.id)}
-                onKeyDown={(event) => { if (event.key === 'Enter') props.onSelectAgent(agent.id); }}
-              >
-                <AgentChip mark={agent.mark} />
-                <span className="agent-name">{agent.name}</span>
-                {(attentionByAgent[agent.id] ?? 0) > 0 && (
-                  <span className="nav-badge agent-badge" aria-label={`${attentionByAgent[agent.id]} 个会话需要处理`}>{attentionByAgent[agent.id]}</span>
-                )}
-                <span className="agent-row-actions">
-                  <button
-                    type="button"
-                    className="mini-button"
-                    aria-label={`查看 ${agent.name} 配置`}
-                    onClick={(event) => { event.stopPropagation(); props.onOpenConfig(agent.id); }}
-                  >
-                    <Info size={12} />
-                  </button>
-                </span>
-              </div>
-            ))}
-            {!agents.length && <p className="sidebar-empty-hint">暂无 Agent，点右上角 + 从模板创建</p>}
-          </>
-        )}
+        <AnimatePresence initial={false}>
+          {agentsOpen && (
+            <motion.div
+              className="sidebar-group"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: MOTION_EASE }}
+            >
+              {agents.map((agent) => (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  key={agent.id}
+                  className={cx('agent-row', agent.id === currentAgentId && 'active')}
+                  title={agent.name}
+                  onClick={() => props.onSelectAgent(agent.id)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') props.onSelectAgent(agent.id); }}
+                >
+                  <AgentChip mark={agent.mark} />
+                  <span className="agent-name">{agent.name}</span>
+                  {(attentionByAgent[agent.id] ?? 0) > 0 && (
+                    <span className="nav-badge agent-badge" aria-label={`${attentionByAgent[agent.id]} 个会话需要处理`}>{attentionByAgent[agent.id]}</span>
+                  )}
+                  <span className="agent-row-actions">
+                    <button
+                      type="button"
+                      className="mini-button"
+                      aria-label={`查看 ${agent.name} 配置`}
+                      onClick={(event) => { event.stopPropagation(); props.onOpenConfig(agent.id); }}
+                    >
+                      <Info size={12} />
+                    </button>
+                  </span>
+                </div>
+              ))}
+              {!agents.length && <p className="sidebar-empty-hint">暂无 Agent，点右上角 + 从模板创建</p>}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <div className="sidebar-footer">

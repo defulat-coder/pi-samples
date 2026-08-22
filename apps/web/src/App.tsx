@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentSummary, SessionSummary, WorkspaceResponse } from '@pi-workbench/contracts';
-import { AnimatePresence, MotionConfig } from 'motion/react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
 import { deleteSession, fetchInbox, fetchPreferences, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference } from './lib/api.js';
@@ -9,6 +9,7 @@ import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
 import type { SystemView, ViewState } from './lib/types.js';
 import { mergeServerThinkingPreferences } from './lib/configPanel.js';
+import { MOTION_EASE } from './lib/motion.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { useAsyncData } from './hooks/useAsyncData.js';
 import { useChatController } from './hooks/useChatController.js';
@@ -258,6 +259,8 @@ export default function App() {
   }
 
   const showWelcome = !chat.currentSessionId;
+  /** 视图级 key：只有跨视图切换才重放入场动画，Agent/会话切换不重挂载主区。 */
+  const viewKey = exploreView ? `explore-${exploreView}` : systemView ? `system-${systemView}` : inboxOpen ? 'inbox' : 'chat';
 
   return (
     <MotionConfig reducedMotion="user">
@@ -300,80 +303,92 @@ export default function App() {
         )}
 
         <main className="main-area">
-          {!exploreView && !systemView && !inboxOpen && <UsageBar agent={currentAgent} sessions={sessions} />}
+          {/* 视图切换入场淡入：key 到视图级，切换即时（无 exit），不随 Agent/会话变化重挂载 */}
+          <motion.div
+            key={viewKey}
+            className="view-body"
+            initial={{ opacity: 0, y: 2 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.15, ease: MOTION_EASE }}
+          >
+            {!exploreView && !systemView && !inboxOpen && <UsageBar agent={currentAgent} sessions={sessions} />}
 
-          {exploreView === 'agents' ? (
-            <ExploreAgents agents={workspace.agents} onOpenChat={selectAgent} />
-          ) : exploreView === 'templates' ? (
-            <TemplatesView onCreated={() => void handleAgentCreated()} />
-          ) : exploreView === 'skills' ? (
-            <SkillsView prompts={workspace.prompts} />
-          ) : systemView === 'usage' ? (
-            <UsageView usage={usage.data} loading={usage.loading} onRefresh={() => void usage.reload()} />
-          ) : systemView === 'settings' ? (
-            <SettingsView settings={settings.data} loading={settings.loading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
-          ) : inboxOpen ? (
-            <InboxView
-              items={inbox.data ?? []}
-              agents={workspace.agents}
-              loading={inbox.loading}
-              onRefresh={() => void inbox.reload()}
-              onOpen={openInboxItem}
-            />
-          ) : (
-            <>
-              {!showWelcome && (
-                <div className="thread-header">
-                  <button type="button" className="header-button primary" onClick={newSession}>
-                    <Plus size={13} weight="bold" />
-                    新会话
-                  </button>
-                  {currentAgentId && (
-                    <button
-                      type="button"
-                      className={cx('header-button', configAgentId && 'active')}
-                      onClick={() => setConfigAgentId((prev) => (prev ? null : currentAgentId))}
-                    >
-                      <SlidersHorizontal size={13} />
-                      配置
+            {exploreView === 'agents' ? (
+              <ExploreAgents agents={workspace.agents} onOpenChat={selectAgent} />
+            ) : exploreView === 'templates' ? (
+              <TemplatesView onCreated={() => void handleAgentCreated()} />
+            ) : exploreView === 'skills' ? (
+              <SkillsView prompts={workspace.prompts} />
+            ) : systemView === 'usage' ? (
+              <UsageView usage={usage.data} loading={usage.loading} onRefresh={() => void usage.reload()} />
+            ) : systemView === 'settings' ? (
+              <SettingsView settings={settings.data} loading={settings.loading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
+            ) : inboxOpen ? (
+              <InboxView
+                items={inbox.data ?? []}
+                agents={workspace.agents}
+                loading={inbox.loading}
+                onRefresh={() => void inbox.reload()}
+                onOpen={openInboxItem}
+              />
+            ) : (
+              <>
+                {!showWelcome && (
+                  <div className="thread-header">
+                    <button type="button" className="header-button primary" onClick={newSession}>
+                      <Plus size={13} weight="bold" />
+                      新会话
                     </button>
-                  )}
-                </div>
-              )}
+                    {currentAgentId && (
+                      <button
+                        type="button"
+                        className={cx('header-button', configAgentId && 'active')}
+                        onClick={() => setConfigAgentId((prev) => (prev ? null : currentAgentId))}
+                      >
+                        <SlidersHorizontal size={13} />
+                        配置
+                      </button>
+                    )}
+                  </div>
+                )}
 
-              {showWelcome && currentAgent ? (
-                <>
-                  <Welcome agent={currentAgent} onSuggestion={send} />
-                  <div className="composer-wrap welcome-composer">
-                    <Composer
-                      prompts={workspace.prompts}
-                      models={workspace.models}
-                      disabled={Boolean(chat.liveTurn)}
-                      selectedModel={selectedModel}
-                      onSelectModel={setSelectedModel}
-                      onSend={send}
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <ThreadView messages={chat.threadMessages} compact={uiPreferences.compactMessages} />
-                  <div className="composer-wrap">
-                    <div className="composer-inner">
-                      <Composer
-                        prompts={workspace.prompts}
-                        models={workspace.models}
-                        disabled={Boolean(chat.liveTurn)}
-                        selectedModel={selectedModel}
-                        onSelectModel={setSelectedModel}
-                        onSend={send}
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-            </>
-          )}
+                {/* Welcome 淡出完成后再挂载会话区，避免两棵子树共存撑开布局 */}
+                <AnimatePresence mode="wait" initial={false}>
+                  {showWelcome && currentAgent ? (
+                    <motion.div key="welcome" className="chat-branch" exit={{ opacity: 0 }} transition={{ duration: 0.15, ease: MOTION_EASE }}>
+                      <Welcome agent={currentAgent} onSuggestion={send} />
+                      <div className="composer-wrap welcome-composer">
+                        <Composer
+                          prompts={workspace.prompts}
+                          models={workspace.models}
+                          disabled={Boolean(chat.liveTurn)}
+                          selectedModel={selectedModel}
+                          onSelectModel={setSelectedModel}
+                          onSend={send}
+                        />
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div key="thread" className="chat-branch">
+                      <ThreadView messages={chat.threadMessages} compact={uiPreferences.compactMessages} />
+                      <div className="composer-wrap">
+                        <div className="composer-inner">
+                          <Composer
+                            prompts={workspace.prompts}
+                            models={workspace.models}
+                            disabled={Boolean(chat.liveTurn)}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                            onSend={send}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </>
+            )}
+          </motion.div>
         </main>
 
         <CommandPalette

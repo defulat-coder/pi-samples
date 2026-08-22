@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { SessionSummary } from '@pi-workbench/contracts';
+import { AnimatePresence, motion } from 'motion/react';
 import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft';
 import { List } from '@phosphor-icons/react/dist/icons/List';
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
@@ -7,6 +8,7 @@ import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { Warning } from '@phosphor-icons/react/dist/icons/Warning';
 import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
 import { filterAttention, groupSessions } from '../lib/sessions.js';
 
 export type SessionFilter = 'all' | 'attention';
@@ -61,10 +63,12 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
   }
 
   return (
-    <div
+    <motion.div
       role="button"
       tabIndex={0}
       className={cx('session-row', active && 'active')}
+      exit={{ opacity: 0, x: -8 }}
+      transition={{ duration: 0.15, ease: MOTION_EASE }}
       onClick={onSelect}
       onKeyDown={(event) => { if (event.key === 'Enter') onSelect(); }}
       title={session.title}
@@ -89,7 +93,7 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
           <Trash size={12} />
         </button>
       </span>
-    </div>
+    </motion.div>
   );
 }
 
@@ -148,16 +152,18 @@ export function InboxColumn(props: InboxColumnProps) {
         {groups.map((group) => (
           <div key={group.key}>
             <p className="session-group-label">{group.label}</p>
-            {group.items.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                active={session.id === currentSessionId}
-                onSelect={() => props.onSelectSession(session.id)}
-                onRename={(title) => props.onRenameSession(session.id, title)}
-                onDelete={() => props.onDeleteSession(session.id)}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {group.items.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  active={session.id === currentSessionId}
+                  onSelect={() => props.onSelectSession(session.id)}
+                  onRename={(title) => props.onRenameSession(session.id, title)}
+                  onDelete={() => props.onDeleteSession(session.id)}
+                />
+              ))}
+            </AnimatePresence>
           </div>
         ))}
         {!filteredSessions.length && (

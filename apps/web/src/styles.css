@@ -76,12 +76,23 @@ input, textarea { font: inherit; color: inherit; }
 ::-webkit-scrollbar-thumb { background: #0000004d; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* ===== 按压反馈：可点击元素 :active 统一 0.97 缩放（各类的 transform 过渡在既有 transition 列表内追加） ===== */
+.icon-button:active, .nav-row:active, .agent-row:active, .session-row:active,
+.send-button:active, .suggestion-button:active, .mini-button:active, .header-button:active,
+.model-button:active, .agent-card:active, .skill-card:active, .inbox-row:active,
+.prompt-row:active, .model-option:active, .session-tab:active, .workspace-button:active,
+.group-add-button:active, .inbox-refresh:active, .toggle:active,
+.thinking-block summary:active { transform: scale(0.97); }
+
 /* ===== 布局 ===== */
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
 .app-loading { display: flex; flex: 1; align-items: center; justify-content: center; color: var(--text-quaternary); font-size: 13px; }
 .app-fatal { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); align-items: center; justify-content: center; color: var(--text-tertiary); font-size: 13px; }
 .app-fatal button { color: var(--brand); font-weight: 500; }
 .main-area { position: relative; display: flex; min-width: 0; flex: 1; flex-direction: column; background: var(--bg-primary); }
+/* 视图淡入容器 / chat 分支容器：承接 main-area 的 flex 列布局，不改变子视图排版 */
+.view-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.chat-branch { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 
 /* ===== 侧边栏 ===== */
 .sidebar {
@@ -89,7 +100,7 @@ input, textarea { font: inherit; color: inherit; }
   width: 245px; flex: none; overflow: hidden;
   background: var(--bg-primary); border-right: 1px solid var(--border-tertiary);
   padding: var(--space-3) var(--space-2);
-  transition: width var(--duration-normal) ease-in-out;
+  transition: width var(--duration-normal) var(--ease-out);
 }
 /* 收起态（§11.9 实测）：44px 宽，导航/agent 行 32×32 纯图标，active 高亮落在内层图标盒，徽标变 6px 蓝点 */
 .sidebar.collapsed { width: 44px; padding-left: var(--space-1); padding-right: var(--space-1); }
@@ -119,7 +130,7 @@ input, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 6px; height: 26px;
   border-radius: var(--radius-sm); padding: var(--space-1);
   font-size: 14px; letter-spacing: -0.56px; color: var(--text-secondary); white-space: nowrap;
-  transition: background var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .workspace-button:hover { background: var(--bg-secondary); }
 .workspace-mark {
@@ -138,7 +149,7 @@ input, textarea { font: inherit; color: inherit; }
 .icon-button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; flex: none; border-radius: var(--radius-sm); color: var(--text-secondary);
-  transition: background var(--duration-normal) ease-in-out, color var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), color var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .icon-button:hover { background: var(--bg-secondary); }
 .sidebar.collapsed .sidebar-brand-row { justify-content: center; }
@@ -147,7 +158,7 @@ input, textarea { font: inherit; color: inherit; }
 .sidebar-search {
   display: flex; align-items: center; gap: var(--space-2); width: 100%; height: 26px; flex: none;
   border-radius: var(--radius-lg); background: rgba(237, 242, 247, 0.6); padding: 0 10px;
-  color: var(--text-quaternary); transition: background var(--duration-normal) ease-in-out;
+  color: var(--text-quaternary); transition: background var(--duration-normal) var(--ease-out);
   text-align: left; cursor: pointer;
 }
 .sidebar-search:hover, .sidebar-search:focus-within { background: var(--bg-tertiary); }
@@ -166,7 +177,7 @@ input, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: var(--space-3); width: 100%;
   height: 26px; border-radius: var(--radius-sm); padding: var(--space-1) 10px;
   font-size: 12px; line-height: 13.8px; color: var(--text-primary); text-align: left;
-  transition: background var(--duration-slow) ease-in-out;
+  transition: background var(--duration-slow) var(--ease-out), transform var(--duration-fast) var(--ease-out);
   white-space: nowrap;
 }
 /* Fleet 导航行文字为 12px/500（实测 label 12px/18px w500） */
@@ -198,7 +209,7 @@ input, textarea { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: var(--space-1); height: 20px;
   border-radius: var(--radius-xs); padding: 2px var(--space-2);
   font-size: 13px; font-weight: 500; line-height: 15.6px; letter-spacing: -0.13px; color: var(--text-secondary);
-  transition: background var(--duration-fast), color var(--duration-fast);
+  transition: background var(--duration-fast), color var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .session-tab:hover { background: var(--bg-secondary-hover); }
 .session-tab.active { background: var(--bg-primary); color: var(--text-primary); box-shadow: var(--button-shadow); }
@@ -219,11 +230,13 @@ input, textarea { font: inherit; color: inherit; }
   font-size: 10px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;
   color: var(--text-quaternary); white-space: nowrap;
 }
+/* 组内容折叠动画容器：高度动画期间裁剪溢出，内部恢复 sidebar-scroll 的 2px 行距 */
+.sidebar-group { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
 .group-add-button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border-radius: var(--radius-xs); background: var(--bg-secondary);
   color: var(--text-quaternary); padding: 2px;
-  transition: background var(--duration-normal) ease-in-out, color var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), color var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .group-add-button:hover { background: var(--bg-secondary-hover); color: var(--text-secondary); }
 
@@ -236,7 +249,7 @@ input, textarea { font: inherit; color: inherit; }
 .mini-button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; border-radius: var(--radius-xs); color: var(--text-quaternary);
-  transition: background var(--duration-normal), color var(--duration-normal);
+  transition: background var(--duration-normal), color var(--duration-normal), transform var(--duration-fast) var(--ease-out);
 }
 .mini-button:hover { background: var(--bg-secondary-hover); color: var(--text-secondary); }
 
@@ -289,7 +302,7 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-column {
   display: flex; flex-direction: column; width: 320px; flex: none; overflow: hidden;
   background: var(--bg-primary); border-right: 1px solid var(--border-subtle);
-  transition: width var(--duration-normal) ease-in-out;
+  transition: width var(--duration-normal) var(--ease-out);
 }
 .inbox-column.collapsed { width: 44px; align-items: center; padding-top: var(--space-3); border-right-color: transparent; }
 .inbox-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
@@ -329,7 +342,7 @@ input, textarea { font: inherit; color: inherit; }
 .suggestion-button {
   border: 1px solid var(--border-subtle); border-radius: var(--radius-full); background: var(--bg-primary);
   padding: 6px 12px; font-size: 13px; color: var(--text-secondary); box-shadow: var(--button-shadow);
-  transition: background var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .suggestion-button:hover { background: var(--bg-secondary); }
 .welcome-composer { width: 100%; max-width: 672px; margin: 0 auto; }
@@ -396,7 +409,7 @@ input, textarea { font: inherit; color: inherit; }
 .thinking-block summary {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none;
   font-size: 12px; font-weight: 500; color: var(--text-quaternary);
-  border-radius: var(--radius-sm); padding: 3px 8px; transition: background var(--duration-normal);
+  border-radius: var(--radius-sm); padding: 3px 8px; transition: background var(--duration-normal), transform var(--duration-fast) var(--ease-out);
 }
 .thinking-block summary::-webkit-details-marker { display: none; }
 .thinking-block summary:hover { background: var(--bg-secondary); }
@@ -432,7 +445,8 @@ input, textarea { font: inherit; color: inherit; }
 .composer-inner { margin: 0 auto; width: 100%; max-width: 1024px; padding: 0 var(--space-6); }
 .composer {
   position: relative; border-radius: var(--radius-xl); border: 1px solid var(--border-subtle);
-  background: var(--bg-primary); transition: all var(--duration-normal) ease-in-out;
+  background: var(--bg-primary);
+  transition: border-color var(--duration-normal) var(--ease-out), background var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out);
 }
 .welcome-composer .composer { width: 100%; }
 .composer textarea {
@@ -445,7 +459,7 @@ input, textarea { font: inherit; color: inherit; }
 .send-button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; border-radius: var(--radius-full);
-  background: var(--brand); color: #fff; transition: background var(--duration-normal) ease-in-out;
+  background: var(--brand); color: #fff; transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .send-button:hover:not(:disabled) { background: var(--brand-hover); }
 .send-button:disabled { background: #fafbfd; color: var(--text-disabled); }
@@ -455,7 +469,7 @@ input, textarea { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 6px; height: 27px;
   border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2);
   font-size: 13px; line-height: 15.6px; letter-spacing: -0.26px; color: var(--text-secondary);
-  transition: background var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .model-button:hover { background: var(--bg-secondary); }
 .model-button .model-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -469,7 +483,7 @@ input, textarea { font: inherit; color: inherit; }
 .model-option {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   border-radius: var(--radius-md); padding: 6px 10px; text-align: left;
-  font-size: 14px; color: var(--text-primary); transition: background var(--duration-fast);
+  font-size: 14px; color: var(--text-primary); transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .model-option:hover, .model-option.selected { background: var(--bg-secondary); }
 .model-option .model-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -487,7 +501,7 @@ input, textarea { font: inherit; color: inherit; }
 .prompt-row {
   display: flex; align-items: center; gap: var(--space-3); width: 100%;
   padding: var(--space-2) var(--space-3); text-align: left; border-radius: var(--radius-sm);
-  transition: background var(--duration-fast);
+  transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .prompt-row.active, .prompt-row:hover { background: var(--bg-secondary); }
 .prompt-row svg { flex: none; color: var(--text-quaternary); }
@@ -510,7 +524,7 @@ input, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: var(--space-3); width: 100%; height: 48px;
   padding: 0 var(--space-3); color: var(--text-primary);
 }
-.config-section-header svg { flex: none; color: var(--text-quaternary); transition: color var(--duration-normal) ease-in-out; }
+.config-section-header svg { flex: none; color: var(--text-quaternary); transition: color var(--duration-normal) var(--ease-out); }
 .config-section-header:hover svg { color: var(--text-secondary); }
 .config-section-title { flex: 1; min-width: 0; text-align: left; font-size: 13px; font-weight: 600; }
 .config-section-chevron { transition: transform var(--duration-normal) var(--ease-out); }
@@ -555,7 +569,7 @@ input, textarea { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 6px; height: 26px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-primary);
   padding: var(--space-1) var(--space-2); font-size: 13px; letter-spacing: -0.26px; color: var(--text-primary);
-  box-shadow: var(--button-shadow); transition: background var(--duration-normal) ease-in-out;
+  box-shadow: var(--button-shadow); transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .header-button:hover { background: var(--bg-secondary); }
 .header-button.primary { background: var(--brand); border-color: var(--brand-hover); color: #fff; }
@@ -577,7 +591,7 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-refresh {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; border-radius: var(--radius-sm); color: var(--text-quaternary);
-  transition: background var(--duration-normal), color var(--duration-normal);
+  transition: background var(--duration-normal), color var(--duration-normal), transform var(--duration-fast) var(--ease-out);
 }
 .inbox-refresh:hover:not(:disabled) { background: var(--bg-secondary); color: var(--text-secondary); }
 .inbox-refresh:disabled { color: var(--text-disabled); }
@@ -586,7 +600,7 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-row {
   display: flex; align-items: center; gap: var(--space-3); width: 100%; height: 44px;
   padding: 0 var(--space-3); border-bottom: 1px solid var(--border-subtle); text-align: left;
-  transition: background var(--duration-fast);
+  transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .inbox-row:hover { background: var(--bg-secondary); }
 .inbox-agent { flex: none; width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--text-quaternary); }
@@ -619,7 +633,7 @@ input, textarea { font: inherit; color: inherit; }
   border-radius: var(--radius-xl); border: 1px solid var(--border-subtle); background: var(--bg-primary);
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
   padding: var(--space-5); text-align: left;
-  transition: background var(--duration-normal) ease-in-out;
+  transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 button.agent-card:hover, .template-card:hover { background: var(--bg-secondary); }
 .agent-card-head { display: flex; align-items: center; gap: var(--space-3); }
@@ -651,7 +665,7 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 .skill-card {
   display: flex; flex-direction: column; gap: var(--space-3);
   border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-primary);
-  padding: var(--space-4); transition: background var(--duration-normal) ease-in-out;
+  padding: var(--space-4); transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .skill-card:hover { background: var(--bg-secondary); }
 .skill-card-head { display: flex; align-items: center; gap: var(--space-2); color: var(--text-quaternary); }
@@ -743,7 +757,7 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 .settings-model-chip { border: 1px solid var(--border-subtle); border-radius: var(--radius-full); background: var(--bg-secondary); padding: 2px var(--space-2); font-size: 12px; color: var(--text-secondary); }
 
 /* 开关 */
-.toggle { position: relative; flex: none; width: 32px; height: 18px; border-radius: var(--radius-full); background: var(--border-default); transition: background var(--duration-normal) ease-in-out; }
+.toggle { position: relative; flex: none; width: 32px; height: 18px; border-radius: var(--radius-full); background: var(--border-default); transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
 .toggle.active { background: var(--brand); }
 .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: var(--radius-full); background: #fff; box-shadow: var(--button-shadow); transition: transform var(--duration-normal) var(--ease-out); }
 .toggle.active .toggle-thumb { transform: translateX(14px); }
@@ -820,4 +834,12 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
   padding: var(--space-2) var(--space-3);
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* ===== 降低动态效果（prefers-reduced-motion） ===== */
+@media (prefers-reduced-motion: reduce) {
+  /* 所有过渡压到近瞬时；循环动画降速变缓（gentler），不完全禁掉以保留状态反馈 */
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+  .assistant-body.streaming::after, .thinking-dot.active { animation-duration: 2.4s; }
+  .message-retry .spinning, .spinning { animation-duration: 2.4s; }
 }
