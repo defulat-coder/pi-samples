@@ -10,6 +10,8 @@ export interface WorkspaceContextValue {
   workspace: WorkspaceResponse;
   sessionsByAgent: Record<string, SessionSummary[]>;
   notify: (text: string) => void;
+  /** Agent 定义被编辑/新建后调用，让侧栏、欢迎页等消费 workspace 的地方拿到新数据。 */
+  reloadWorkspace: () => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

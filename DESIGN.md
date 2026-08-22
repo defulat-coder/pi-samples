@@ -266,6 +266,13 @@ Fleet 是四栏壳层：左侧固定 245px 侧边栏（收起后 44px，导航�
 
 - 全圆角白底胶囊组，4px 内边距、2px 间距；选项 10px/600 字，active 项信号浅底 + 品牌深蓝。用于配置面板的二元切换（Thinking 开/关）
 
+### ConfigPanel 编辑态
+
+- **入口:** 面板头部「编辑」按钮（26px 高 header-button + PencilSimple 图标，Fleet 的 View ▾ → Agent files 的本地对应）；点击后「基本信息」节内切换为编辑表单，0.15s 淡入
+- **字段:** 名称/徽标/简介/描述用 30px 高 input（沿用 input-field 规格：1px 默认边框、6px 圆角、聚焦边框变信号蓝）；建议问题为可增删的 input 行列表（行内 X 删除，底部「添加建议问题」ghost 行，1–8 条）；系统提示词为等宽 12px 大 textarea（≥180px，可纵向拉伸）——对应 Fleet Agent files 弹窗的 Source 编辑
+- **操作行:** 右对齐「取消 / 保存」按钮组（ghost + primary header-button）；保存中 primary 禁用并带旋转 spinner；必填校验不过时禁用保存，不做行内红字报错
+- **写路径:** 保存走 `PATCH /api/v1/agents/:agentId`，成功 toast 确认并重拉详情；失败 toast 原样展示服务端错误；id 不可编辑（文件名即身份）
+
 ## Do's and Don'ts
 
 ### Do:

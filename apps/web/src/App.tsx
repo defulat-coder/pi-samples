@@ -202,6 +202,14 @@ export default function App() {
     setView({ kind: 'explore', view: 'agents' });
   };
 
+  const reloadWorkspace = useCallback(() => {
+    fetchWorkspace()
+      .then(setWorkspace)
+      .catch(() => {
+        // 刷新失败时下次进入页面再拉。
+      });
+  }, []);
+
   const openInboxItem = (agentId: string, sessionId: string) => {
     setView({ kind: 'chat' });
     if (agentId !== currentAgentId) {
@@ -283,7 +291,7 @@ export default function App() {
   const viewKey = exploreView ? `explore-${exploreView}` : systemView ? `system-${systemView}` : inboxOpen ? 'inbox' : 'chat';
 
   return (
-    <WorkspaceProvider value={{ workspace, sessionsByAgent, notify }}>
+    <WorkspaceProvider value={{ workspace, sessionsByAgent, notify, reloadWorkspace }}>
     <MotionConfig reducedMotion="user">
       <div className="app-shell">
         <Sidebar

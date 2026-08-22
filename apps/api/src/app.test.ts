@@ -401,6 +401,30 @@ describe('Explore endpoints', () => {
     assert.equal(response.json().id, 'review-buddy');
   });
 
+  it('updates an agent via PATCH and keeps untouched fields', async () => {
+    const updated = await app.inject({ method: 'PATCH', url: '/api/v1/agents/translator-pro', payload: { tagline: '双语互译 Pro', suggestions: ['翻成英文', '翻成中文'] } });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().id, 'translator-pro');
+    assert.equal(updated.json().tagline, '双语互译 Pro');
+    assert.deepEqual(updated.json().suggestions, ['翻成英文', '翻成中文']);
+    assert.equal(updated.json().name, templateBody.name);
+    assert.equal(updated.json().body, templateBody.body);
+    const reloaded = loadAgents(root).find((agent) => agent.id === 'translator-pro');
+    assert.equal(reloaded?.tagline, '双语互译 Pro');
+  });
+
+  it('PATCH maps missing agents to 404 and invalid patches to 400', async () => {
+    const missing = await app.inject({ method: 'PATCH', url: '/api/v1/agents/ghost-agent', payload: { name: '幽灵' } });
+    assert.equal(missing.statusCode, 404);
+    assert.equal(typeof missing.json().error, 'string');
+    const invalid = await app.inject({ method: 'PATCH', url: '/api/v1/agents/translator-pro', payload: { name: '两行\n名称' } });
+    assert.equal(invalid.statusCode, 400);
+    const oversized = await app.inject({ method: 'PATCH', url: '/api/v1/agents/translator-pro', payload: { body: '长'.repeat(40 * 1024) } });
+    assert.equal(oversized.statusCode, 400);
+    const badSchema = await app.inject({ method: 'PATCH', url: '/api/v1/agents/translator-pro', payload: { suggestions: [] } });
+    assert.equal(badSchema.statusCode, 400);
+  });
+
   it('serves the built-in agent templates', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/templates' });
     assert.equal(response.statusCode, 200);

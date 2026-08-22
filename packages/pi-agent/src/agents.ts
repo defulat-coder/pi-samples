@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, stripFrontmatter } from '@earendil-works/pi-coding-agent';
-import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary } from '@pi-workbench/contracts';
+import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary, type UpdateAgentRequest } from '@pi-workbench/contracts';
 
 const AGENT_ID_REGEX = new RegExp(AGENT_ID_PATTERN);
 const PROMPT_NAME_REGEX = /^[a-z0-9-]{1,80}$/;
@@ -9,9 +9,9 @@ const PROMPT_NAME_REGEX = /^[a-z0-9-]{1,80}$/;
 export const AGENT_BODY_MAX_BYTES = 32 * 1024;
 const PREVIEW_LENGTH = 200;
 
-export type AgentCreateErrorCode = 'INVALID_ID' | 'INVALID_FIELD' | 'CONFLICT' | 'TOO_LARGE';
+export type AgentCreateErrorCode = 'INVALID_ID' | 'INVALID_FIELD' | 'CONFLICT' | 'TOO_LARGE' | 'NOT_FOUND';
 
-/** Validation failure while creating an agent file; the API maps `code` onto HTTP statuses. */
+/** Validation failure while creating or updating an agent file; the API maps `code` onto HTTP statuses. */
 export class AgentCreateError extends Error {
   readonly code: AgentCreateErrorCode;
   constructor(code: AgentCreateErrorCode, message: string) {
@@ -42,14 +42,18 @@ function yamlScalar(value: string): string {
   return JSON.stringify(value);
 }
 
-/**
- * Writes .pi/agents/<id>.md for a new agent. The id regex keeps the path inside
- * the agents directory by construction; 'wx' makes the write fail on conflicts.
- */
-export function createAgent(cwd: string, input: CreateAgentRequest): AgentDefinition {
-  const id = input.id?.trim() || deriveAgentId(input.name);
-  if (!id || !AGENT_ID_REGEX.test(id)) throw new AgentCreateError('INVALID_ID', 'Agent id 需匹配 [a-z][a-z0-9-]{1,63}；中文名称请显式提供 id');
+/** Fully validated field values ready to serialize; shared by createAgent and updateAgent. */
+interface AgentFieldValues {
+  name: string;
+  mark: string;
+  tagline: string;
+  description: string;
+  suggestions: string[];
+  body: string;
+}
 
+/** Applies the create-time validation rules (non-empty single-line fields, 32KB body cap). */
+function validateAgentFields(input: AgentFieldValues): AgentFieldValues {
   const name = assertSingleLine(input.name, 'name');
   const mark = assertSingleLine(input.mark, 'mark');
   const tagline = assertSingleLine(input.tagline, 'tagline');
@@ -59,20 +63,35 @@ export function createAgent(cwd: string, input: CreateAgentRequest): AgentDefini
   const body = input.body.trim();
   if (!body) throw new AgentCreateError('INVALID_FIELD', 'Agent 定义缺少系统提示词正文');
   if (Buffer.byteLength(body, 'utf8') > AGENT_BODY_MAX_BYTES) throw new AgentCreateError('TOO_LARGE', `系统提示词正文超过 ${AGENT_BODY_MAX_BYTES} 字节上限`);
+  return { name, mark, tagline, description, suggestions, body };
+}
 
-  const file = [
+/** Serializes validated fields to the .pi/agents/<id>.md file content. */
+function serializeAgentFile(fields: AgentFieldValues): string {
+  return [
     '---',
-    `name: ${yamlScalar(name)}`,
-    `mark: ${yamlScalar(mark)}`,
-    `tagline: ${yamlScalar(tagline)}`,
-    `description: ${yamlScalar(description)}`,
+    `name: ${yamlScalar(fields.name)}`,
+    `mark: ${yamlScalar(fields.mark)}`,
+    `tagline: ${yamlScalar(fields.tagline)}`,
+    `description: ${yamlScalar(fields.description)}`,
     'suggestions:',
-    ...suggestions.map((item) => `  - ${yamlScalar(item)}`),
+    ...fields.suggestions.map((item) => `  - ${yamlScalar(item)}`),
     '---',
     '',
-    body,
+    fields.body,
     '',
   ].join('\n');
+}
+
+/**
+ * Writes .pi/agents/<id>.md for a new agent. The id regex keeps the path inside
+ * the agents directory by construction; 'wx' makes the write fail on conflicts.
+ */
+export function createAgent(cwd: string, input: CreateAgentRequest): AgentDefinition {
+  const id = input.id?.trim() || deriveAgentId(input.name);
+  if (!id || !AGENT_ID_REGEX.test(id)) throw new AgentCreateError('INVALID_ID', 'Agent id 需匹配 [a-z][a-z0-9-]{1,63}；中文名称请显式提供 id');
+
+  const file = serializeAgentFile(validateAgentFields(input));
 
   const directory = join(cwd, '.pi', 'agents');
   const target = join(directory, `${id}.md`);
@@ -84,6 +103,33 @@ export function createAgent(cwd: string, input: CreateAgentRequest): AgentDefini
     if (error instanceof Error && 'code' in error && error.code === 'EEXIST') throw new AgentCreateError('CONFLICT', `Agent 已存在：${id}`);
     throw error;
   }
+  // Roundtrip through the real parser so a serialization bug can never persist a broken file.
+  return parseAgentFile(directory, `${id}.md`);
+}
+
+/**
+ * Rewrites .pi/agents/<id>.md in place: the patch fields replace the parsed
+ * values, everything else keeps the file's current content. The id is immutable.
+ * The write is atomic (temp file + rename), so a crash never leaves a half file.
+ */
+export function updateAgent(cwd: string, id: string, patch: UpdateAgentRequest): AgentDefinition {
+  if (!AGENT_ID_REGEX.test(id)) throw new AgentCreateError('INVALID_ID', 'Agent id 需匹配 [a-z][a-z0-9-]{1,63}');
+  const directory = join(cwd, '.pi', 'agents');
+  const target = join(directory, `${id}.md`);
+  if (!existsSync(target)) throw new AgentCreateError('NOT_FOUND', `Agent 不存在：${id}`);
+  const current = parseAgentFile(directory, `${id}.md`);
+  const merged: AgentFieldValues = {
+    name: patch.name ?? current.name,
+    mark: patch.mark ?? current.mark,
+    tagline: patch.tagline ?? current.tagline,
+    description: patch.description ?? current.description,
+    suggestions: patch.suggestions ?? current.suggestions,
+    body: patch.body ?? current.body,
+  };
+  const file = serializeAgentFile(validateAgentFields(merged));
+  const temporary = join(directory, `.${id}.md.tmp-${process.pid}`);
+  writeFileSync(temporary, file, 'utf8');
+  renameSync(temporary, target);
   // Roundtrip through the real parser so a serialization bug can never persist a broken file.
   return parseAgentFile(directory, `${id}.md`);
 }

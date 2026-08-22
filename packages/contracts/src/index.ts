@@ -32,6 +32,17 @@ export interface CreateAgentRequest {
   body: string;
 }
 
+/** Payload for PATCH /api/v1/agents/:agentId; rewrites .pi/agents/<id>.md keeping untouched fields. */
+export interface UpdateAgentRequest {
+  name?: string;
+  mark?: string;
+  tagline?: string;
+  description?: string;
+  suggestions?: string[];
+  /** System-prompt body written after the YAML frontmatter. */
+  body?: string;
+}
+
 /** AgentDetail adds the system-prompt body for the configure panel. */
 export interface AgentDetail extends AgentSummary {
   /** Markdown body of .pi/agents/<id>.md; used as the agent's system prompt. */

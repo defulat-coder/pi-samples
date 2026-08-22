@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -108,6 +108,18 @@ export async function createAgent(request: CreateAgentRequest): Promise<AgentDet
       body: JSON.stringify(request),
     }),
     'Agent 暂时无法创建',
+  );
+}
+
+/** PATCHes one agent definition file; server errors (400/404) surface their message. */
+export async function updateAgent(agentId: string, request: UpdateAgentRequest): Promise<AgentDetail> {
+  return readJson(
+    await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+    'Agent 暂时无法保存',
   );
 }
 

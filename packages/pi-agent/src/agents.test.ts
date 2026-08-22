@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentCreateError, createAgent, deriveAgentId, getAgent, listPrompts, listSkills, loadAgents, readPrompt } from './agents.js';
+import { AgentCreateError, createAgent, deriveAgentId, getAgent, listPrompts, listSkills, loadAgents, readPrompt, updateAgent } from './agents.js';
 import { getPiProjectRoot } from './index.js';
 
 const roots: string[] = [];
@@ -152,6 +152,55 @@ describe('createAgent', () => {
       () => createAgent(root, { ...input, id: 'bad-name', name: '两行\n名称' }),
       (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_FIELD',
     );
+  });
+});
+
+describe('updateAgent', () => {
+  it('updates the patched fields and keeps the rest', () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, '.pi', 'agents', 'translator-pro.md'), VALID);
+    const updated = updateAgent(root, 'translator-pro', { name: '改名助手', body: '你是改名后的助手。' });
+    assert.equal(updated.name, '改名助手');
+    assert.equal(updated.body, '你是改名后的助手。');
+    const reloaded = getAgent(root, 'translator-pro');
+    assert.equal(reloaded.name, '改名助手');
+    assert.equal(reloaded.mark, '测');
+    assert.equal(reloaded.tagline, '测试');
+    assert.equal(reloaded.description, '测试用 agent。');
+    assert.deepEqual(reloaded.suggestions, ['你好']);
+  });
+
+  it('replaces suggestions wholesale', () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, '.pi', 'agents', 'translator-pro.md'), VALID);
+    const updated = updateAgent(root, 'translator-pro', { suggestions: ['新问题一', '新问题二'] });
+    assert.deepEqual(updated.suggestions, ['新问题一', '新问题二']);
+  });
+
+  it('throws NOT_FOUND for a missing agent without creating a file', () => {
+    const root = fixtureRoot();
+    assert.throws(() => updateAgent(root, 'ghost-agent', { name: '幽灵' }), (error: unknown) => error instanceof AgentCreateError && error.code === 'NOT_FOUND');
+    assert.deepEqual(loadAgents(root), []);
+  });
+
+  it('rejects invalid ids and invalid fields with the create rules', () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, '.pi', 'agents', 'translator-pro.md'), VALID);
+    assert.throws(() => updateAgent(root, 'Bad Id', { name: 'x' }), (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_ID');
+    assert.throws(
+      () => updateAgent(root, 'translator-pro', { name: '两行\n名称' }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_FIELD',
+    );
+    assert.throws(
+      () => updateAgent(root, 'translator-pro', { suggestions: [] }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_FIELD',
+    );
+    assert.throws(
+      () => updateAgent(root, 'translator-pro', { body: '长'.repeat(40 * 1024) }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'TOO_LARGE',
+    );
+    // A failed update must not touch the existing file.
+    assert.equal(getAgent(root, 'translator-pro').name, '测试助手');
   });
 });
 

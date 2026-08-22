@@ -29,6 +29,15 @@ export const CreateAgentSchema = Type.Object({
   body: Type.String({ minLength: 1, maxLength: AGENT_BODY_MAX_BYTES }),
 });
 
+export const UpdateAgentSchema = Type.Object({
+  name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  mark: Type.Optional(Type.String({ minLength: 1, maxLength: 8 })),
+  tagline: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  description: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
+  suggestions: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 8 })),
+  body: Type.Optional(Type.String({ minLength: 1, maxLength: AGENT_BODY_MAX_BYTES })),
+});
+
 export const AgentParamsSchema = Type.Object({ agentId: AgentIdSchema });
 export const SessionParamsSchema = Type.Object({ agentId: AgentIdSchema, sessionId: SessionIdSchema });
 export const RenameSessionSchema = Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) });

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { AgentDetail, AgentResources, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, UpdateAgentRequest, WorkspaceResponse } from '@pi-workbench/contracts';
 import { AGENT_THINKING_LEVELS } from '@pi-workbench/contracts';
 import { AnimatePresence, motion } from 'motion/react';
 import { X } from '@phosphor-icons/react/dist/icons/X';
@@ -7,7 +7,10 @@ import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
 import { Info } from '@phosphor-icons/react/dist/icons/Info';
 import { FolderOpen } from '@phosphor-icons/react/dist/icons/FolderOpen';
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
-import { fetchAgent, fetchAgentResources, savePreference } from '../lib/api.js';
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
+import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch';
+import { fetchAgent, fetchAgentResources, savePreference, updateAgent } from '../lib/api.js';
 import { useAsyncData } from '../hooks/useAsyncData.js';
 import {
   DEFAULT_OPEN_SECTIONS,
@@ -97,6 +100,88 @@ function BasicSection({ agent, onUseSuggestion }: { agent: AgentDetail; onUseSug
   );
 }
 
+/** Fleet「Agent files」Source 编辑的本地对应：frontmatter 字段 input + suggestions 增删列表 + body 大 textarea。 */
+function EditSection({ draft, saving, onChange, onSave, onCancel }: {
+  draft: Required<UpdateAgentRequest>;
+  saving: boolean;
+  onChange: (patch: Partial<UpdateAgentRequest>) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const suggestions = draft.suggestions ?? [];
+  const invalid =
+    !draft.name?.trim() || !draft.mark?.trim() || !draft.tagline?.trim() || !draft.description?.trim() ||
+    !draft.body?.trim() || suggestions.length === 0 || suggestions.some((item) => !item.trim());
+  return (
+    <motion.div
+      className="config-edit"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.15, ease: MOTION_EASE }}
+    >
+      <label className="config-edit-field">
+        <span>名称</span>
+        <input value={draft.name ?? ''} maxLength={80} onChange={(event) => onChange({ name: event.target.value })} disabled={saving} />
+      </label>
+      <label className="config-edit-field">
+        <span>徽标字符</span>
+        <input value={draft.mark ?? ''} maxLength={8} onChange={(event) => onChange({ mark: event.target.value })} disabled={saving} />
+      </label>
+      <label className="config-edit-field">
+        <span>一句话简介</span>
+        <input value={draft.tagline ?? ''} maxLength={120} onChange={(event) => onChange({ tagline: event.target.value })} disabled={saving} />
+      </label>
+      <label className="config-edit-field">
+        <span>描述</span>
+        <input value={draft.description ?? ''} maxLength={400} onChange={(event) => onChange({ description: event.target.value })} disabled={saving} />
+      </label>
+      <div className="config-edit-field">
+        <span>建议问题</span>
+        {suggestions.map((suggestion, index) => (
+          <div className="config-edit-suggestion" key={index}>
+            <input
+              value={suggestion}
+              maxLength={200}
+              aria-label={`建议问题 ${index + 1}`}
+              onChange={(event) => onChange({ suggestions: suggestions.map((item, at) => (at === index ? event.target.value : item)) })}
+              disabled={saving}
+            />
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`删除建议问题 ${index + 1}`}
+              onClick={() => onChange({ suggestions: suggestions.filter((_, at) => at !== index) })}
+              disabled={saving || suggestions.length <= 1}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="config-edit-add"
+          onClick={() => onChange({ suggestions: [...suggestions, ''] })}
+          disabled={saving || suggestions.length >= 8}
+        >
+          <Plus size={14} />
+          添加建议问题
+        </button>
+      </div>
+      <label className="config-edit-field">
+        <span>系统提示词</span>
+        <textarea value={draft.body ?? ''} rows={12} onChange={(event) => onChange({ body: event.target.value })} disabled={saving} />
+      </label>
+      <div className="config-edit-actions">
+        <button type="button" className="header-button" onClick={onCancel} disabled={saving}>取消</button>
+        <button type="button" className="header-button primary" onClick={onSave} disabled={saving || invalid}>
+          {saving ? <CircleNotch size={13} className="spinning" /> : null}
+          保存
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
 function ResourcesSection({ resources }: { resources: AgentResources | null }) {
   if (!resources) return <p className="config-section-note">正在读取资源清单…</p>;
   return (
@@ -175,13 +260,16 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
   onClose: () => void;
   onUseSuggestion: (text: string) => void;
 }) {
-  const { workspace } = useWorkspace();
+  const { workspace, notify, reloadWorkspace } = useWorkspace();
   const models = workspace.models;
   const detail = useAsyncData(() => fetchAgent(agentId), { onError: (cause) => setError(cause.message) });
   const resources = useAsyncData(() => fetchAgentResources(agentId));
   const [error, setError] = useState('');
   const [openSections, setOpenSections] = useState<ConfigSectionId[]>([...DEFAULT_OPEN_SECTIONS]);
   const [thinking, setThinking] = useState<ThinkingPreference>(() => readThinkingPreference(agentId));
+  /** 非 null 即编辑态；字段来自 detail 快照，保存前不回读。 */
+  const [draft, setDraft] = useState<Required<UpdateAgentRequest> | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const { reload: reloadDetail, setData: setDetailData } = detail;
   const { reload: reloadResources, setData: setResourcesData } = resources;
@@ -190,6 +278,8 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
     setError('');
     setOpenSections([...DEFAULT_OPEN_SECTIONS]);
     setThinking(readThinkingPreference(agentId));
+    setDraft(null);
+    setSaving(false);
     setDetailData(null);
     setResourcesData(null);
     void reloadDetail();
@@ -205,6 +295,28 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
     });
   };
 
+  const startEdit = () => {
+    if (!detail.data) return;
+    const { name, mark, tagline, description, suggestions, body } = detail.data;
+    setDraft({ name, mark, tagline, description, suggestions: [...suggestions], body });
+  };
+
+  const saveEdit = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    try {
+      await updateAgent(agentId, draft);
+      setDraft(null);
+      notify('Agent 定义已保存');
+      void reloadDetail();
+      reloadWorkspace();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : 'Agent 暂时无法保存');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <motion.aside
       role="complementary"
@@ -217,7 +329,13 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
     >
       <div className="config-panel-header">
         <span className="config-title">{detail.data ? detail.data.name : 'Agent 配置'}</span>
-        <button type="button" className="icon-button" onClick={onClose} aria-label="关闭配置面板">
+        {detail.data && !draft && (
+          <button type="button" className="header-button" onClick={startEdit} aria-label="编辑 Agent 定义">
+            <PencilSimple size={14} />
+            编辑
+          </button>
+        )}
+        <button type="button" className="icon-button" onClick={onClose} aria-label="关闭配置面板" disabled={saving}>
           <X size={16} />
         </button>
       </div>
@@ -231,7 +349,17 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
             open={openSections.includes('basic')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'basic'))}
           >
-            <BasicSection agent={detail.data} onUseSuggestion={onUseSuggestion} />
+            {draft ? (
+              <EditSection
+                draft={draft}
+                saving={saving}
+                onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
+                onSave={() => void saveEdit()}
+                onCancel={() => setDraft(null)}
+              />
+            ) : (
+              <BasicSection agent={detail.data} onUseSuggestion={onUseSuggestion} />
+            )}
           </ConfigSection>
           <ConfigSection
             icon={<FolderOpen size={16} />}

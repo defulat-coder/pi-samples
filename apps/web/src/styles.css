@@ -564,6 +564,31 @@ input, textarea { font: inherit; color: inherit; }
 .capsule-option.active:hover { color: var(--text-brand); }
 .config-panel-loading, .config-panel-error { padding: var(--space-4); font-size: 13px; color: var(--text-quaternary); }
 .config-panel-error { color: #b42318; }
+/* 编辑态：字段沿用 modal-field 的输入框规格（30px 高、6px 圆角、聚焦变信号蓝） */
+.config-edit-field { display: flex; flex-direction: column; gap: 6px; }
+.config-edit-field + .config-edit-field { margin-top: var(--space-3); }
+.config-edit-field > span { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.config-edit-field input, .config-edit-field textarea {
+  width: 100%; border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--bg-primary); padding: 0 10px; font-size: 13px; color: var(--text-primary); outline: none;
+}
+.config-edit-field input { height: 30px; }
+.config-edit-field input:focus, .config-edit-field textarea:focus { border-color: var(--brand); }
+.config-edit-field textarea {
+  min-height: 180px; padding: 8px 10px; resize: vertical; line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.config-edit-suggestion { display: flex; align-items: center; gap: var(--space-2); }
+.config-edit-suggestion input { flex: 1; }
+.config-edit-suggestion .icon-button:disabled { color: var(--text-disabled); }
+.config-edit-add {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+  padding: 4px 8px; border-radius: var(--radius-sm); font-size: 12px; color: var(--text-secondary);
+  transition: background var(--duration-normal) var(--ease-out);
+}
+.config-edit-add:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.config-edit-add:disabled { color: var(--text-disabled); }
+.config-edit-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
 
 /* ===== 会话头部 ===== */
 .thread-header { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4) 0; }

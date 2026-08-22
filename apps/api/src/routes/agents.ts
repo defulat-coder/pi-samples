@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import type { CreateAgentRequest } from '@pi-workbench/contracts';
-import { AgentCreateError, createAgent, listAgentResources } from '@pi-workbench/pi-agent';
-import { AgentParamsSchema, CreateAgentSchema } from '../schemas.js';
+import type { CreateAgentRequest, UpdateAgentRequest } from '@pi-workbench/contracts';
+import { AgentCreateError, createAgent, listAgentResources, updateAgent } from '@pi-workbench/pi-agent';
+import { AgentParamsSchema, CreateAgentSchema, UpdateAgentSchema } from '../schemas.js';
 import { agentOr404, type AppContext } from '../context.js';
 
 export function registerAgentRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -16,6 +16,21 @@ export function registerAgentRoutes(app: FastifyInstance, ctx: AppContext): void
       throw error;
     }
   });
+
+  app.patch<{ Params: { agentId: string }; Body: UpdateAgentRequest }>(
+    '/agents/:agentId',
+    { schema: { params: AgentParamsSchema, body: UpdateAgentSchema } },
+    async (request, reply) => {
+      try {
+        return updateAgent(ctx.cwd, request.params.agentId, request.body);
+      } catch (error) {
+        if (error instanceof AgentCreateError) {
+          return reply.code(error.code === 'NOT_FOUND' ? 404 : 400).send({ error: error.message });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.get<{ Params: { agentId: string } }>('/agents/:agentId', { schema: { params: AgentParamsSchema } }, async (request, reply) => {
     const agent = agentOr404(ctx, request.params.agentId, reply);

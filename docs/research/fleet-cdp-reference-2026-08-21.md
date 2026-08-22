@@ -385,3 +385,33 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 - **Inbox 空态**：当前工作区有 3 条会话，看不到空态排版。
 - **Skills 的 Table 视图 / Create Skill 表单**：未切换、未打开，避免副作用。
 - **Usage 统计卡 label 第一轮走查曾 MISSING**：原因是 label 的 DOM 原文为 "Total Spend"（大写靠 CSS `uppercase` 变换），第二轮已用大小写不敏感匹配补抓成功（§11.7）。
+
+## 2026-08-22 Agent 配置与编辑
+
+第三轮抓取：agent 配置面板的右栏结构与「View ▾ → Agent files」弹窗（CDP 实测）。
+
+### Fleet 侧结构
+
+- **右栏 section 清单**（通栏折叠节，与本地 §8 configure 结构同源）：Channels / Sharing / Connections / Skills / Memory / Schedules / Advanced settings。
+- **面板头部「View ▾」菜单**两项，其中 **「Agent files」** 打开文件管理器式弹窗。
+- **Agent files 弹窗**：左侧 EXPLORER 文件树（`AGENTS.md`、`skills/`、`subagents/`、`config.json`、`tools.json`），右侧 Markdown 编辑器，带 **Preview / Source** 切换；Source 是 CodeMirror，可直接编辑文件内容。
+- **核心模型：agent 定义就是一组可编辑的文件**，配置面板只是这些文件的图形化投影。
+
+### 本地语义映射
+
+本地对应物是 `.pi/agents/<id>.md`（YAML frontmatter：name/mark/tagline/description/suggestions + body 即系统提示词）。
+
+| Fleet 元素 | 本地处理 | 说明 |
+| --- | --- | --- |
+| Agent files 弹窗 / Preview·Source 编辑 | **做**（ConfigPanel 查看/编辑切换） | 编辑态直接改 `.pi/agents/<id>.md` 的 frontmatter 字段与 body；body 用大 textarea 承担 Source 语义，未引入 CodeMirror |
+| View ▾ 菜单 | **做**（头部「编辑」按钮） | 菜单只有两项且我们只做编辑一项，收敛为面板头部的编辑切换按钮 |
+| Skills section | 已做（只读资源清单） | 对应本地 `.pi/skills` 只读列表 |
+| Advanced settings | 已做（运行设置） | 模型 / Thinking 偏好 |
+| Channels / Sharing / Connections / Schedules / Memory | **跳过** | 本地无外部渠道、协作分享、第三方连接、定时任务与跨会话记忆语义 |
+| EXPLORER 文件树的 `config.json` / `tools.json` / `subagents/` | **跳过** | 本地 agent 定义就是单个 `.md` 文件，无独立工具配置与子 agent 文件 |
+
+### 实现落点
+
+- `packages/pi-agent` 新增 `updateAgent(cwd, id, patch)`：原子重写 agent 文件，序列化与校验逻辑和 `createAgent` 共用。
+- API 新增 `PATCH /api/v1/agents/:agentId`，404/400 映射与 POST /agents 一致。
+- Web ConfigPanel 头部加「编辑」按钮，编辑态字段对齐 frontmatter：name/mark/tagline/description 为 input、suggestions 为可增删列表、body 为 textarea；保存走 PATCH，失败 toast。
