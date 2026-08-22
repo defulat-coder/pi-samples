@@ -15,7 +15,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/**/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -28,6 +28,8 @@
     "fastify": "^5.12.1"
   },
   "devDependencies": {
+    "@pi-workbench/eslint": "workspace:*",
+    "eslint": "^10.9.0",
     "tsx": "^4.23.12"
   }
 }

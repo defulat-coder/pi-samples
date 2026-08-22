@@ -33,11 +33,6 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
     const modelLabel = { ...getPiModelConfig({}, ctx.cwd), ...(request.body.model ? { model: request.body.model } : {}), thinkingLevel };
 
     const sse = startSse<ChatStreamEvent>(request, reply);
-    let activeSessionId: string | undefined;
-    // Once the client is gone we abort the Pi turn instead of burning tokens into the void.
-    sse.onDisconnect(() => {
-      if (activeSessionId) void piSessionRegistry.abort(agent.id, activeSessionId);
-    });
 
     // Pi disabled 时不创建空会话：错误事件先于任何 session 持久化。
     if (!ctx.config.PI_AGENT_ENABLED) {
@@ -58,8 +53,10 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
       sse.close();
       return;
     }
-    activeSessionId = session.id;
-
+    // Once the client is gone we abort the Pi turn instead of burning tokens into the void.
+    sse.onDisconnect(() => {
+      void piSessionRegistry.abort(agent.id, session.id);
+    });
     sse.send({ type: 'start', sessionId: session.id, agentId: agent.id, model: modelLabel });
     try {
       const result = await runAgentTurn(agent.id, session.id, request.body.message, {

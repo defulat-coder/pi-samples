@@ -13,7 +13,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/**/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@pi-workbench/eslint": "workspace:*",
+    "eslint": "^10.9.0"
   }
 }

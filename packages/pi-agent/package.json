@@ -18,10 +18,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/**/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0"
+    "@pi-workbench/eslint": "workspace:*",
+    "@types/better-sqlite3": "^9.6.0",
+    "eslint": "^10.9.0"
   }
 }
