@@ -730,6 +730,11 @@ input, textarea { font: inherit; color: inherit; }
 .header-button.danger { color: var(--error-text); border-color: var(--error-border); }
 .header-button.danger:hover { background: var(--error-bg); }
 
+/* 聊天视图内嵌审批横幅：与消息列同宽（1024px 居中），进出场动画见 App.tsx（opacity+y） */
+.approval-banner { flex: none; padding: 0 var(--space-4); }
+.approval-banner-inner { margin: 0 auto; width: 100%; max-width: 1024px; padding: var(--space-2) var(--space-6) 0; }
+.approval-banner .approval-card { margin: 0; }
+
 /* ===== 探索区：Agents / Templates / Skills（§11.4、§11.6） ===== */
 .explore { display: flex; flex: 1; flex-direction: column; overflow-y: auto; padding: var(--space-5) var(--space-5) var(--space-9); }
 .explore-header { margin-bottom: var(--space-5); }

@@ -20,15 +20,21 @@ describe('审批 API', () => {
   const root = mkdtempSync(join(tmpdir(), 'pi-api-approvals-'));
   const sessionDir = join(root, 'sessions');
   mkdirSync(sessionDir, { recursive: true });
+  // agent 定义 fixture：headless 扩展落库的 agentName 固定是 "unknown"，输出层按 agentId 映射真实名。
+  mkdirSync(join(root, '.pi', 'agents'), { recursive: true });
+  writeFileSync(
+    join(root, '.pi', 'agents', 'pi-assistant.md'),
+    '---\nname: 测试助手\nmark: 测\ntagline: 测试\ndescription: 测试 agent。\nsuggestions:\n  - 你好\n---\n\n你是测试助手。\n',
+  );
   const sessions = new AgentSessionStore({ cwd: root, sessionDir });
   const db = openWorkbenchDb(':memory:');
   const bridge = new ApprovalBridge({ db, cwd: root, pollIntervalMs: 0 });
-  const app = buildApp(config, { sessionStore: sessions, db, approvalBridge: bridge });
+  const app = buildApp(config, { cwd: root, sessionStore: sessions, db, approvalBridge: bridge });
   const responsesDir = join(root, '.pi', 'permission-forwarding', 'sessions', 'permission-forwarding', 'sessions', 'workbench', 'responses');
   const requestsDir = join(root, '.pi', 'permission-forwarding', 'sessions', 'permission-forwarding', 'sessions', 'workbench', 'requests');
 
   // 与生产一致：pending 行总是由 watcher 从请求文件落库，这里直插 DB 时补上对应文件，
-  // 否则扫描会把「文件已消失」的行落成 expired。
+  // 否则扫描会把「文件已消失」的行落成 expired。agentName 按真实扩展行为写 "unknown"。
   const insertPending = (id: string, sessionId: string) => {
     mkdirSync(requestsDir, { recursive: true });
     writeFileSync(
@@ -39,7 +45,7 @@ describe('审批 API', () => {
         createdAt: Date.now(),
         requesterSessionId: sessionId,
         targetSessionId: 'workbench',
-        requesterAgentName: 'pi-assistant',
+        requesterAgentName: 'unknown',
         message: `运行 bash: ${id}`,
       }),
     );
@@ -47,7 +53,7 @@ describe('审批 API', () => {
       id,
       sessionId,
       agentId: 'pi-assistant',
-      agentName: 'pi-assistant',
+      agentName: 'unknown',
       message: `运行 bash: ${id}`,
       responseNonce: `nonce-${id}`,
       targetSessionId: 'workbench',
@@ -72,9 +78,13 @@ describe('审批 API', () => {
     const item = body.items.find((entry: { id: string }) => entry.id === 'ap-1');
     assert.equal(item.sessionId, 'session_x');
     assert.equal(item.agentId, 'pi-assistant');
+    // 落库的 "unknown"（headless 扩展取不到 agent 名）在输出层映射为真实 agent 名。
+    assert.equal(item.agentName, '测试助手');
     assert.equal(item.state, 'pending');
     assert.equal(item.responseNonce, undefined, 'nonce 不得下发给浏览器');
     assert.equal(item.targetSessionId, undefined);
+    // SQLite 里保留扩展落库的原值。
+    assert.equal(getApproval(db, 'ap-1')?.agentName, 'unknown');
 
     const approved = await app.inject({ method: 'GET', url: '/api/v1/approvals?state=approved' });
     assert.equal(approved.json().total, 0);
@@ -110,6 +120,11 @@ describe('审批 API', () => {
 
     const always = await app.inject({ method: 'POST', url: '/api/v1/approvals/ap-always/decision', payload: { approved: true, always: true } });
     assert.equal(always.json().state, 'always');
+    // 写出的响应文件 state 必须是扩展认识的 "always"（readForwardedPermissionResponse 校验枚举，
+    // persistSessionApprovalDecision 据此写入会话级放行规则）。
+    const alwaysFile = JSON.parse(readFileSync(join(responsesDir, 'ap-always.json'), 'utf8'));
+    assert.equal(alwaysFile.state, 'always');
+    assert.equal(alwaysFile.approved, true);
   });
 
   it('decision 的 400/404/409 语义', async () => {
@@ -138,6 +153,7 @@ describe('审批 API', () => {
     assert.equal(item.needsAttention, false, 'needsAttention 推导不受影响');
     assert.equal(item.pendingApproval.id, 'ap-inbox');
     assert.equal(item.pendingApproval.sessionId, 'approval-session');
+    assert.equal(item.pendingApproval.agentName, '测试助手', 'inbox 的 pendingApproval 同样映射 agentName');
     assert.equal(item.pendingApproval.message, '运行 bash: ap-inbox');
 
     // 决策后不再出现在 attention。

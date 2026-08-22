@@ -28,6 +28,7 @@ import { Composer } from './components/Composer.js';
 import { ThreadView } from './components/ThreadView.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
 import { InboxView } from './components/InboxView.js';
+import { ApprovalCard } from './components/ApprovalCard.js';
 import { ExploreAgents } from './components/ExploreAgents.js';
 import { TemplatesView } from './components/TemplatesView.js';
 import { SkillsView } from './components/SkillsView.js';
@@ -123,6 +124,11 @@ export default function App() {
       void inbox.reload();
     },
   });
+
+  /** 当前聊天会话挂起的 HITL 工具审批；来自 attention 收件箱轮询数据（最长延迟一个轮询周期）。 */
+  const pendingApproval = inbox.data?.items.find(
+    (item) => item.pendingApproval && item.id === chat.currentSessionId,
+  )?.pendingApproval;
 
   const handlePreferenceChange = (key: keyof UiPreferences, value: boolean) => {
     setUiPreferences((current) => writeUiPreference(current, key, value));
@@ -438,6 +444,23 @@ export default function App() {
                   ) : (
                     <motion.div key="thread" className="chat-branch">
                       <ThreadView messages={chat.threadMessages} compact={uiPreferences.compactMessages} />
+                      {/* 当前会话挂起等待 HITL 审批时，在消息流与输入框之间就地展示审批卡片（同收件箱详情卡片） */}
+                      <AnimatePresence initial={false}>
+                        {pendingApproval && (
+                          <motion.div
+                            key={pendingApproval.id}
+                            className="approval-banner"
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 8, transition: { duration: 0.15, ease: MOTION_EASE } }}
+                            transition={{ duration: 0.2, ease: MOTION_EASE }}
+                          >
+                            <div className="approval-banner-inner">
+                              <ApprovalCard approval={pendingApproval} agentName={currentAgent?.name ?? ''} onSettled={handleInboxChanged} />
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                       <div className="composer-wrap">
                         <div className="composer-inner">
                           <Composer

@@ -12,32 +12,32 @@ import type {
 } from '@pi-workbench/contracts';
 import { deleteInboxState, getInboxStates, piSessionRegistry, setInboxCompleted, setInboxRead, type InboxState, type StoredApproval } from '@pi-workbench/pi-agent';
 import { AgentParamsSchema, InboxQuerySchema, RenameSessionSchema, SessionParamsSchema, UpdateInboxStateSchema } from '../schemas.js';
-import { agentOr404, withOwnedSession, type AppContext } from '../context.js';
+import { agentOr404, approvalAgentNames, displayAgentName, withOwnedSession, type AppContext } from '../context.js';
 
 /** 已读判定：read_at 不早于会话最后更新时间（ISO 字符串可直接比较）。 */
 function isRead(session: SessionSummary, state: InboxState | undefined): boolean {
   return Boolean(state?.readAt && state.readAt >= session.updatedAt);
 }
 
-/** StoredApproval → 合同 PendingApproval（剥掉 nonce/targetSessionId 等传输字段）。 */
-function toPendingApproval(approval: StoredApproval): PendingApproval {
+/** StoredApproval → 合同 PendingApproval（剥掉 nonce/targetSessionId 等传输字段，"unknown" 名映射为真实 agent 名）。 */
+function toPendingApproval(approval: StoredApproval, names: Map<string, string>): PendingApproval {
   return {
     id: approval.id,
     sessionId: approval.sessionId,
     ...(approval.agentId ? { agentId: approval.agentId } : {}),
-    agentName: approval.agentName,
+    agentName: displayAgentName(names, approval.agentId, approval.agentName),
     message: approval.message,
     createdAt: approval.createdAt,
   };
 }
 
-function toInboxItem(session: SessionSummary, state: InboxState | undefined, pendingApproval?: StoredApproval): InboxItem {
+function toInboxItem(session: SessionSummary, state: InboxState | undefined, pendingApproval?: StoredApproval, names: Map<string, string> = new Map()): InboxItem {
   const completedAt = state?.completedAt ?? undefined;
   return {
     ...session,
     read: isRead(session, state),
     ...(completedAt ? { completedAt } : {}),
-    ...(pendingApproval ? { pendingApproval: toPendingApproval(pendingApproval) } : {}),
+    ...(pendingApproval ? { pendingApproval: toPendingApproval(pendingApproval, names) } : {}),
   };
 }
 
@@ -49,6 +49,8 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
     let states = getInboxStates(ctx.db);
     // 有待审批工具调用的会话并入 attention（不动 needsAttention 的 JSONL 推导逻辑）。
     const pendingApprovals = ctx.approvalBridge.pendingBySession();
+    // 仅在有待审批条目时才加载 agent 名单（扩展落库的 agentName 固定是 "unknown"）。
+    const agentNames = pendingApprovals.size > 0 ? approvalAgentNames(ctx) : new Map<string, string>();
 
     // 自动完成：曾进过收件箱（有 inbox_state 记录）、尚未完成，且最新一轮已成功。
     let changed = false;
@@ -73,7 +75,7 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
     const filtered = query ? inTab.filter((session) => session.title.toLowerCase().includes(query) || (session.preview ?? '').toLowerCase().includes(query)) : inTab;
     const items = filtered
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((session) => toInboxItem(session, states.get(session.id), pendingApprovals.get(session.id)));
+      .map((session) => toInboxItem(session, states.get(session.id), pendingApprovals.get(session.id), agentNames));
     return { items, total: items.length, unreadCount };
   });
 

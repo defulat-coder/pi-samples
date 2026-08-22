@@ -13,7 +13,7 @@
     "dev:app": "vite --host 0.0.0.0",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test --import ./src/test-setup.ts src/*.test.ts src/**/*.test.ts src/**/*.test.tsx",
+    "test": "tsx --test --import ./src/test-setup.ts src/*.test.ts src/*.test.tsx src/**/*.test.ts src/**/*.test.tsx",
     "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
   },
