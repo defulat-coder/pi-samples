@@ -111,7 +111,8 @@ input, textarea { font: inherit; color: inherit; }
 .sidebar.collapsed .nav-icon svg { width: 16px; height: 16px; }
 .sidebar.collapsed .nav-badge { top: 1px; right: 1px; width: 6px; height: 6px; min-width: 6px; padding: 0; font-size: 0; }
 .sidebar.collapsed .sidebar-divider { margin: 5px 4px; }
-.sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; height: 26px; }
+/* Fleet 实测：品牌行容器 min-h 34px，26px 按钮垂直居中（collapse 按钮 y=16） */
+.sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; height: 34px; }
 /* 工作区切换行（§3.1 实测：68×26、14px/-0.56px、圆角 4px、padding 4px、gap 6px） */
 .workspace-wrap { position: relative; }
 .workspace-button {
@@ -150,7 +151,7 @@ input, textarea { font: inherit; color: inherit; }
   text-align: left; cursor: pointer;
 }
 .sidebar-search:hover, .sidebar-search:focus-within { background: var(--bg-tertiary); }
-.sidebar-search-placeholder { flex: 1; min-width: 0; font-size: 12px; color: var(--text-placeholder); }
+.sidebar-search-placeholder { flex: 1; min-width: 0; font-size: 12px; line-height: 13.8px; color: var(--text-placeholder); }
 .sidebar-search input { flex: 1; min-width: 0; border: none; background: none; outline: none; font-size: 12px; color: var(--text-primary); }
 .sidebar-search.editing { cursor: text; }
 .search-kbd-group { display: inline-flex; gap: var(--space-1); flex: none; }
@@ -175,7 +176,8 @@ input, textarea { font: inherit; color: inherit; }
 .nav-row.active:hover { background: var(--brand-secondary); }
 .nav-row svg { flex: none; }
 /* 图标盒：展开态即 12px 图标本身；收起态放大为 24×24，active 浅蓝底落在它上面（§11.9 实测） */
-.nav-icon { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; flex: none; border-radius: var(--radius-xs); }
+.nav-icon { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; flex: none; border-radius: var(--radius-xs); color: var(--text-secondary); }
+.nav-row.active .nav-icon { color: var(--text-brand); }
 /* 分组间分隔线（实测：209×1、#f5f8fb） */
 .sidebar-divider { flex: none; height: 1px; margin: 5px 10px; background: var(--bg-secondary); }
 .nav-badge {
