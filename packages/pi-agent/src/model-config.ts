@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { AGENT_THINKING_LEVELS, type AgentThinkingLevel } from '@pi-workbench/contracts';
@@ -10,6 +10,33 @@ export interface PiModelConfig {
   model?: string;
 }
 
+/**
+ * settings.json 按 path+mtimeMs 缓存（与 session-store 的 entriesCache 同款思路）：
+ * chat/meta 路由每请求要读 2-3 次配置，mtime 不变时直接复用上次的解析结果。
+ */
+const settingsCache = new Map<string, { mtimeMs: number; parsed: Record<string, unknown> }>();
+
+function readPiSettings(cwd: string): Record<string, unknown> {
+  const path = resolve(cwd, '.pi/settings.json');
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    settingsCache.delete(path);
+    return {};
+  }
+  const cached = settingsCache.get(path);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.parsed;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    settingsCache.set(path, { mtimeMs, parsed });
+    return parsed;
+  } catch {
+    // Environment variables and the kimi-coding default remain the contract.
+    return {};
+  }
+}
+
 export function getPiProjectRoot(): string {
   const candidate = process.cwd();
   for (const current of [candidate, resolve(candidate, '..'), resolve(candidate, '../..')]) {
@@ -19,12 +46,7 @@ export function getPiProjectRoot(): string {
 }
 
 export function getPiModelConfig(overrides: { provider?: string; model?: string } = {}, cwd = getPiProjectRoot()): PiModelConfig {
-  let settings: { defaultProvider?: unknown; defaultModel?: unknown } = {};
-  try {
-    settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as typeof settings;
-  } catch {
-    // Environment variables and the kimi-coding default remain the contract.
-  }
+  const settings = readPiSettings(cwd) as { defaultProvider?: unknown; defaultModel?: unknown };
   const configuredProvider = typeof settings.defaultProvider === 'string' ? settings.defaultProvider.trim() : undefined;
   const configuredModel = typeof settings.defaultModel === 'string' ? settings.defaultModel.trim() : undefined;
   const provider = overrides.provider ?? process.env.PI_MODEL_PROVIDER?.trim() ?? configuredProvider ?? 'kimi-coding';
@@ -36,12 +58,8 @@ export function getPiThinkingLevel(level?: PiThinkingLevel, cwd = getPiProjectRo
   if (level) return level;
   const configured = process.env.PI_THINKING_LEVEL;
   if (configured && (AGENT_THINKING_LEVELS as readonly string[]).includes(configured)) return configured as PiThinkingLevel;
-  try {
-    const settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as { defaultThinkingLevel?: unknown };
-    if (typeof settings.defaultThinkingLevel === 'string' && (AGENT_THINKING_LEVELS as readonly string[]).includes(settings.defaultThinkingLevel)) return settings.defaultThinkingLevel as PiThinkingLevel;
-  } catch {
-    // Keep the no-thinking project default when settings are absent or invalid.
-  }
+  const settings = readPiSettings(cwd) as { defaultThinkingLevel?: unknown };
+  if (typeof settings.defaultThinkingLevel === 'string' && (AGENT_THINKING_LEVELS as readonly string[]).includes(settings.defaultThinkingLevel)) return settings.defaultThinkingLevel as PiThinkingLevel;
   return 'off';
 }
 

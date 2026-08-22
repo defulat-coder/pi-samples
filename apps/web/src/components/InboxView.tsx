@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from 'motion/react';
-import type { AgentSummary, SessionSummary } from '@pi-workbench/contracts';
+import type { SessionSummary } from '@pi-workbench/contracts';
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { formatRelativeTime, sortSessions } from '../lib/sessions.js';
 import { MOTION_EASE } from '../lib/motion.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 import { AgentChip } from './AgentChip.js';
 
 function attentionLabel(session: SessionSummary): string {
@@ -13,13 +14,14 @@ function attentionLabel(session: SessionSummary): string {
 
 export type InboxViewProps = {
   items: SessionSummary[];
-  agents: AgentSummary[];
   loading: boolean;
   onRefresh: () => void;
   onOpen: (agentId: string, sessionId: string) => void;
 };
 
-export function InboxView({ items, agents, loading, onRefresh, onOpen }: InboxViewProps) {
+export function InboxView({ items, loading, onRefresh, onOpen }: InboxViewProps) {
+  const { workspace } = useWorkspace();
+  const agents = workspace.agents;
   const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
   const agentMark = (agentId: string) => agents.find((agent) => agent.id === agentId)?.mark ?? '?';
   const rows = sortSessions(items);

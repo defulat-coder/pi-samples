@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AgentSummary } from '@pi-workbench/contracts';
 import { AnimatePresence, motion } from 'motion/react';
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle';
@@ -19,10 +18,10 @@ import { cx } from '../lib/cx.js';
 import { MOTION_EASE } from '../lib/motion.js';
 import type { SystemView } from '../lib/types.js';
 import { useDismissable } from '../hooks/useDismissable.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 import { AgentChip } from './AgentChip.js';
 
 export type SidebarProps = {
-  agents: AgentSummary[];
   currentAgentId: string | undefined;
   collapsed: boolean;
   inboxOpen: boolean;
@@ -54,7 +53,9 @@ function NavIcon({ children }: { children: ReactNode }) {
 
 /** Fleet 侧边栏：纯导航（工作区 / 搜索 / Chat / Inbox / Explore / My Agents / Usage / Settings / 账户）。 */
 export function Sidebar(props: SidebarProps) {
-  const { agents, currentAgentId, collapsed, inboxOpen, inboxCount, attentionByAgent, exploreView, systemView, workspaceInfo } = props;
+  const { workspace } = useWorkspace();
+  const agents = workspace.agents;
+  const { currentAgentId, collapsed, inboxOpen, inboxCount, attentionByAgent, exploreView, systemView, workspaceInfo } = props;
   const [exploreOpen, setExploreOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);

@@ -154,32 +154,92 @@ async function collectTurn(runtime: PiAgentSession, message: string, options: Ag
 /** Serializes async tasks per key so one AgentSession never runs concurrent turns. */
 export class KeyedExecutor {
   private readonly tails = new Map<string, Promise<unknown>>();
+  /** Queued-or-running task count per key; eviction must never touch a key with pending work. */
+  private readonly inFlight = new Map<string, number>();
 
   run<T>(key: string, task: () => Promise<T>): Promise<T> {
+    this.inFlight.set(key, (this.inFlight.get(key) ?? 0) + 1);
     const next = (this.tails.get(key) ?? Promise.resolve()).then(task);
     // The stored tail swallows rejections so one failed turn never blocks the queue.
     this.tails.set(key, next.catch(() => undefined));
+    const settle = () => {
+      const left = (this.inFlight.get(key) ?? 1) - 1;
+      if (left <= 0) this.inFlight.delete(key);
+      else this.inFlight.set(key, left);
+    };
+    void next.then(settle, settle);
     return next;
   }
+
+  /** True while a task for this key is queued or running. */
+  hasPending(key: string): boolean {
+    return (this.inFlight.get(key) ?? 0) > 0;
+  }
+}
+
+interface RegistryEntry {
+  session: Promise<PiAgentSession>;
+  lastUsedAt: number;
+}
+
+export interface PiSessionRegistryOptions {
+  /** Idle sessions older than this are evicted on the next registry operation. */
+  idleTtlMs?: number;
+  /** Clock injection for tests. */
+  now?: () => number;
+  /** Session factory injection for tests; production uses createPiAgentSession. */
+  createSession?: (options: PiAgentSessionOptions) => Promise<PiAgentSession>;
 }
 
 /** Keeps one Pi session per agent/session pair so contexts never share a runtime. */
 export class PiSessionRegistry {
-  private readonly sessions = new Map<string, Promise<PiAgentSession>>();
+  private readonly sessions = new Map<string, RegistryEntry>();
   private readonly executor = new KeyedExecutor();
+  private readonly idleTtlMs: number;
+  private readonly now: () => number;
+  private readonly createSession: (options: PiAgentSessionOptions) => Promise<PiAgentSession>;
+
+  constructor(options: PiSessionRegistryOptions = {}) {
+    this.idleTtlMs = options.idleTtlMs ?? 30 * 60 * 1000;
+    this.now = options.now ?? Date.now;
+    this.createSession = options.createSession ?? createPiAgentSession;
+  }
 
   private getOrCreate(agentId: string, sessionId: string, options: Omit<PiAgentSessionOptions, 'agentId' | 'sessionId'> = {}): Promise<PiAgentSession> {
     const key = `${agentId}:${sessionId}`;
+    this.sweepIdle();
     const existing = this.sessions.get(key);
-    if (existing) return existing;
-    const created = createPiAgentSession({ ...options, agentId, sessionId, persistSession: true });
-    this.sessions.set(key, created);
+    if (existing && !this.isExpired(existing)) {
+      existing.lastUsedAt = this.now();
+      return existing.session;
+    }
+    // 当前 key 的过期条目：executor 保证同 key 同一时间只有本任务在执行，淘汰安全。
+    if (existing) this.evict(key, existing);
+    const created = this.createSession({ ...options, agentId, sessionId, persistSession: true });
+    this.sessions.set(key, { session: created, lastUsedAt: this.now() });
     // 创建失败（如 model not found）时不能缓存 rejected Promise，否则该 session 后续所有
     // turn 都命中同一个失败；仅在自己仍是 map 里的条目时摘除，避免竞态误删新条目。
     created.catch(() => {
-      if (this.sessions.get(key) === created) this.sessions.delete(key);
+      if (this.sessions.get(key)?.session === created) this.sessions.delete(key);
     });
     return created;
+  }
+
+  private isExpired(entry: RegistryEntry): boolean {
+    return this.now() - entry.lastUsedAt > this.idleTtlMs;
+  }
+
+  private evict(key: string, entry: RegistryEntry): void {
+    this.sessions.delete(key);
+    void entry.session.then((runtime) => runtime.close(), () => undefined);
+  }
+
+  /** Lazy sweep (no timer): evict idle-expired entries that have no queued or running turn. */
+  private sweepIdle(): void {
+    for (const [key, entry] of this.sessions) {
+      if (!this.isExpired(entry) || this.executor.hasPending(key)) continue;
+      this.evict(key, entry);
+    }
   }
 
   async run(agentId: string, sessionId: string, message: string, options: AgentTurnOptions = {}, sessionOptions: Omit<PiAgentSessionOptions, 'agentId' | 'sessionId'> = {}): Promise<AgentTurnResult> {
@@ -187,34 +247,45 @@ export class PiSessionRegistry {
     // delta subscriptions on one AgentSession; serialize them per key.
     return this.executor.run(`${agentId}:${sessionId}`, async () => {
       const runtime = await this.getOrCreate(agentId, sessionId, sessionOptions);
-      if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
-      if (options.model && runtime.session.model?.id !== options.model) {
-        const { provider } = getPiModelConfig({}, runtime.cwd);
-        const model = provider ? runtime.session.modelRuntime.getModel(provider, options.model) : undefined;
-        if (!model) throw new Error(`Pi model not found: ${provider ?? 'default'}/${options.model}`);
-        await runtime.session.setModel(model);
+      try {
+        if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
+        if (options.model && runtime.session.model?.id !== options.model) {
+          const { provider } = getPiModelConfig({}, runtime.cwd);
+          const model = provider ? runtime.session.modelRuntime.getModel(provider, options.model) : undefined;
+          if (!model) throw new Error(`Pi model not found: ${provider ?? 'default'}/${options.model}`);
+          await runtime.session.setModel(model);
+        }
+        return await collectTurn(runtime, message, options);
+      } finally {
+        // A long turn must not look idle-expired the moment it finishes.
+        const entry = this.sessions.get(`${agentId}:${sessionId}`);
+        if (entry) entry.lastUsedAt = this.now();
       }
-      return collectTurn(runtime, message, options);
     });
+  }
+
+  /** Runs a non-turn task (e.g. rename) after any in-flight turn of the same session. */
+  runExclusive<T>(agentId: string, sessionId: string, task: () => Promise<T>): Promise<T> {
+    return this.executor.run(`${agentId}:${sessionId}`, task);
   }
 
   /** Aborts the running turn of one session (e.g. when the SSE client disconnects). */
   async abort(agentId: string, sessionId: string): Promise<void> {
-    const runtime = this.sessions.get(`${agentId}:${sessionId}`);
-    if (runtime) await (await runtime).session.abort();
+    const entry = this.sessions.get(`${agentId}:${sessionId}`);
+    if (entry) await (await entry.session).session.abort();
   }
 
   async close(agentId: string, sessionId: string): Promise<void> {
     const key = `${agentId}:${sessionId}`;
-    const runtime = this.sessions.get(key);
+    const entry = this.sessions.get(key);
     this.sessions.delete(key);
-    if (runtime) (await runtime).close();
+    if (entry) (await entry.session).close();
   }
 
   async closeAll(): Promise<void> {
-    const runtimes = [...this.sessions.values()];
+    const entries = [...this.sessions.values()];
     this.sessions.clear();
-    for (const runtime of runtimes) (await runtime).close();
+    for (const entry of entries) (await entry.session).close();
   }
 }
 

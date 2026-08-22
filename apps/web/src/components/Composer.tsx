@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PromptSummary, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { WorkspaceResponse } from '@pi-workbench/contracts';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp';
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
@@ -11,12 +11,11 @@ import { cx } from '../lib/cx.js';
 import { MOTION_EASE } from '../lib/motion.js';
 import { filterPrompts, movePromptSelection, promptQueryFromInput } from '../lib/prompts.js';
 import { useDismissable } from '../hooks/useDismissable.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 
 type ModelCatalog = WorkspaceResponse['models'];
 
 export type ComposerProps = {
-  prompts: PromptSummary[];
-  models: ModelCatalog;
   disabled: boolean;
   selectedModel: string | undefined;
   onSelectModel: (model: string | undefined) => void;
@@ -73,7 +72,10 @@ function ModelMenu({ models, selectedModel, onSelect, onClose }: {
   );
 }
 
-export function Composer({ prompts, models, disabled, selectedModel, onSelectModel, onSend }: ComposerProps) {
+export function Composer({ disabled, selectedModel, onSelectModel, onSend }: ComposerProps) {
+  const { workspace } = useWorkspace();
+  const prompts = workspace.prompts;
+  const models = workspace.models;
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState(0);

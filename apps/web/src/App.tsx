@@ -13,6 +13,7 @@ import { MOTION_EASE } from './lib/motion.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { useAsyncData } from './hooks/useAsyncData.js';
 import { useChatController } from './hooks/useChatController.js';
+import { WorkspaceProvider } from './context/WorkspaceContext.js';
 import { Sidebar } from './components/Sidebar.js';
 import { Toasts, type Toast } from './components/Toasts.js';
 import { InboxColumn, type SessionFilter } from './components/InboxColumn.js';
@@ -263,10 +264,10 @@ export default function App() {
   const viewKey = exploreView ? `explore-${exploreView}` : systemView ? `system-${systemView}` : inboxOpen ? 'inbox' : 'chat';
 
   return (
+    <WorkspaceProvider value={{ workspace, sessionsByAgent, notify }}>
     <MotionConfig reducedMotion="user">
       <div className="app-shell">
         <Sidebar
-          agents={workspace.agents}
           currentAgentId={currentAgentId}
           collapsed={sidebarCollapsed}
           inboxOpen={inboxOpen}
@@ -314,11 +315,11 @@ export default function App() {
             {!exploreView && !systemView && !inboxOpen && <UsageBar agent={currentAgent} sessions={sessions} />}
 
             {exploreView === 'agents' ? (
-              <ExploreAgents agents={workspace.agents} onOpenChat={selectAgent} />
+              <ExploreAgents onOpenChat={selectAgent} />
             ) : exploreView === 'templates' ? (
               <TemplatesView onCreated={() => void handleAgentCreated()} />
             ) : exploreView === 'skills' ? (
-              <SkillsView prompts={workspace.prompts} />
+              <SkillsView />
             ) : systemView === 'usage' ? (
               <UsageView usage={usage.data} loading={usage.loading} onRefresh={() => void usage.reload()} />
             ) : systemView === 'settings' ? (
@@ -326,7 +327,6 @@ export default function App() {
             ) : inboxOpen ? (
               <InboxView
                 items={inbox.data ?? []}
-                agents={workspace.agents}
                 loading={inbox.loading}
                 onRefresh={() => void inbox.reload()}
                 onOpen={openInboxItem}
@@ -359,8 +359,6 @@ export default function App() {
                       <Welcome agent={currentAgent} onSuggestion={send} />
                       <div className="composer-wrap welcome-composer">
                         <Composer
-                          prompts={workspace.prompts}
-                          models={workspace.models}
                           disabled={Boolean(chat.liveTurn)}
                           selectedModel={selectedModel}
                           onSelectModel={setSelectedModel}
@@ -374,8 +372,6 @@ export default function App() {
                       <div className="composer-wrap">
                         <div className="composer-inner">
                           <Composer
-                            prompts={workspace.prompts}
-                            models={workspace.models}
                             disabled={Boolean(chat.liveTurn)}
                             selectedModel={selectedModel}
                             onSelectModel={setSelectedModel}
@@ -393,8 +389,6 @@ export default function App() {
 
         <CommandPalette
           open={paletteOpen}
-          agents={workspace.agents}
-          sessionsByAgent={sessionsByAgent}
           onAction={handlePaletteAction}
           onClose={() => setPaletteOpen(false)}
         />
@@ -404,7 +398,6 @@ export default function App() {
           {configAgentId && (
             <ConfigPanel
               agentId={configAgentId}
-              models={workspace.models}
               onClose={() => setConfigAgentId(null)}
               onUseSuggestion={(text) => { setConfigAgentId(null); send(text); }}
             />
@@ -414,5 +407,6 @@ export default function App() {
         <Toasts toasts={toasts} />
       </div>
     </MotionConfig>
+    </WorkspaceProvider>
   );
 }

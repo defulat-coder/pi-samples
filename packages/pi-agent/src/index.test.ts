@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, KeyedExecutor, listPiModels, PiSessionRegistry } from './index.js';
+import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, KeyedExecutor, listPiModels, PiSessionRegistry, type PiAgentSession, type PiAgentSessionOptions } from './index.js';
 
 const roots: string[] = [];
 
@@ -101,6 +101,74 @@ describe('PiSessionRegistry', () => {
       );
       // 失败条目已摘除，abort 不应因残留的 rejected Promise 而上抛。
       await registry.abort('agent-one', 'retry-session');
+    } finally {
+      await registry.closeAll();
+    }
+  });
+});
+
+describe('PiSessionRegistry 空闲淘汰', () => {
+  /** 不触网的假会话工厂：subscribe/prompt 是 collectTurn 的全部依赖，close 记录淘汰。 */
+  function fakeFactory(state: { calls: number; closes: string[]; prompt?: () => Promise<void> }) {
+    return async (options: PiAgentSessionOptions): Promise<PiAgentSession> => {
+      state.calls += 1;
+      const tag = `${options.agentId}:${options.sessionId}#${state.calls}`;
+      return {
+        cwd: options.cwd ?? '',
+        agentId: options.agentId,
+        session: {
+          subscribe: () => () => undefined,
+          prompt: () => state.prompt?.() ?? Promise.resolve(),
+        } as unknown as PiAgentSession['session'],
+        sessionManager: undefined as unknown as PiAgentSession['sessionManager'],
+        close: () => state.closes.push(tag),
+      };
+    };
+  }
+
+  const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('空闲超过 TTL 的条目在下一次操作时被淘汰重建，未过期则复用', async () => {
+    let now = 1_000_000;
+    const state = { calls: 0, closes: [] as string[] };
+    const registry = new PiSessionRegistry({ idleTtlMs: 1000, now: () => now, createSession: fakeFactory(state) });
+    try {
+      await registry.run('agent-one', 's1', '你好');
+      await registry.run('agent-one', 's1', '复读');
+      assert.equal(state.calls, 1, '未过期的条目必须复用');
+
+      now += 2000;
+      await registry.run('agent-one', 's1', '换新的');
+      assert.equal(state.calls, 2, '过期条目应被淘汰重建而非复用');
+      await flushMicrotasks();
+      assert.deepEqual(state.closes, ['agent-one:s1#1'], '被淘汰的旧会话应调用 close 释放');
+    } finally {
+      await registry.closeAll();
+    }
+  });
+
+  it('进行中的 turn 所在的 key 不会被顺带清扫淘汰', async () => {
+    let now = 1_000_000;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const state: { calls: number; closes: string[]; prompt?: () => Promise<void> } = { calls: 0, closes: [], prompt: () => gate };
+    const registry = new PiSessionRegistry({ idleTtlMs: 1000, now: () => now, createSession: fakeFactory(state) });
+    try {
+      const turn = registry.run('agent-one', 'busy', '卡住');
+      await flushMicrotasks();
+      assert.equal(state.calls, 1);
+
+      // 另一个 session 的操作触发 lazy sweep；busy 已过期但有 in-flight turn，不能淘汰。
+      now += 2000;
+      state.prompt = undefined;
+      await registry.run('agent-one', 'sweeper', '扫一下');
+      await flushMicrotasks();
+      assert.deepEqual(state.closes, [], '有进行中 turn 的条目不得被淘汰');
+
+      release();
+      await turn;
+      await registry.run('agent-one', 'busy', '继续');
+      assert.equal(state.calls, 2, 'busy 条目仍在（turn 结束刷新 lastUsedAt），只有 sweeper 新建了一次');
     } finally {
       await registry.closeAll();
     }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSessionStore, loadAgents, openWorkbenchDb, recordUsageEvent } from '@pi-workbench/pi-agent';
+import { AgentSessionStore, loadAgents, openWorkbenchDb, piSessionRegistry, recordUsageEvent } from '@pi-workbench/pi-agent';
 import { buildApp } from './app.js';
 import type { AppConfig } from './config.js';
 
@@ -90,6 +90,38 @@ describe('Pi Workbench API', () => {
     assert.equal(removed.statusCode, 204);
     const missing = await app.inject({ method: 'GET', url: `/api/v1/agents/pi-assistant/sessions/${firstId}` });
     assert.equal(missing.statusCode, 404);
+  });
+
+  it('rename 排在同一 session 的 in-flight 任务之后，不与进行中的写并发', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/v1/agents/pi-assistant/sessions' });
+    const sessionId = created.json().id as string;
+
+    // 模拟一个占住该 session 串行队列的进行中 turn（registry 与路由共用同一 KeyedExecutor）。
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const inFlight = piSessionRegistry.runExclusive('pi-assistant', sessionId, () => gate);
+
+    let renameSettled = false;
+    const renamed = app
+      .inject({ method: 'PATCH', url: `/api/v1/agents/pi-assistant/sessions/${sessionId}`, payload: { title: '稍后落盘' } })
+      .then((response) => { renameSettled = true; return response; });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(renameSettled, false, 'in-flight 任务未结束时 rename 不能抢先写入');
+
+    release();
+    await inFlight;
+    const response = await renamed;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().title, '稍后落盘');
+
+    // 串行化生效后 JSONL 不会交错：每一行都必须可独立解析。
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const file = readdirSync(sessionRoot)
+      .map((name) => join(sessionRoot, name))
+      .find((path) => path.endsWith('.jsonl') && readFileSync(path, 'utf8').includes(`"${sessionId}"`));
+    assert.ok(file);
+    for (const line of readFileSync(file, 'utf8').trim().split('\n')) assert.ok(JSON.parse(line));
   });
 
   it('lists only attention sessions in the inbox, newest first', async () => {

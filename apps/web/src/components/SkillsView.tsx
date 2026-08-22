@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import type { PromptSummary } from '@pi-workbench/contracts';
 import { FileText } from '@phosphor-icons/react/dist/icons/FileText';
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece';
@@ -8,14 +7,12 @@ import { fetchSkills } from '../lib/api.js';
 import { filterSkillItems, mergeSkillItems } from '../lib/explore.js';
 import { useAsyncData } from '../hooks/useAsyncData.js';
 import { MOTION_EASE } from '../lib/motion.js';
-
-export type SkillsViewProps = {
-  /** 提示词模板（.pi/prompts/*.md），来自工作区快照。 */
-  prompts: PromptSummary[];
-};
+import { useWorkspace } from '../context/WorkspaceContext.js';
 
 /** Skills 页（§11.6）：.pi/skills 技能 + .pi/prompts 提示词模板；技能目录为空时给空态。 */
-export function SkillsView({ prompts }: SkillsViewProps) {
+export function SkillsView() {
+  const { workspace } = useWorkspace();
+  const prompts = workspace.prompts;
   const skills = useAsyncData(fetchSkills);
   const [query, setQuery] = useState('');
 

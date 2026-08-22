@@ -154,8 +154,95 @@ describe('useChatController', () => {
     assert.equal(assistant.streaming, false);
   });
 
-  it('openSession 回放历史，closeSession 清空当前视图状态', async () => {
+  it('流中途断线后自动回放服务端已持久化的内容，补齐本地截断的回答', async () => {
+    const channel = sseChannel();
     globalThis.fetch = (async (url) => {
+      const href = String(url);
+      if (href.includes('/chat')) return channel.response;
+      if (href.includes('/sessions/s9/messages')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              { id: 'm1', role: 'user', content: '断线前的问题', timestamp: '2026-01-01T00:00:00Z' },
+              { id: 'm2', role: 'assistant', content: '服务端补全的完整回答', timestamp: '2026-01-01T00:00:01Z' },
+            ],
+          }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+    const { result, notifications } = setup();
+
+    act(() => result.current.send('断线前的问题', 'agent-one'));
+    await act(async () => {
+      channel.emit('start', { sessionId: 's9', agentId: 'agent-one', model: MODEL });
+      channel.emit('text_delta', { delta: '半句' });
+    });
+    assert.equal(result.current.liveTurn?.answer, '半句');
+
+    await act(async () => {
+      channel.fail(new Error('network down'));
+    });
+    await waitFor(() => assert.equal(result.current.threadMessages[1]?.text, '服务端补全的完整回答'));
+    const [user, assistant] = result.current.threadMessages;
+    assert.equal(user!.text, '断线前的问题');
+    assert.ok(!assistant!.streaming, '重放后不再是流式占位');
+    assert.equal(assistant!.error, undefined, '服务端完整落盘时不保留错误标记');
+    assert.deepEqual(notifications, [], '已知 sessionId 的失败走重放，不再 toast');
+    assert.equal(result.current.liveTurn, null);
+  });
+
+  it('断线重放保留服务端持久化的 error 标记；重放失败时维持本地错误现场', async () => {
+    const channel = sseChannel();
+    globalThis.fetch = (async (url) => {
+      const href = String(url);
+      if (href.includes('/chat')) return channel.response;
+      if (href.includes('/sessions/s10/messages')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              { id: 'm1', role: 'user', content: '问题', timestamp: '2026-01-01T00:00:00Z' },
+              { id: 'm2', role: 'assistant', content: '写到一半的持久化内容', stopReason: 'error', errorMessage: '上游超时', timestamp: '2026-01-01T00:00:01Z' },
+            ],
+          }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+    const { result } = setup();
+
+    act(() => result.current.send('问题', 'agent-one'));
+    await act(async () => {
+      channel.emit('start', { sessionId: 's10', agentId: 'agent-one', model: MODEL });
+    });
+    await act(async () => {
+      channel.fail(new Error('network down'));
+    });
+    await waitFor(() => assert.equal(result.current.threadMessages[1]?.error, '上游超时'));
+    assert.equal(result.current.threadMessages[1]!.text, '写到一半的持久化内容', '服务端持久化内容覆盖流式占位');
+
+    // 重放请求本身失败：静默降级，线程维持 finalize 后的本地错误现场。
+    act(() => result.current.closeSession());
+    const failing = sseChannel();
+    globalThis.fetch = (async (url) => {
+      const href = String(url);
+      if (href.includes('/chat')) return failing.response;
+      if (href.includes('/sessions/s11/messages')) return new Response('boom', { status: 500 });
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+    act(() => result.current.send('再来', 'agent-one'));
+    await act(async () => {
+      failing.emit('start', { sessionId: 's11', agentId: 'agent-one', model: MODEL });
+      failing.emit('text_delta', { delta: '本地增量' });
+    });
+    await act(async () => {
+      failing.fail(new Error('network down'));
+    });
+    await waitFor(() => assert.equal(result.current.threadMessages.at(-1)?.error, 'network down'));
+    assert.equal(result.current.threadMessages.at(-1)!.text, '本地增量', '重放失败时保留本地已收到的增量与错误');
+  });
+
+  it('openSession 回放历史，closeSession 清空当前视图状态', async () => {    globalThis.fetch = (async (url) => {
       const href = String(url);
       if (href.includes('/sessions/s1/messages')) {
         return new Response(

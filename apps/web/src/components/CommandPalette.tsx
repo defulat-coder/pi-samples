@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentSummary, SessionSummary } from '@pi-workbench/contracts';
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
 import {
   buildPaletteItems,
@@ -11,17 +10,18 @@ import {
   type PaletteItem,
 } from '../lib/palette.js';
 import { cx } from '../lib/cx.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 
 export type CommandPaletteProps = {
   open: boolean;
-  agents: AgentSummary[];
-  sessionsByAgent: Record<string, SessionSummary[]>;
   onAction: (action: PaletteAction) => void;
   onClose: () => void;
 };
 
 /** ⌘K 命令面板（Fleet Search 的真实行为）：跨页面 / Agent / 会话过滤跳转，↑↓ 选择、Enter 执行、Esc 关闭。 */
-export function CommandPalette({ open, agents, sessionsByAgent, onAction, onClose }: CommandPaletteProps) {
+export function CommandPalette({ open, onAction, onClose }: CommandPaletteProps) {
+  const { workspace, sessionsByAgent } = useWorkspace();
+  const agents = workspace.agents;
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

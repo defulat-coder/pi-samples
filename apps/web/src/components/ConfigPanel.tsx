@@ -21,6 +21,7 @@ import {
 } from '../lib/configPanel.js';
 import { cx } from '../lib/cx.js';
 import { MOTION_EASE } from '../lib/motion.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 import { AgentChip } from './AgentChip.js';
 
 /** Fleet configure 面板的通栏折叠节：48px 头 + 高度动画内容区。 */
@@ -169,12 +170,13 @@ function RuntimeSection({ models, resources, thinking, onThinkingChange }: {
 }
 
 /** 右侧 479px 配置面板（aside，内嵌非遮罩），分节折叠对齐 Fleet configure 结构。 */
-export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
+export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
   agentId: string;
-  models: WorkspaceResponse['models'];
   onClose: () => void;
   onUseSuggestion: (text: string) => void;
 }) {
+  const { workspace } = useWorkspace();
+  const models = workspace.models;
   const detail = useAsyncData(() => fetchAgent(agentId), { onError: (cause) => setError(cause.message) });
   const resources = useAsyncData(() => fetchAgentResources(agentId));
   const [error, setError] = useState('');

@@ -46,7 +46,11 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
     schema: { params: SessionParamsSchema, body: RenameSessionSchema },
   }, async (request, reply) => {
     if (!agentOr404(ctx, request.params.agentId, reply)) return;
-    const session = await withOwnedSession(reply, () => ctx.sessions.renameSession(request.params.sessionId, request.params.agentId, request.body.title));
+    // rename 向同一 JSONL append，必须与进行中的 turn 共用一个 per-key 串行队列，
+    // 避免与 registry 持有的 SessionManager 并发写交错；排在 in-flight turn 之后执行。
+    const session = await withOwnedSession(reply, () =>
+      piSessionRegistry.runExclusive(request.params.agentId, request.params.sessionId, () =>
+        ctx.sessions.renameSession(request.params.sessionId, request.params.agentId, request.body.title)));
     if (session === undefined && !reply.sent) return reply.code(404).send({ error: '会话不存在' });
     return session;
   });

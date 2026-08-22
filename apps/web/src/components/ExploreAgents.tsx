@@ -1,16 +1,17 @@
 import { motion } from 'motion/react';
-import type { AgentSummary } from '@pi-workbench/contracts';
 import { agentCardStats } from '../lib/explore.js';
 import { MOTION_EASE } from '../lib/motion.js';
+import { useWorkspace } from '../context/WorkspaceContext.js';
 import { AgentChip } from './AgentChip.js';
 
 export type ExploreAgentsProps = {
-  agents: AgentSummary[];
   onOpenChat: (agentId: string) => void;
 };
 
 /** 工作区 Agents 页：卡片样式类推 §11.4（原页是付费墙，无真实列表可抓）。 */
-export function ExploreAgents({ agents, onOpenChat }: ExploreAgentsProps) {
+export function ExploreAgents({ onOpenChat }: ExploreAgentsProps) {
+  const { workspace } = useWorkspace();
+  const agents = workspace.agents;
   return (
     <div className="explore">
       <header className="explore-header">

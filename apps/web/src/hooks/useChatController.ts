@@ -20,6 +20,18 @@ export interface ChatControllerOptions {
   onTurnSettled: (agentId: string) => void;
 }
 
+/** 服务端回放的 SessionMessage → 本地 ChatMessage；error/aborted 的 stopReason 映射为错误标记。 */
+function toChatMessage(item: Awaited<ReturnType<typeof fetchSessionMessages>>[number]): ChatMessage {
+  return {
+    id: item.id,
+    role: item.role,
+    text: item.content,
+    ...(item.thinking ? { thinking: item.thinking } : {}),
+    ...(item.usage ? { usage: item.usage } : {}),
+    ...(item.stopReason === 'error' || item.stopReason === 'aborted' ? { error: item.errorMessage ?? '本轮回复失败' } : {}),
+  };
+}
+
 /**
  * 聊天域状态编排：线程消息、历史回放、流式 turn 的中断/错误/落盘。
  * 视图切换不在此处——hook 只关心「会话 ↔ 消息」这层。
@@ -34,14 +46,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
   const loadThread = useCallback(async (agentId: string, sessionId: string) => {
     try {
       const items = await fetchSessionMessages(agentId, sessionId);
-      const messages: ChatMessage[] = items.map((item) => ({
-        id: item.id,
-        role: item.role,
-        text: item.content,
-        ...(item.thinking ? { thinking: item.thinking } : {}),
-        ...(item.usage ? { usage: item.usage } : {}),
-        ...(item.stopReason === 'error' || item.stopReason === 'aborted' ? { error: item.errorMessage ?? '本轮回复失败' } : {}),
-      }));
+      const messages = items.map(toChatMessage);
       setThreads((prev) => {
         const existing = prev[sessionId];
         if (existing && existing.messages.length) return { ...prev, [sessionId]: { ...existing, historyLoaded: true } };
@@ -144,8 +149,25 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
         }
         const message = error.message || '流式响应失败';
         finalize(turn.answer, message);
-        // start 之前的失败此前会被静默丢弃：草稿线程落错误消息之外再 toast 一次。
-        if (!resolvedSessionId) notify(message);
+        if (resolvedSessionId) {
+          // 流中途断开时服务端 JSONL 可能已持久化更多内容：回放一次把线程与服务端对齐
+          // （服务端持久化的 stopReason 会带出 error 标记）；重放失败则静默降级维持现状。
+          const sessionId = resolvedSessionId;
+          void fetchSessionMessages(agentId, sessionId)
+            .then((items) => {
+              const messages = items.map(toChatMessage);
+              setThreads((prev) => {
+                const thread = prev[sessionId];
+                // 服务端落盘比本地还少时保留本地错误现场，不用旧数据覆盖。
+                if (!thread || messages.length < thread.messages.length) return prev;
+                return { ...prev, [sessionId]: { ...thread, messages, historyLoaded: true } };
+              });
+            })
+            .catch(() => undefined);
+        } else {
+          // start 之前的失败此前会被静默丢弃：草稿线程落错误消息之外再 toast 一次。
+          notify(message);
+        }
       })
       .finally(() => {
         abortRef.current = null;
