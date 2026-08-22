@@ -20,6 +20,7 @@
 | Project Skills | `npx skills list --json` |
 
 - Before handoff run `git diff --check` and `git status --short`; preserve unrelated dirty files.
+- All GitHub operations — PRs, issues, CI runs, releases, repo API queries — go through the `gh` CLI; never hand-craft `curl` calls to api.github.com or ask the user to check the web UI for something `gh` can answer.
 - `.agents/skills/` and `skills-lock.json` are managed by the Skills CLI; restore with `npx skills experimental_install`, add with `npx skills add <owner/repo> --skill <name> -a universal -y`, and do not hand-edit installed third-party skill files.
 
 ## Lint and Web Tests
