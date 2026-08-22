@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -64,6 +64,34 @@ export async function deleteSession(agentId: string, sessionId: string): Promise
 
 export async function fetchPrompt(name: string): Promise<PromptDocument> {
   return readJson(await fetch(`/api/v1/prompts/${encodeURIComponent(name)}`), '提示词暂时无法读取');
+}
+
+/** PUTs one prompt template rewrite; server errors (400/404) surface their message. */
+export async function updatePrompt(name: string, request: UpdatePromptRequest): Promise<PromptDocument> {
+  return readJson(
+    await fetch(`/api/v1/prompts/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+    '提示词暂时无法保存',
+  );
+}
+
+export async function fetchAppendSystem(): Promise<AppendSystemResponse> {
+  return readJson(await fetch('/api/v1/append-system'), '追加系统提示暂时无法读取');
+}
+
+/** PUTs .pi/APPEND_SYSTEM.md; empty content removes the file and the response content is null. */
+export async function updateAppendSystem(content: string): Promise<AppendSystemResponse> {
+  return readJson(
+    await fetch('/api/v1/append-system', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content }),
+    }),
+    '追加系统提示暂时无法保存',
+  );
 }
 
 export async function fetchSkills(): Promise<SkillSummary[]> {

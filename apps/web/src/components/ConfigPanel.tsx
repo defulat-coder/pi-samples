@@ -10,14 +10,17 @@ import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch';
-import { fetchAgent, fetchAgentResources, savePreference, updateAgent } from '../lib/api.js';
+import { fetchAgent, fetchAgentResources, fetchAppendSystem, fetchPrompt, savePreference, updateAgent, updateAppendSystem, updatePrompt } from '../lib/api.js';
 import { useAsyncData } from '../hooks/useAsyncData.js';
 import {
   DEFAULT_OPEN_SECTIONS,
+  readModelPreference,
   readThinkingPreference,
+  serverKeyForModel,
   serverKeyForThinking,
   THINKING_PREFERENCE_OPTIONS,
   toggleSection,
+  writeModelPreference,
   writeThinkingPreference,
   type ConfigSectionId,
   type ThinkingPreference,
@@ -182,7 +185,70 @@ function EditSection({ draft, saving, onChange, onSave, onCancel }: {
   );
 }
 
-function ResourcesSection({ resources }: { resources: AgentResources | null }) {
+/** 资源区行内编辑：提示词模板与 APPEND_SYSTEM.md 的就地编辑态，保存后由 onChanged 重拉清单。 */
+function ResourcesSection({ resources, notify, onChanged }: {
+  resources: AgentResources | null;
+  notify: (text: string) => void;
+  onChanged: () => void;
+}) {
+  /** 非 null 即该模板的编辑态；content 来自 fetchPrompt 全文，保存前不回读。 */
+  const [promptDraft, setPromptDraft] = useState<{ name: string; content: string; description: string } | null>(null);
+  const [promptSaving, setPromptSaving] = useState(false);
+  /** 非 null 即 APPEND_SYSTEM.md 的编辑态。 */
+  const [appendDraft, setAppendDraft] = useState<string | null>(null);
+  const [appendSaving, setAppendSaving] = useState(false);
+
+  const startPromptEdit = async (name: string) => {
+    try {
+      const document = await fetchPrompt(name);
+      setPromptDraft({ name, content: document.content, description: document.description ?? '' });
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '提示词暂时无法读取');
+    }
+  };
+
+  const savePromptEdit = async () => {
+    if (!promptDraft || promptSaving) return;
+    const content = promptDraft.content.trim();
+    const description = promptDraft.description.trim();
+    if (!content) return;
+    setPromptSaving(true);
+    try {
+      await updatePrompt(promptDraft.name, { content, ...(description ? { description } : {}) });
+      setPromptDraft(null);
+      notify('提示词模板已保存');
+      onChanged();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '提示词暂时无法保存');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
+  const startAppendEdit = async () => {
+    try {
+      const { content } = await fetchAppendSystem();
+      setAppendDraft(content ?? '');
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '追加系统提示暂时无法读取');
+    }
+  };
+
+  const saveAppendEdit = async () => {
+    if (appendDraft === null || appendSaving) return;
+    setAppendSaving(true);
+    try {
+      const { content } = await updateAppendSystem(appendDraft);
+      setAppendDraft(null);
+      notify(content ? '追加系统提示已保存' : '已移除 .pi/APPEND_SYSTEM.md');
+      onChanged();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '追加系统提示暂时无法保存');
+    } finally {
+      setAppendSaving(false);
+    }
+  };
+
   if (!resources) return <p className="config-section-note">正在读取资源清单…</p>;
   return (
     <>
@@ -190,10 +256,55 @@ function ResourcesSection({ resources }: { resources: AgentResources | null }) {
         <p className="config-card-title">提示词模板 · {resources.prompts.length}</p>
         {resources.prompts.length === 0 && <p>暂无提示词模板。</p>}
         {resources.prompts.map((prompt) => (
-          <div className="config-resource-row" key={prompt.path}>
-            <span className="config-path">{prompt.path}</span>
-            {prompt.description && <small>{prompt.description}</small>}
-          </div>
+          promptDraft?.name === prompt.name ? (
+            <motion.div
+              className="config-edit"
+              key={prompt.path}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.15, ease: MOTION_EASE }}
+            >
+              <label className="config-edit-field">
+                <span>描述</span>
+                <input
+                  value={promptDraft.description}
+                  maxLength={200}
+                  onChange={(event) => setPromptDraft((prev) => (prev ? { ...prev, description: event.target.value } : prev))}
+                  disabled={promptSaving}
+                />
+              </label>
+              <label className="config-edit-field">
+                <span>正文</span>
+                <textarea
+                  value={promptDraft.content}
+                  rows={8}
+                  onChange={(event) => setPromptDraft((prev) => (prev ? { ...prev, content: event.target.value } : prev))}
+                  disabled={promptSaving}
+                />
+              </label>
+              <div className="config-edit-actions">
+                <button type="button" className="header-button" onClick={() => setPromptDraft(null)} disabled={promptSaving}>取消</button>
+                <button type="button" className="header-button primary" onClick={() => void savePromptEdit()} disabled={promptSaving || !promptDraft.content.trim()}>
+                  {promptSaving ? <CircleNotch size={13} className="spinning" /> : null}
+                  保存
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            <div className="config-resource-row" key={prompt.path}>
+              <span className="config-path">{prompt.path}</span>
+              {prompt.description && <small>{prompt.description}</small>}
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`编辑提示词 ${prompt.name}`}
+                onClick={() => void startPromptEdit(prompt.name)}
+                disabled={promptDraft !== null}
+              >
+                <PencilSimple size={13} />
+              </button>
+            </div>
+          )
         ))}
       </div>
       <div className="config-card">
@@ -208,18 +319,51 @@ function ResourcesSection({ resources }: { resources: AgentResources | null }) {
       </div>
       <div className="config-card">
         <p className="config-card-title">追加系统提示</p>
-        <p>{resources.appendSystem ? '已启用：.pi/APPEND_SYSTEM.md 会追加到每个 Agent 的上下文。' : '未配置 .pi/APPEND_SYSTEM.md。'}</p>
+        {appendDraft === null ? (
+          <>
+            <p>{resources.appendSystem ? '已启用：.pi/APPEND_SYSTEM.md 会追加到每个 Agent 的上下文。' : '未配置 .pi/APPEND_SYSTEM.md。'}</p>
+            <div className="config-edit-actions">
+              <button type="button" className="header-button" onClick={() => void startAppendEdit()}>
+                <PencilSimple size={13} />
+                编辑
+              </button>
+            </div>
+          </>
+        ) : (
+          <motion.div
+            className="config-edit"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15, ease: MOTION_EASE }}
+          >
+            <label className="config-edit-field">
+              <span>.pi/APPEND_SYSTEM.md</span>
+              <textarea value={appendDraft} rows={8} onChange={(event) => setAppendDraft(event.target.value)} disabled={appendSaving} />
+            </label>
+            <p className="config-card-desc">内容会追加到每个 Agent 的上下文；清空后保存将移除该文件。</p>
+            <div className="config-edit-actions">
+              <button type="button" className="header-button" onClick={() => setAppendDraft(null)} disabled={appendSaving}>取消</button>
+              <button type="button" className="header-button primary" onClick={() => void saveAppendEdit()} disabled={appendSaving}>
+                {appendSaving ? <CircleNotch size={13} className="spinning" /> : null}
+                保存
+              </button>
+            </div>
+          </motion.div>
+        )}
       </div>
       <p className="config-section-note">以上均为项目本地资源，该 Agent 无外部连接。</p>
     </>
   );
 }
 
-function RuntimeSection({ models, resources, thinking, onThinkingChange }: {
+function RuntimeSection({ models, resources, thinking, onThinkingChange, model, onModelChange }: {
   models: WorkspaceResponse['models'];
   resources: AgentResources | null;
   thinking: ThinkingPreference;
   onThinkingChange: (level: ThinkingPreference) => void;
+  /** 该 Agent 的默认模型偏好；undefined 表示跟随全局默认。 */
+  model: string | undefined;
+  onModelChange: (model: string | undefined) => void;
 }) {
   return (
     <>
@@ -232,6 +376,21 @@ function RuntimeSection({ models, resources, thinking, onThinkingChange }: {
       <div className="config-card">
         <div className="config-kv"><span>会话数</span><strong>{resources ? resources.stats.sessionCount : '…'}</strong></div>
         <div className="config-kv"><span>累计提问</span><strong>{resources ? resources.stats.questionCount : '…'}</strong></div>
+      </div>
+      <div className="config-card">
+        <p className="config-card-title">新会话默认模型</p>
+        <p className="config-card-desc">作为该 Agent 发起新提问时的默认模型，仅保存在本机；输入框里手动选择的模型优先。</p>
+        <select
+          className="config-select"
+          aria-label="新会话默认模型"
+          value={model ?? ''}
+          onChange={(event) => onModelChange(event.target.value || undefined)}
+        >
+          <option value="">跟随全局默认{models.current.model ? `（${models.current.model}）` : ''}</option>
+          {models.available.map((item) => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
       </div>
       <div className="config-card">
         <p className="config-card-title">新会话默认 Thinking</p>
@@ -267,6 +426,7 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
   const [error, setError] = useState('');
   const [openSections, setOpenSections] = useState<ConfigSectionId[]>([...DEFAULT_OPEN_SECTIONS]);
   const [thinking, setThinking] = useState<ThinkingPreference>(() => readThinkingPreference(agentId));
+  const [model, setModel] = useState<string | undefined>(() => readModelPreference(agentId));
   /** 非 null 即编辑态；字段来自 detail 快照，保存前不回读。 */
   const [draft, setDraft] = useState<Required<UpdateAgentRequest> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -278,6 +438,7 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
     setError('');
     setOpenSections([...DEFAULT_OPEN_SECTIONS]);
     setThinking(readThinkingPreference(agentId));
+    setModel(readModelPreference(agentId));
     setDraft(null);
     setSaving(false);
     setDetailData(null);
@@ -291,6 +452,15 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
     setThinking(level);
     writeThinkingPreference(agentId, level);
     void savePreference(serverKeyForThinking(agentId), level).catch(() => {
+      // 服务端写穿失败时 localStorage 仍是权威缓存。
+    });
+  };
+
+  const changeModel = (next: string | undefined) => {
+    setModel(next);
+    writeModelPreference(agentId, next);
+    // 空串语义：服务端把它当作删除该偏好（跟随全局默认）。
+    void savePreference(serverKeyForModel(agentId), next ?? '').catch(() => {
       // 服务端写穿失败时 localStorage 仍是权威缓存。
     });
   };
@@ -367,7 +537,7 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
             open={openSections.includes('resources')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'resources'))}
           >
-            <ResourcesSection resources={resources.data} />
+            <ResourcesSection resources={resources.data} notify={notify} onChanged={() => { void reloadResources(); reloadWorkspace(); }} />
           </ConfigSection>
           <ConfigSection
             icon={<GearSix size={16} />}
@@ -375,7 +545,7 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
             open={openSections.includes('runtime')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'runtime'))}
           >
-            <RuntimeSection models={models} resources={resources.data} thinking={thinking} onThinkingChange={changeThinking} />
+            <RuntimeSection models={models} resources={resources.data} thinking={thinking} onThinkingChange={changeThinking} model={model} onModelChange={changeModel} />
           </ConfigSection>
         </div>
       )}

@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentSessionStore, loadAgents, openWorkbenchDb, piSessionRegistry, recordUsageEvent } from '@pi-workbench/pi-agent';
@@ -348,6 +348,73 @@ describe('Preferences endpoints', () => {
 
     const badKey = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'pi.settings', value: {} } });
     assert.equal(badKey.statusCode, 400);
+  });
+
+  it('validates model.* preferences against the model catalog and deletes on empty value', async () => {
+    const written = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'model.pi-assistant', value: 'kimi-for-coding' } });
+    assert.equal(written.statusCode, 200);
+    assert.equal(written.json().items['model.pi-assistant'], 'kimi-for-coding');
+
+    const unknownModel = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'model.pi-assistant', value: 'no-such-model' } });
+    assert.equal(unknownModel.statusCode, 400);
+    assert.match(unknownModel.json().error, /no-such-model/);
+    const nonString = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'model.pi-assistant', value: 42 } });
+    assert.equal(nonString.statusCode, 400);
+
+    // 空串 = 跟随全局默认：行被真正删除而不是存一个空值。
+    const cleared = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'model.pi-assistant', value: '' } });
+    assert.equal(cleared.statusCode, 200);
+    assert.ok(!('model.pi-assistant' in cleared.json().items));
+  });
+});
+
+describe('Prompt and append-system editing endpoints', () => {
+  // A scratch project root keeps these tests away from the real .pi/prompts files.
+  const root = mkdtempSync(join(tmpdir(), 'pi-api-resources-'));
+  mkdirSync(join(root, '.pi', 'prompts'), { recursive: true });
+  writeFileSync(join(root, '.pi', 'prompts', 'edit-me.md'), '---\ndescription: 旧描述\n---\n\n旧正文。\n');
+  const app = buildApp(config, { cwd: root, db: openWorkbenchDb(':memory:') });
+
+  before(async () => app.ready());
+  after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }); });
+
+  it('updates a prompt via PUT and keeps the frontmatter round-trip', async () => {
+    const response = await app.inject({ method: 'PUT', url: '/api/v1/prompts/edit-me', payload: { content: '新正文。', description: '新描述' } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().content, '新正文。');
+    assert.equal(response.json().description, '新描述');
+
+    const reread = await app.inject({ method: 'GET', url: '/api/v1/prompts/edit-me' });
+    assert.equal(reread.statusCode, 200);
+    assert.equal(reread.json().content, '新正文。');
+    assert.equal(reread.json().description, '新描述');
+  });
+
+  it('maps missing prompts to 404 and rejects traversal names at the schema', async () => {
+    const missing = await app.inject({ method: 'PUT', url: '/api/v1/prompts/no-such-prompt', payload: { content: '正文' } });
+    assert.equal(missing.statusCode, 404);
+    const traversal = await app.inject({ method: 'PUT', url: '/api/v1/prompts/..%2Fsettings', payload: { content: '正文' } });
+    assert.equal(traversal.statusCode, 400);
+    const emptyBody = await app.inject({ method: 'PUT', url: '/api/v1/prompts/edit-me', payload: { content: '' } });
+    assert.equal(emptyBody.statusCode, 400);
+  });
+
+  it('round-trips append-system and deletes the file on empty content', async () => {
+    const initial = await app.inject({ method: 'GET', url: '/api/v1/append-system' });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.json().content, null);
+
+    const written = await app.inject({ method: 'PUT', url: '/api/v1/append-system', payload: { content: '  全局规则。\n' } });
+    assert.equal(written.statusCode, 200);
+    assert.equal(written.json().content, '全局规则。');
+    assert.ok(existsSync(join(root, '.pi', 'APPEND_SYSTEM.md')));
+    const reread = await app.inject({ method: 'GET', url: '/api/v1/append-system' });
+    assert.equal(reread.json().content, '全局规则。');
+
+    const cleared = await app.inject({ method: 'PUT', url: '/api/v1/append-system', payload: { content: '   ' } });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json().content, null);
+    assert.equal(existsSync(join(root, '.pi', 'APPEND_SYSTEM.md')), false);
   });
 });
 

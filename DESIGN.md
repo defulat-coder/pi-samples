@@ -272,6 +272,7 @@ Fleet 是四栏壳层：左侧固定 245px 侧边栏（收起后 44px，导航�
 - **字段:** 名称/徽标/简介/描述用 30px 高 input（沿用 input-field 规格：1px 默认边框、6px 圆角、聚焦边框变信号蓝）；建议问题为可增删的 input 行列表（行内 X 删除，底部「添加建议问题」ghost 行，1–8 条）；系统提示词为等宽 12px 大 textarea（≥180px，可纵向拉伸）——对应 Fleet Agent files 弹窗的 Source 编辑
 - **操作行:** 右对齐「取消 / 保存」按钮组（ghost + primary header-button）；保存中 primary 禁用并带旋转 spinner；必填校验不过时禁用保存，不做行内红字报错
 - **写路径:** 保存走 `PATCH /api/v1/agents/:agentId`，成功 toast 确认并重拉详情；失败 toast 原样展示服务端错误；id 不可编辑（文件名即身份）
+- **资源区行内编辑:** 提示词模板每行末尾一个 13px PencilSimple 图标按钮，点击后该行就地展开为编辑表单（描述 input + 正文等宽 textarea + 右对齐取消/保存，0.15s 淡入，先进 `GET /api/v1/prompts/:name` 拿全文）；「追加系统提示」卡片同款（卡片底部「编辑」入口，清空保存即删除 `.pi/APPEND_SYSTEM.md`）。保存成功 toast 并重拉资源清单与 workspace
 
 ## Do's and Don'ts
 

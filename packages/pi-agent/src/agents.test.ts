@@ -1,9 +1,9 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentCreateError, createAgent, deriveAgentId, getAgent, listPrompts, listSkills, loadAgents, readPrompt, updateAgent } from './agents.js';
+import { AgentCreateError, createAgent, deriveAgentId, getAgent, listPrompts, listSkills, loadAgents, readAppendSystem, readPrompt, updateAgent, writeAppendSystem, writePrompt } from './agents.js';
 import { getPiProjectRoot } from './index.js';
 
 const roots: string[] = [];
@@ -101,6 +101,76 @@ describe('prompt templates', () => {
     assert.match(document.content, /请解释/);
     assert.equal(readPrompt(getPiProjectRoot(), '../settings'), undefined);
     assert.equal(readPrompt(getPiProjectRoot(), 'missing-prompt'), undefined);
+  });
+});
+
+describe('writePrompt', () => {
+  const PROMPT = '---\ndescription: 旧描述\nargument-hint: "<概念>"\n---\n\n旧正文。\n';
+
+  function promptRoot(): string {
+    const root = fixtureRoot();
+    mkdirSync(join(root, '.pi', 'prompts'), { recursive: true });
+    writeFileSync(join(root, '.pi', 'prompts', 'edit-me.md'), PROMPT);
+    return root;
+  }
+
+  it('rewrites the body and keeps the other frontmatter fields', () => {
+    const root = promptRoot();
+    const document = writePrompt(root, 'edit-me', { content: '新正文。' });
+    assert.equal(document.content, '新正文。');
+    assert.equal(document.description, '旧描述');
+    const raw = readFileSync(join(root, '.pi', 'prompts', 'edit-me.md'), 'utf8');
+    assert.match(raw, /argument-hint/);
+    assert.equal(readPrompt(root, 'edit-me')?.content, '新正文。');
+  });
+
+  it('updates the frontmatter description when provided', () => {
+    const root = promptRoot();
+    const document = writePrompt(root, 'edit-me', { content: '新正文。', description: '新描述' });
+    assert.equal(document.description, '新描述');
+    assert.equal(listPrompts(root).find((prompt) => prompt.name === 'edit-me')?.description, '新描述');
+  });
+
+  it('throws NOT_FOUND for a missing prompt without creating a file', () => {
+    const root = promptRoot();
+    assert.throws(
+      () => writePrompt(root, 'ghost', { content: '正文' }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'NOT_FOUND',
+    );
+    assert.equal(existsSync(join(root, '.pi', 'prompts', 'ghost.md')), false);
+  });
+
+  it('rejects traversal names and empty bodies', () => {
+    const root = promptRoot();
+    assert.throws(
+      () => writePrompt(root, '../settings', { content: '正文' }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_ID',
+    );
+    assert.throws(
+      () => writePrompt(root, 'edit-me', { content: '   ' }),
+      (error: unknown) => error instanceof AgentCreateError && error.code === 'INVALID_FIELD',
+    );
+  });
+});
+
+describe('append-system file', () => {
+  it('reads null when the file is absent', () => {
+    assert.equal(readAppendSystem(fixtureRoot()), null);
+  });
+
+  it('writes atomically and reads back the normalized content', () => {
+    const root = fixtureRoot();
+    assert.equal(writeAppendSystem(root, '  全局规则。\n'), '全局规则。');
+    assert.equal(readAppendSystem(root), '全局规则。');
+  });
+
+  it('deletes the file on empty content', () => {
+    const root = fixtureRoot();
+    writeAppendSystem(root, '全局规则。');
+    assert.ok(existsSync(join(root, '.pi', 'APPEND_SYSTEM.md')));
+    assert.equal(writeAppendSystem(root, '   '), null);
+    assert.equal(existsSync(join(root, '.pi', 'APPEND_SYSTEM.md')), false);
+    assert.equal(readAppendSystem(root), null);
   });
 });
 

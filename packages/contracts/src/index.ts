@@ -175,6 +175,24 @@ export interface PromptDocument extends PromptSummary {
   content: string;
 }
 
+/** Payload of PUT /api/v1/prompts/:name; rewrites .pi/prompts/<name>.md keeping other frontmatter fields. */
+export interface UpdatePromptRequest {
+  /** Markdown body written after the YAML frontmatter. */
+  content: string;
+  /** Replaces the frontmatter description when present; omitted keeps the current one. */
+  description?: string;
+}
+
+/** Payload of GET /api/v1/append-system; null when .pi/APPEND_SYSTEM.md is not configured. */
+export interface AppendSystemResponse {
+  content: string | null;
+}
+
+/** Payload of PUT /api/v1/append-system; an empty (trimmed) content removes the file. */
+export interface UpdateAppendSystemRequest {
+  content: string;
+}
+
 /** Payload of GET /api/v1/skills; items come from listSkills over .pi/skills. */
 export interface SkillListResponse {
   items: SkillSummary[];

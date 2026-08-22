@@ -8,7 +8,7 @@ import { cx } from './lib/cx.js';
 import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
 import type { SystemView, ViewState } from './lib/types.js';
-import { mergeServerThinkingPreferences } from './lib/configPanel.js';
+import { mergeServerModelPreferences, mergeServerThinkingPreferences, readModelPreference } from './lib/configPanel.js';
 import { MOTION_EASE } from './lib/motion.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { useAsyncData } from './hooks/useAsyncData.js';
@@ -131,6 +131,7 @@ export default function App() {
       setUiPreferences(merged);
       setSidebarCollapsed(merged.sidebarCollapsed);
       mergeServerThinkingPreferences(items);
+      mergeServerModelPreferences(items);
     } catch {
       // 偏好服务不可用时沿用本地缓存。
     }
@@ -143,6 +144,8 @@ export default function App() {
       const first = snapshot.agents[0];
       if (first) {
         setCurrentAgentId((prev) => prev ?? first.id);
+        // 首个 Agent 也套用其默认模型偏好；无偏好则 undefined（服务端默认模型）。
+        setSelectedModel((prev) => prev ?? readModelPreference(first.id));
         void loadSessions(first.id);
       }
       void reloadInbox();
@@ -163,6 +166,8 @@ export default function App() {
     if (agentId === currentAgentId && !exploreView && !systemView) return;
     chat.interrupt();
     setCurrentAgentId(agentId);
+    // 切换 Agent 时重置为该 Agent 的默认模型偏好；Composer 内的手动选择只活到下次切换。
+    setSelectedModel(readModelPreference(agentId));
     chat.closeSession();
     setConfigAgentId(null);
     setView({ kind: 'chat' });

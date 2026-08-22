@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { basename, relative } from 'node:path';
-import type { AgentTemplatesResponse, SkillListResponse } from '@pi-workbench/contracts';
-import { AGENT_TEMPLATES, agentSummary, getPiModelConfig, getPiThinkingLevel, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, readPrompt } from '@pi-workbench/pi-agent';
-import { PromptNameSchema } from '../schemas.js';
+import type { AgentTemplatesResponse, AppendSystemResponse, SkillListResponse, UpdateAppendSystemRequest, UpdatePromptRequest } from '@pi-workbench/contracts';
+import { AGENT_TEMPLATES, AgentCreateError, agentSummary, getPiModelConfig, getPiThinkingLevel, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, readAppendSystem, readPrompt, writeAppendSystem, writePrompt } from '@pi-workbench/pi-agent';
+import { PromptNameSchema, UpdateAppendSystemSchema, UpdatePromptSchema } from '../schemas.js';
 import type { AppContext } from '../context.js';
 
 export function registerMetaRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -52,4 +52,24 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!document) return reply.code(404).send({ error: '提示词不存在' });
     return document;
   });
+
+  app.put<{ Params: { name: string }; Body: UpdatePromptRequest }>('/prompts/:name', {
+    schema: { params: PromptNameSchema, body: UpdatePromptSchema },
+  }, async (request, reply) => {
+    try {
+      return writePrompt(ctx.cwd, request.params.name, request.body);
+    } catch (error) {
+      if (error instanceof AgentCreateError) {
+        return reply.code(error.code === 'NOT_FOUND' ? 404 : 400).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/append-system', async (): Promise<AppendSystemResponse> => ({ content: readAppendSystem(ctx.cwd) }));
+
+  // 空内容（trim 后）删除 .pi/APPEND_SYSTEM.md，返回规范化后的 content（删除时为 null）。
+  app.put<{ Body: UpdateAppendSystemRequest }>('/append-system', {
+    schema: { body: UpdateAppendSystemSchema },
+  }, async (request): Promise<AppendSystemResponse> => ({ content: writeAppendSystem(ctx.cwd, request.body.content) }));
 }

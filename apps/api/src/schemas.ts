@@ -15,7 +15,7 @@ export const ChatRequestSchema = Type.Object({
   thinking: Type.Optional(ThinkingLevelSchema),
 });
 
-export const PreferenceKeySchema = Type.String({ pattern: '^(ui\\.[a-z-]{1,40}|thinking\\.[a-z][a-z0-9-]{1,63})$' });
+export const PreferenceKeySchema = Type.String({ pattern: '^(ui\\.[a-z-]{1,40}|thinking\\.[a-z][a-z0-9-]{1,63}|model\\.[a-z][a-z0-9-]{1,63})$' });
 export const PreferenceUpdateSchema = Type.Object({ key: PreferenceKeySchema, value: Type.Unknown() });
 
 // maxLength counts UTF-16 code units; createAgent re-checks the 32KB byte cap.
@@ -42,3 +42,11 @@ export const AgentParamsSchema = Type.Object({ agentId: AgentIdSchema });
 export const SessionParamsSchema = Type.Object({ agentId: AgentIdSchema, sessionId: SessionIdSchema });
 export const RenameSessionSchema = Type.Object({ title: Type.String({ minLength: 1, maxLength: 80 }) });
 export const PromptNameSchema = Type.Object({ name: Type.String({ pattern: '^[a-z0-9-]{1,80}$' }) });
+
+export const UpdatePromptSchema = Type.Object({
+  content: Type.String({ minLength: 1, maxLength: 32000 }),
+  description: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+});
+
+// 空内容（trim 后）表示删除 .pi/APPEND_SYSTEM.md。
+export const UpdateAppendSystemSchema = Type.Object({ content: Type.String({ maxLength: 16000 }) });

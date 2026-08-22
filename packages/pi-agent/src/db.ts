@@ -109,3 +109,8 @@ export function setPreference(db: WorkbenchDb, key: string, value: unknown): voi
     JSON.stringify(value),
   );
 }
+
+/** Removes one preference row; used for「跟随全局默认」semantics (e.g. model.<agentId>). */
+export function deletePreference(db: WorkbenchDb, key: string): void {
+  db.prepare('DELETE FROM preferences WHERE key = ?').run(key);
+}

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, stripFrontmatter } from '@earendil-works/pi-coding-agent';
-import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary, type UpdateAgentRequest } from '@pi-workbench/contracts';
+import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary, type UpdateAgentRequest, type UpdatePromptRequest } from '@pi-workbench/contracts';
 
 const AGENT_ID_REGEX = new RegExp(AGENT_ID_PATTERN);
 const PROMPT_NAME_REGEX = /^[a-z0-9-]{1,80}$/;
@@ -234,6 +234,70 @@ export function readPrompt(cwd: string, name: string): PromptDocument | undefine
   if (!summary) return undefined;
   const content = stripFrontmatter(readFileSync(join(cwd, summary.path), 'utf8')).trim();
   return { ...summary, content };
+}
+
+/**
+ * Rewrites .pi/prompts/<name>.md in place: the new content becomes the body,
+ * `description` (when provided) replaces the frontmatter field, and every other
+ * frontmatter entry keeps its current value. The write is atomic (temp + rename),
+ * same as updateAgent.
+ */
+export function writePrompt(cwd: string, name: string, input: UpdatePromptRequest): PromptDocument {
+  if (!PROMPT_NAME_REGEX.test(name)) throw new AgentCreateError('INVALID_ID', `提示词名称不合法：${name}`);
+  const summary = listPrompts(cwd).find((prompt) => prompt.name === name);
+  if (!summary) throw new AgentCreateError('NOT_FOUND', `提示词不存在：${name}`);
+  const content = input.content.trim();
+  if (!content) throw new AgentCreateError('INVALID_FIELD', '提示词正文不能为空');
+
+  const directory = join(cwd, '.pi', 'prompts');
+  const fileName = `${name}.md`;
+  const { frontmatter } = parseFrontmatter(readFileSync(join(directory, fileName), 'utf8'));
+  const description = input.description?.trim();
+  const entries: Record<string, unknown> = { ...frontmatter };
+  if (description) entries.description = description;
+
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(entries)) {
+    if (typeof value === 'string') lines.push(`${key}: ${yamlScalar(value)}`);
+    else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+      lines.push(`${key}:`, ...value.map((item) => `  - ${yamlScalar(item)}`));
+    }
+    // 非标量 frontmatter 字段（少见）直接丢弃，避免序列化出坏 YAML。
+  }
+  const file = ['---', ...lines, '---', '', content, ''].join('\n');
+  const temporary = join(directory, `.${fileName}.tmp-${process.pid}`);
+  writeFileSync(temporary, file, 'utf8');
+  renameSync(temporary, join(directory, fileName));
+  // Roundtrip through the reader so a serialization bug can never persist a broken file.
+  const document = readPrompt(cwd, name);
+  if (!document) throw new Error(`提示词写入后无法回读：${name}`);
+  return document;
+}
+
+/** Reads .pi/APPEND_SYSTEM.md trimmed; null when the file is absent. */
+export function readAppendSystem(cwd: string): string | null {
+  const target = join(cwd, '.pi', 'APPEND_SYSTEM.md');
+  if (!existsSync(target)) return null;
+  return readFileSync(target, 'utf8').trim();
+}
+
+/**
+ * Writes .pi/APPEND_SYSTEM.md atomically; empty (trimmed) content deletes the
+ * file —「未配置」语义. Returns the normalized content, or null after a delete.
+ */
+export function writeAppendSystem(cwd: string, content: string): string | null {
+  const target = join(cwd, '.pi', 'APPEND_SYSTEM.md');
+  const normalized = content.trim();
+  if (!normalized) {
+    rmSync(target, { force: true });
+    return null;
+  }
+  const directory = join(cwd, '.pi');
+  mkdirSync(directory, { recursive: true });
+  const temporary = join(directory, `.APPEND_SYSTEM.md.tmp-${process.pid}`);
+  writeFileSync(temporary, `${normalized}\n`, 'utf8');
+  renameSync(temporary, target);
+  return normalized;
 }
 
 /**

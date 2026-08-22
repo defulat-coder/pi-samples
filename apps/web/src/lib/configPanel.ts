@@ -51,3 +51,40 @@ export function mergeServerThinkingPreferences(items: Record<string, unknown>, s
     }
   }
 }
+
+const MODEL_KEY_PREFIX = 'pi-workbench.model.';
+
+/** Reads the per-agent default model; undefined means「跟随全局默认」（服务端缺省模型）。 */
+export function readModelPreference(agentId: string, storage: StorageLike | undefined = defaultStorage()): string | undefined {
+  try {
+    return storage?.getItem(MODEL_KEY_PREFIX + agentId) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persists the per-agent default model; undefined stores ''（跟随全局默认，读取时等价于未设置）。 */
+export function writeModelPreference(agentId: string, model: string | undefined, storage: StorageLike | undefined = defaultStorage()): void {
+  try {
+    storage?.setItem(MODEL_KEY_PREFIX + agentId, model ?? '');
+  } catch {
+    // 隐私模式 / 配额满时静默降级，偏好只在内存中生效。
+  }
+}
+
+/** Server-side key (SQLite preferences table) for one agent's model preference. */
+export function serverKeyForModel(agentId: string): string {
+  return `model.${agentId}`;
+}
+
+/** Merges server-persisted model preferences into the local cache; server values win. */
+export function mergeServerModelPreferences(items: Record<string, unknown>, storage: StorageLike | undefined = defaultStorage()): void {
+  for (const [key, value] of Object.entries(items)) {
+    if (!key.startsWith('model.') || typeof value !== 'string' || !value) continue;
+    try {
+      storage?.setItem(MODEL_KEY_PREFIX + key.slice('model.'.length), value);
+    } catch {
+      // 本地缓存失败时下次启动再合并。
+    }
+  }
+}
