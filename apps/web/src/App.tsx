@@ -411,7 +411,7 @@ export default function App() {
         )}
 
         <main className="main-area">
-          <UsageBar agent={currentAgent} sessions={sessions} />
+          {!exploreView && !systemView && !inboxOpen && <UsageBar agent={currentAgent} sessions={sessions} />}
 
           {exploreView === 'agents' ? (
             <ExploreAgents agents={workspace.agents} onOpenChat={selectAgent} />
