@@ -21,7 +21,8 @@ export function TemplatesView({ onCreated }: TemplatesViewProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { void templates.reload(); }, [templates.reload]);
+  const { reload: reloadTemplates } = templates;
+  useEffect(() => { void reloadTemplates(); }, [reloadTemplates]);
 
   const submit = async () => {
     if (!draft || busy) return;

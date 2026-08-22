@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SessionManager, type SessionEntry, type SessionHeader, type SessionInfo } from '@earendil-works/pi-coding-agent';
 import { AGENT_ID_PATTERN, type SessionMessage, type SessionSummary } from '@pi-workbench/contracts';
@@ -248,8 +248,38 @@ export class AgentSessionStore {
     return infos.sort((left, right) => left.created.getTime() - right.created.getTime() || left.path.localeCompare(right.path));
   }
 
+  /**
+   * id → SessionInfo 索引：SessionManager.list 会逐行扫完每个会话文件（buildSessionInfo
+   * 统计 messageCount/firstMessage），findInfo 每次全量 list 代价过高。索引以目录签名
+   * （mtimeMs + 条目数）失效：新增/删除/重命名文件会改变签名，文件内容追加不会——
+   * 命中时再 stat 一次目标文件取新鲜 modified，created/firstMessage 本身不可变。
+   */
+  private idIndex: { signature: string; byId: Map<string, SessionInfo> } | undefined;
+
+  private dirSignature(): string {
+    try {
+      return `${statSync(this.sessionDir).mtimeMs}:${readdirSync(this.sessionDir).length}`;
+    } catch {
+      return 'missing';
+    }
+  }
+
   private async findInfo(id: string): Promise<SessionInfo | undefined> {
-    return (await this.sortedInfos()).find((info) => info.id === id);
+    const signature = this.dirSignature();
+    if (this.idIndex?.signature !== signature) {
+      const byId = new Map<string, SessionInfo>();
+      for (const info of await SessionManager.list(this.cwd, this.sessionDir)) byId.set(info.id, info);
+      this.idIndex = { signature, byId };
+    }
+    const info = this.idIndex.byId.get(id);
+    if (!info) return undefined;
+    try {
+      return { ...info, modified: statSync(info.path).mtime };
+    } catch {
+      // 索引与磁盘竞争（文件刚被删）：作废索引，按不存在处理。
+      this.idIndex = undefined;
+      return undefined;
+    }
   }
 
   private async openSession(id: string, expectedAgentId?: string): Promise<SessionManager> {

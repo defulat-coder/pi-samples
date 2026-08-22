@@ -16,7 +16,8 @@ export function SkillsView() {
   const skills = useAsyncData(fetchSkills);
   const [query, setQuery] = useState('');
 
-  useEffect(() => { void skills.reload(); }, [skills.reload]);
+  const { reload: reloadSkills } = skills;
+  useEffect(() => { void reloadSkills(); }, [reloadSkills]);
 
   const loading = !skills.loaded;
   const items = useMemo(() => filterSkillItems(mergeSkillItems(prompts, skills.data ?? []), query), [prompts, skills.data, query]);

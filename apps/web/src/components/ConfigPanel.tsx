@@ -183,16 +183,19 @@ export function ConfigPanel({ agentId, onClose, onUseSuggestion }: {
   const [openSections, setOpenSections] = useState<ConfigSectionId[]>([...DEFAULT_OPEN_SECTIONS]);
   const [thinking, setThinking] = useState<ThinkingPreference>(() => readThinkingPreference(agentId));
 
+  const { reload: reloadDetail, setData: setDetailData } = detail;
+  const { reload: reloadResources, setData: setResourcesData } = resources;
+
   useEffect(() => {
     setError('');
     setOpenSections([...DEFAULT_OPEN_SECTIONS]);
     setThinking(readThinkingPreference(agentId));
-    detail.setData(null);
-    resources.setData(null);
-    void detail.reload();
-    void resources.reload();
+    setDetailData(null);
+    setResourcesData(null);
+    void reloadDetail();
+    void reloadResources();
     // reload/setData 身份稳定，只需跟随 agentId 重拉。
-  }, [agentId, detail.reload, detail.setData, resources.reload, resources.setData]);
+  }, [agentId, reloadDetail, setDetailData, reloadResources, setResourcesData]);
 
   const changeThinking = (level: ThinkingPreference) => {
     setThinking(level);

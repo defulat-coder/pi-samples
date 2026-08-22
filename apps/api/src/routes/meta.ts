@@ -6,16 +6,21 @@ import { PromptNameSchema } from '../schemas.js';
 import type { AppContext } from '../context.js';
 
 export function registerMetaRoutes(app: FastifyInstance, ctx: AppContext): void {
-  app.get('/workspace', async () => ({
-    agents: await Promise.all(
-      loadAgents(ctx.cwd).map(async (agent) => ({
+  app.get('/workspace', async () => {
+    // 一次无参 listSessions 覆盖所有 Agent，按 agentId 分组计数，避免每个 Agent 全量扫一遍目录。
+    const sessionCounts = new Map<string, number>();
+    for (const session of await ctx.sessions.listSessions()) {
+      sessionCounts.set(session.agentId, (sessionCounts.get(session.agentId) ?? 0) + 1);
+    }
+    return {
+      agents: loadAgents(ctx.cwd).map((agent) => ({
         ...agentSummary(agent),
-        sessionCount: (await ctx.sessions.listSessions(agent.id)).length,
+        sessionCount: sessionCounts.get(agent.id) ?? 0,
       })),
-    ),
-    prompts: listPrompts(ctx.cwd),
-    models: { current: getPiModelConfig({}, ctx.cwd), available: await listPiModels(ctx.cwd) },
-  }));
+      prompts: listPrompts(ctx.cwd),
+      models: { current: getPiModelConfig({}, ctx.cwd), available: await listPiModels(ctx.cwd) },
+    };
+  });
 
   app.get('/skills', async (): Promise<SkillListResponse> => {
     const items = listSkills(ctx.cwd);

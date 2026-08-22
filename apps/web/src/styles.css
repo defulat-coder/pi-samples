@@ -58,7 +58,9 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   /* 浮层投影：drop-shadow 组模拟 1px 描边 + 柔和投影 */
   --popover-shadow: drop-shadow(0 1px 0 var(--border-subtle)) drop-shadow(0 -1px 0 var(--border-subtle)) drop-shadow(1px 0 0 var(--border-subtle)) drop-shadow(-1px 0 0 var(--border-subtle)) drop-shadow(0 2px 3px #1018280d) drop-shadow(0 6px 12px #1018280d);
-  --button-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  /* 盒阴影基色（Fleet #101828）：通道形式供 rgba() 组合不同透明度 */
+  --shadow-color: 16, 24, 40;
+  --button-shadow: 0 1px 2px rgba(var(--shadow-color), 0.05);
 
   font-family: Inter, -apple-system, 'system-ui', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   color: var(--text-primary);
@@ -401,7 +403,7 @@ input, textarea { font: inherit; color: inherit; }
   padding: 7px 14px; border-radius: var(--radius-full);
   border: 1px solid var(--error-border); background: var(--error-bg);
   font-size: 12.5px; color: var(--error-text);
-  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+  box-shadow: 0 4px 16px rgba(var(--shadow-color), 0.08);
 }
 
 /* thinking 折叠区 */
@@ -631,7 +633,7 @@ input, textarea { font: inherit; color: inherit; }
 .agent-card {
   display: flex; flex-direction: column; gap: var(--space-3);
   border-radius: var(--radius-xl); border: 1px solid var(--border-subtle); background: var(--bg-primary);
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
+  box-shadow: 0 1px 3px rgba(var(--shadow-color), 0.1), 0 1px 2px rgba(var(--shadow-color), 0.06);
   padding: var(--space-5); text-align: left;
   transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
@@ -696,7 +698,7 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 .modal-card {
   display: flex; flex-direction: column; gap: var(--space-3); width: 420px; max-width: calc(100vw - 48px);
   border-radius: var(--radius-xl); border: 1px solid var(--border-subtle); background: var(--bg-primary);
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16); padding: var(--space-5);
+  box-shadow: 0 8px 24px rgba(var(--shadow-color), 0.16); padding: var(--space-5);
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .modal-head strong { font-size: 16px; font-weight: 600; letter-spacing: -0.48px; }

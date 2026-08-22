@@ -32,6 +32,9 @@ import { SkillsView } from './components/SkillsView.js';
 import { UsageView } from './components/UsageView.js';
 import { SettingsView } from './components/SettingsView.js';
 
+/** toast 自动消失时长。 */
+const TOAST_DURATION_MS = 4000;
+
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
   const [fatal, setFatal] = useState('');
@@ -49,12 +52,26 @@ export default function App() {
   const [view, setView] = useState<ViewState>({ kind: 'chat' });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
+  const toastTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-  /** 用户可见的错误通知；4 秒自动消失。 */
+  // 卸载时清掉未决的 toast timer，避免卸载后 setState。
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  /** 用户可见的错误通知；到时自动消失。 */
   const notify = useCallback((text: string) => {
     const id = ++toastSeq.current;
     setToasts((prev) => [...prev, { id, text }]);
-    setTimeout(() => setToasts((prev) => prev.filter((toast) => toast.id !== id)), 4000);
+    const timer = setTimeout(() => {
+      toastTimers.current.delete(timer);
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, TOAST_DURATION_MS);
+    toastTimers.current.add(timer);
   }, []);
 
   // 派生布尔值保持既有判断语义；写入一律走 setView。
@@ -71,6 +88,8 @@ export default function App() {
   const inbox = useAsyncData(fetchInbox, { onError: () => notify('收件箱暂时无法读取') });
   const usage = useAsyncData(fetchUsage);
   const settings = useAsyncData(fetchSettings);
+  const { reload: reloadInbox } = inbox;
+  const { reload: reloadSettings } = settings;
 
   /** 每个 Agent 的待处理会话数，来自收件箱数据。 */
   const attentionByAgent = useMemo(() => {
@@ -126,13 +145,13 @@ export default function App() {
         setCurrentAgentId((prev) => prev ?? first.id);
         void loadSessions(first.id);
       }
-      void inbox.reload();
-      void settings.reload();
+      void reloadInbox();
+      void reloadSettings();
       void loadPreferences();
     } catch (error) {
       setFatal(error instanceof Error ? error.message : '工作区信息暂时无法读取');
     }
-  }, [loadSessions, loadPreferences, inbox.reload, settings.reload]);
+  }, [loadSessions, loadPreferences, reloadInbox, reloadSettings]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 

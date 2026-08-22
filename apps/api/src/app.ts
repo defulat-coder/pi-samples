@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
@@ -15,13 +14,8 @@ import { registerUsageRoutes } from './routes/usage.js';
 
 type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string; db?: WorkbenchDb };
 
-function projectRoot(): string {
-  const candidates = [resolve(process.cwd()), resolve(process.cwd(), '..'), resolve(process.cwd(), '../..')];
-  return candidates.find((candidate) => existsSync(resolve(candidate, '.pi'))) ?? getPiProjectRoot();
-}
-
 export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
-  const cwd = dependencies.cwd ?? projectRoot();
+  const cwd = dependencies.cwd ?? getPiProjectRoot();
   const sessions = dependencies.sessionStore ?? new AgentSessionStore({ cwd });
   // Generic workbench data (usage events, preferences) lives in .pi/workbench.db;
   // Pi-specific state stays in Pi's own files.

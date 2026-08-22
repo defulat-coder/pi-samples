@@ -64,20 +64,21 @@ export function Sidebar(props: SidebarProps) {
   const chatActive = !inboxOpen && !exploreView && !systemView;
 
   // ⌘B 收起/展开侧边栏；⌘K 打开命令面板（Fleet 同名快捷键）
+  const { onToggleCollapsed, onOpenPalette } = props;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key === 'b') {
         event.preventDefault();
-        props.onToggleCollapsed();
+        onToggleCollapsed();
       } else if (event.key === 'k') {
         event.preventDefault();
-        props.onOpenPalette();
+        onOpenPalette();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [props.onToggleCollapsed, props.onOpenPalette]);
+  }, [onToggleCollapsed, onOpenPalette]);
 
   // 工作区信息弹层：点外部或 Escape 关闭
   const closeWorkspace = useCallback(() => setWorkspaceOpen(false), []);

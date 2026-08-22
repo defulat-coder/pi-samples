@@ -113,14 +113,34 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
 
     const controller = new AbortController();
     abortRef.current = controller;
-    let turn = createLiveTurn();
-    let resolvedSessionId = sessionKey;
-    setLiveTurn({ ...turn, messageId: assistantMessage.id });
+    // 本轮的可变进度收敛到一个对象：turn 由 reduceStreamEvent 折叠，sessionId 在 start 后确定。
+    const progress = { turn: createLiveTurn(), sessionId: sessionKey as string | null };
+    setLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
+
+    /** 把已确定的回答/错误落进线程消息；读取调用时刻的最新 progress。 */
+    const finalize = (answer: string, error: string | undefined, interrupted = false) => {
+      const key = progress.sessionId ?? threadKey;
+      setThreads((prev) => {
+        const thread = prev[key];
+        if (!thread) return prev;
+        return {
+          ...prev,
+          [key]: {
+            ...thread,
+            messages: thread.messages.map((message) =>
+              message.id === assistantMessage.id
+                ? { ...message, text: answer, thinking: progress.turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), model: progress.turn.model, usage: progress.turn.usage }
+                : message,
+            ),
+          },
+        };
+      });
+    };
 
     const onEvent = (event: ChatStreamEvent) => {
-      turn = reduceStreamEvent(turn, event);
-      if (event.type === 'start' && !resolvedSessionId) {
-        resolvedSessionId = event.sessionId;
+      progress.turn = reduceStreamEvent(progress.turn, event);
+      if (event.type === 'start' && !progress.sessionId) {
+        progress.sessionId = event.sessionId;
         setCurrentSessionId(event.sessionId);
         // 草稿线程整体迁移到服务端 session id；草稿中途被移除时退回直接落消息。
         setThreads((prev) => {
@@ -131,28 +151,29 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
           return next;
         });
       }
-      setLiveTurn({ ...turn, messageId: assistantMessage.id });
+      setLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
     };
 
+    // 请求参数在事件到达前同步求值，此处 progress.sessionId 即 sessionKey。
     streamChat(
-      { agentId, message: text, thinking: readThinkingPreference(agentId), ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), ...(model ? { model } : {}) },
+      { agentId, message: text, thinking: readThinkingPreference(agentId), ...(sessionKey ? { sessionId: sessionKey } : {}), ...(model ? { model } : {}) },
       onEvent,
       controller.signal,
     )
       .then((done) => {
-        finalize(turn.answer || done.answer, undefined);
+        finalize(progress.turn.answer || done.answer, undefined);
       })
       .catch((error: Error) => {
         if (controller.signal.aborted) {
-          finalize(turn.answer, undefined, true);
+          finalize(progress.turn.answer, undefined, true);
           return;
         }
         const message = error.message || '流式响应失败';
-        finalize(turn.answer, message);
-        if (resolvedSessionId) {
+        finalize(progress.turn.answer, message);
+        if (progress.sessionId) {
           // 流中途断开时服务端 JSONL 可能已持久化更多内容：回放一次把线程与服务端对齐
           // （服务端持久化的 stopReason 会带出 error 标记）；重放失败则静默降级维持现状。
-          const sessionId = resolvedSessionId;
+          const sessionId = progress.sessionId;
           void fetchSessionMessages(agentId, sessionId)
             .then((items) => {
               const messages = items.map(toChatMessage);
@@ -174,25 +195,6 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
         setLiveTurn(null);
         onTurnSettled(agentId);
       });
-
-    function finalize(answer: string, error: string | undefined, interrupted = false) {
-      const key = resolvedSessionId ?? threadKey;
-      setThreads((prev) => {
-        const thread = prev[key];
-        if (!thread) return prev;
-        return {
-          ...prev,
-          [key]: {
-            ...thread,
-            messages: thread.messages.map((message) =>
-              message.id === assistantMessage.id
-                ? { ...message, text: answer, thinking: turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), model: turn.model, usage: turn.usage }
-                : message,
-            ),
-          },
-        };
-      });
-    }
   };
 
   /** 当前线程的渲染消息：把 liveTurn 的增量叠加到对应的 assistant 消息上。 */
