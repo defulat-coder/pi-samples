@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, PromptDocument, SessionSummary, SettingsResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, PreferencesResponse, PromptDocument, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -32,6 +32,15 @@ export async function fetchSessions(agentId: string): Promise<SessionSummary[]> 
   return payload.items;
 }
 
+/** Replays the persisted messages of one session (the JSONL file is the source of truth). */
+export async function fetchSessionMessages(agentId: string, sessionId: string): Promise<SessionMessage[]> {
+  const payload = await readJson<SessionMessagesResponse>(
+    await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`),
+    '历史消息暂时无法读取',
+  );
+  return payload.items;
+}
+
 export async function fetchInbox(): Promise<SessionSummary[]> {
   const payload = await readJson<{ items: SessionSummary[] }>(await fetch('/api/v1/inbox'), '收件箱暂时无法读取');
   return payload.items;
@@ -62,12 +71,32 @@ export async function fetchSkills(): Promise<SkillSummary[]> {
   return payload.items;
 }
 
+export async function fetchAgentTemplates(): Promise<AgentTemplate[]> {
+  const payload = await readJson<AgentTemplatesResponse>(await fetch('/api/v1/templates'), '模板列表暂时无法读取');
+  return payload.items;
+}
+
 export async function fetchUsage(): Promise<UsageResponse> {
   return readJson(await fetch('/api/v1/usage'), '用量数据暂时无法读取');
 }
 
 export async function fetchSettings(): Promise<SettingsResponse> {
   return readJson(await fetch('/api/v1/settings'), '设置信息暂时无法读取');
+}
+
+export async function fetchPreferences(): Promise<Record<string, unknown>> {
+  const payload = await readJson<PreferencesResponse>(await fetch('/api/v1/preferences'), '偏好设置暂时无法读取');
+  return payload.items;
+}
+
+/** Fire-and-forget preference write-through; the local cache stays authoritative on failure. */
+export async function savePreference(key: string, value: unknown): Promise<void> {
+  const response = await fetch('/api/v1/preferences', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, value }),
+  });
+  if (!response.ok) throw new Error('偏好暂时无法保存');
 }
 
 /** Creates .pi/agents/<id>.md via the API; server errors (400/409) surface their message. */

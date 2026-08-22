@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSessionStore, loadAgents } from '@pi-workbench/pi-agent';
+import { AgentSessionStore, loadAgents, openWorkbenchDb, recordUsageEvent } from '@pi-workbench/pi-agent';
 import { buildApp } from './app.js';
 import type { AppConfig } from './config.js';
 
@@ -19,7 +19,7 @@ const config: AppConfig = {
 describe('Pi Workbench API', () => {
   const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-api-sessions-'));
   const sessions = new AgentSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
-  const app = buildApp(config, { sessionStore: sessions });
+  const app = buildApp(config, { sessionStore: sessions, db: openWorkbenchDb(':memory:') });
 
   before(async () => app.ready());
   after(async () => { await app.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
@@ -118,6 +118,40 @@ describe('Pi Workbench API', () => {
     assert.equal(items[0]!.attentionReason, 'error');
   });
 
+  it('replays persisted session messages and enforces the binding contract', async () => {
+    const created = await sessions.createSession('pi-assistant', 'replay-api-session');
+    assert.ok(created);
+    const { appendFileSync, readdirSync, readFileSync } = await import('node:fs');
+    const file = readdirSync(sessionRoot)
+      .map((name) => join(sessionRoot, name))
+      .find((path) => path.endsWith('.jsonl') && readFileSync(path, 'utf8').includes('"replay-api-session"'));
+    assert.ok(file);
+    const entry = (id: string, message: unknown) =>
+      appendFileSync(file!, `${JSON.stringify({ type: 'message', id, parentId: null, timestamp: new Date().toISOString(), message })}\n`);
+    entry('msg_u1', { role: 'user', content: [{ type: 'text', text: '历史问题' }], timestamp: Date.now() });
+    entry('msg_a1', {
+      role: 'assistant', content: [{ type: 'text', text: '历史回答' }], api: 'messages', provider: 'kimi-coding', model: 'kimi-for-coding',
+      usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 9, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'stop', timestamp: Date.now(),
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/agents/pi-assistant/sessions/replay-api-session/messages' });
+    assert.equal(response.statusCode, 200);
+    const items = response.json().items as Array<{ id: string; role: string; content: string; usage?: { total: number } }>;
+    assert.deepEqual(items.map((item) => item.id), ['msg_u1', 'msg_a1']);
+    assert.equal(items[0]!.content, '历史问题');
+    assert.equal(items[1]!.usage?.total, 9);
+
+    const missing = await app.inject({ method: 'GET', url: '/api/v1/agents/pi-assistant/sessions/no-such-session/messages' });
+    assert.equal(missing.statusCode, 404);
+    const unknownAgent = await app.inject({ method: 'GET', url: '/api/v1/agents/no-such-agent/sessions/replay-api-session/messages' });
+    assert.equal(unknownAgent.statusCode, 404);
+
+    await sessions.createSession('other-agent', 'replay-foreign-session');
+    const mismatch = await app.inject({ method: 'GET', url: '/api/v1/agents/pi-assistant/sessions/replay-foreign-session/messages' });
+    assert.equal(mismatch.statusCode, 409);
+  });
+
   it('isolates sessions between agents and rejects unknown agents', async () => {
     // A session bound to another agent id never leaks into pi-assistant listings.
     await sessions.createSession('other-agent', 'foreign-session');
@@ -181,7 +215,8 @@ describe('Pi Workbench API', () => {
 describe('Usage and settings endpoints', () => {
   const sessionRoot = mkdtempSync(join(tmpdir(), 'pi-api-usage-'));
   const sessions = new AgentSessionStore({ cwd: process.cwd(), sessionDir: sessionRoot });
-  const app = buildApp(config, { sessionStore: sessions });
+  const db = openWorkbenchDb(':memory:');
+  const app = buildApp(config, { sessionStore: sessions, db });
 
   before(async () => app.ready());
   after(async () => { await app.close(); rmSync(sessionRoot, { recursive: true, force: true }); });
@@ -224,6 +259,20 @@ describe('Usage and settings endpoints', () => {
     assert.ok(body.perAgent.every((item: { lastActiveAt?: string; sessionCount: number }) => item.sessionCount > 0 === Boolean(item.lastActiveAt)));
   });
 
+  it('overlays token totals recorded in the SQLite usage_events projection', async () => {
+    recordUsageEvent(db, { sessionId: 'usage-a', agentId: 'pi-assistant', model: 'kimi-for-coding', input: 120, output: 30, total: 200 });
+    recordUsageEvent(db, { sessionId: 'usage-b', agentId: 'pi-assistant', input: 5, output: 5, total: 10 });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/usage' });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.deepEqual(body.tokens, { input: 125, output: 35, total: 210 });
+    const row = body.perAgent.find((item: { agentId: string }) => item.agentId === 'pi-assistant');
+    assert.deepEqual(row.tokens, { input: 125, output: 35, total: 210 });
+    const idle = body.perAgent.find((item: { agentId: string; sessionCount: number }) => item.sessionCount === 0);
+    if (idle) assert.deepEqual(idle.tokens, { input: 0, output: 0, total: 0 });
+  });
+
   it('serves non-sensitive settings without any credential fields', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/settings' });
     assert.equal(response.statusCode, 200);
@@ -243,12 +292,37 @@ describe('Usage and settings endpoints', () => {
   });
 });
 
+describe('Preferences endpoints', () => {
+  const db = openWorkbenchDb(':memory:');
+  const app = buildApp(config, { db });
+
+  before(async () => app.ready());
+  after(async () => { await app.close(); });
+
+  it('round-trips namespaced preferences and rejects unknown key shapes', async () => {
+    const empty = await app.inject({ method: 'GET', url: '/api/v1/preferences' });
+    assert.equal(empty.statusCode, 200);
+    assert.deepEqual(empty.json(), { items: {} });
+
+    const written = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'ui.compact-messages', value: true } });
+    assert.equal(written.statusCode, 200);
+    assert.equal(written.json().items['ui.compact-messages'], true);
+
+    await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'thinking.pi-assistant', value: 'minimal' } });
+    const read = await app.inject({ method: 'GET', url: '/api/v1/preferences' });
+    assert.deepEqual(read.json().items, { 'ui.compact-messages': true, 'thinking.pi-assistant': 'minimal' });
+
+    const badKey = await app.inject({ method: 'PUT', url: '/api/v1/preferences', payload: { key: 'pi.settings', value: {} } });
+    assert.equal(badKey.statusCode, 400);
+  });
+});
+
 describe('Explore endpoints', () => {
   // A scratch project root keeps these tests away from the real .pi/agents files.
   const root = mkdtempSync(join(tmpdir(), 'pi-api-explore-'));
   mkdirSync(join(root, '.pi', 'agents'), { recursive: true });
   mkdirSync(join(root, '.pi', 'skills'), { recursive: true });
-  const app = buildApp(config, { cwd: root });
+  const app = buildApp(config, { cwd: root, db: openWorkbenchDb(':memory:') });
 
   const templateBody = {
     name: '翻译助手 Pro',
@@ -293,8 +367,19 @@ describe('Explore endpoints', () => {
     assert.equal(response.json().id, 'review-buddy');
   });
 
-  it('lists skills: empty directory yields [], SKILL.md entries get parsed', async () => {
-    const empty = await app.inject({ method: 'GET', url: '/api/v1/skills' });
+  it('serves the built-in agent templates', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/templates' });
+    assert.equal(response.statusCode, 200);
+    const items = response.json().items as Array<{ id: string; name: string; body: string; suggestions: string[] }>;
+    assert.ok(items.length >= 4);
+    assert.ok(items.some((item) => item.id === 'translator-pro' && item.name === '翻译助手'));
+    for (const item of items) {
+      assert.match(item.id, /^[a-z][a-z0-9-]{1,63}$/);
+      assert.ok(item.body.trim().length > 0 && item.suggestions.length > 0);
+    }
+  });
+
+  it('lists skills: empty directory yields [], SKILL.md entries get parsed', async () => {    const empty = await app.inject({ method: 'GET', url: '/api/v1/skills' });
     assert.equal(empty.statusCode, 200);
     assert.deepEqual(empty.json(), { items: [], total: 0 });
 

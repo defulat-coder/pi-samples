@@ -2,6 +2,12 @@ import type { AgentUsageRow, SessionSummary, UsageResponse } from '@pi-workbench
 
 type AgentIdentity = Pick<AgentUsageRow, 'name' | 'mark'> & { id: string };
 
+/**
+ * The JSONL-derived base of the Usage page. Token totals live in the SQLite
+ * usage_events projection and are overlaid by the API layer, so they are absent here.
+ */
+export type SessionUsageSummary = Omit<UsageResponse, 'tokens' | 'perAgent'> & { perAgent: Array<Omit<AgentUsageRow, 'tokens'>> };
+
 function isSameLocalDay(iso: string, now: Date): boolean {
   const date = new Date(iso);
   return (
@@ -17,8 +23,8 @@ function isSameLocalDay(iso: string, now: Date): boolean {
  * current local day — the summary has no per-question timestamps, so a session
  * spanning midnight contributes its full count to the day it was last active.
  */
-export function summarizeUsage(sessions: SessionSummary[], agents: AgentIdentity[], now: Date = new Date()): UsageResponse {
-  const perAgent: AgentUsageRow[] = agents.map((agent) => {
+export function summarizeUsage(sessions: SessionSummary[], agents: AgentIdentity[], now: Date = new Date()): SessionUsageSummary {
+  const perAgent: SessionUsageSummary['perAgent'] = agents.map((agent) => {
     const owned = sessions.filter((session) => session.agentId === agent.id);
     const lastActiveAt = owned.reduce<string | undefined>(
       (latest, session) => (latest === undefined || session.updatedAt > latest ? session.updatedAt : latest),

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SessionManager, type SessionEntry, type SessionInfo } from '@earendil-works/pi-coding-agent';
-import type { SessionSummary } from '@pi-workbench/contracts';
+import type { SessionMessage, SessionSummary } from '@pi-workbench/contracts';
 
 export const PI_WORKBENCH_AGENT_ENTRY = 'pi-workbench.agent';
 export const PI_WORKBENCH_SESSION_TITLE_ENTRY = 'pi-workbench.session-title';
@@ -75,6 +75,47 @@ function attentionFromEntries(entries: SessionEntry[]): SessionAttention {
   return { needsAttention: false };
 }
 
+function textFromContent(content: unknown, blockType: string, field: string): string {
+  if (typeof content === 'string') return blockType === 'text' ? content : '';
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block): block is Record<string, unknown> => Boolean(block && typeof block === 'object' && (block as { type?: unknown }).type === blockType))
+    .map((block) => (typeof block[field] === 'string' ? (block[field] as string) : ''))
+    .join('');
+}
+
+/** Maps a Pi JSONL message entry onto the replay contract; tool calls are pure-chat absent. */
+function sessionMessageFromEntry(id: string, timestamp: string, message: unknown): SessionMessage | undefined {
+  if (!message || typeof message !== 'object') return undefined;
+  const record = message as {
+    role?: unknown;
+    content?: unknown;
+    usage?: { input?: unknown; output?: unknown; totalTokens?: unknown };
+    stopReason?: unknown;
+    errorMessage?: unknown;
+  };
+  if (record.role !== 'user' && record.role !== 'assistant') return undefined;
+  const usage =
+    record.usage && typeof record.usage.input === 'number' && typeof record.usage.output === 'number'
+      ? {
+          input: record.usage.input,
+          output: record.usage.output,
+          total: typeof record.usage.totalTokens === 'number' ? record.usage.totalTokens : record.usage.input + record.usage.output,
+        }
+      : undefined;
+  const thinking = textFromContent(record.content, 'thinking', 'thinking');
+  return {
+    id,
+    role: record.role,
+    content: textFromContent(record.content, 'text', 'text'),
+    ...(thinking ? { thinking } : {}),
+    ...(usage && usage.total > 0 ? { usage } : {}),
+    ...(typeof record.stopReason === 'string' ? { stopReason: record.stopReason } : {}),
+    ...(typeof record.errorMessage === 'string' && record.errorMessage ? { errorMessage: record.errorMessage } : {}),
+    timestamp,
+  };
+}
+
 export interface AgentSessionStoreOptions {
   cwd: string;
   sessionDir?: string;
@@ -136,6 +177,18 @@ export class AgentSessionStore {
     const manager = await this.openSession(id, agentId);
     manager.appendCustomEntry(PI_WORKBENCH_SESSION_TITLE_ENTRY, { title: title.trim() } satisfies SessionTitleEntryData);
     return this.getSession(id);
+  }
+
+  /** Replays the persisted messages of one session; the JSONL file stays the source of truth. */
+  async listMessages(id: string, agentId: string): Promise<SessionMessage[]> {
+    const manager = await this.openSession(id, agentId);
+    const messages: SessionMessage[] = [];
+    for (const entry of manager.getEntries()) {
+      if (entry.type !== 'message') continue;
+      const mapped = sessionMessageFromEntry(entry.id, entry.timestamp, entry.message);
+      if (mapped) messages.push(mapped);
+    }
+    return messages;
   }
 
   async deleteSession(id: string, agentId: string): Promise<boolean> {

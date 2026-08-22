@@ -78,6 +78,25 @@ export interface ChatUsage {
   total: number;
 }
 
+/** One message replayed from a persisted Pi JSONL session. */
+export interface SessionMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  /** Reasoning trace recorded on assistant messages, when the turn used thinking. */
+  thinking?: string;
+  usage?: ChatUsage;
+  /** Pi stopReason of assistant messages; 'error' / 'aborted' mark failed turns. */
+  stopReason?: string;
+  errorMessage?: string;
+  timestamp: string;
+}
+
+/** Payload of GET /api/v1/agents/:agentId/sessions/:sessionId/messages. */
+export interface SessionMessagesResponse {
+  items: SessionMessage[];
+}
+
 /** Payloads transported by the POST /api/v1/chat SSE endpoint. */
 export type ChatStreamEvent =
   | { type: 'start'; sessionId: string; agentId: string; model: ChatModelLabel }
@@ -137,6 +156,13 @@ export interface WorkspaceResponse {
   };
 }
 
+/** Token totals aggregated from the SQLite usage_events projection. */
+export interface TokenTotals {
+  input: number;
+  output: number;
+  total: number;
+}
+
 /** One row of the per-agent usage table on the Usage page. */
 export interface AgentUsageRow {
   agentId: string;
@@ -144,11 +170,13 @@ export interface AgentUsageRow {
   mark: string;
   sessionCount: number;
   questionCount: number;
+  /** Token totals recorded for this agent; zeros when no turn has been recorded yet. */
+  tokens: TokenTotals;
   /** Most recent updatedAt across this agent's sessions; absent when it has none. */
   lastActiveAt?: string;
 }
 
-/** Payload of GET /api/v1/usage; every number is aggregated from the persisted sessions. */
+/** Payload of GET /api/v1/usage; session/question numbers come from the JSONL sessions, tokens from SQLite. */
 export interface UsageResponse {
   totalSessions: number;
   totalQuestions: number;
@@ -158,6 +186,8 @@ export interface UsageResponse {
    * Approximation: SessionSummary has no per-question timestamps.
    */
   questionsToday: number;
+  /** Global token totals across all recorded chat turns. */
+  tokens: TokenTotals;
   perAgent: AgentUsageRow[];
 }
 
@@ -183,6 +213,26 @@ export interface SettingsResponse {
     /** Session storage path relative to the project root, e.g. ".pi/sessions". */
     sessionDir: string;
   };
+}
+
+/** Payload of GET /api/v1/templates; each entry creates .pi/agents/<id>.md when used. */
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  mark: string;
+  tagline: string;
+  description: string;
+  suggestions: string[];
+  body: string;
+}
+
+export interface AgentTemplatesResponse {
+  items: AgentTemplate[];
+}
+
+/** Payload of GET /api/v1/preferences; keys are namespaced (ui.*, thinking.<agentId>). */
+export interface PreferencesResponse {
+  items: Record<string, unknown>;
 }
 
 /** Every non-2xx API response uses this shape. */

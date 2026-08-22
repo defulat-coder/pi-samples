@@ -43,3 +43,20 @@ export function writeThinkingPreference(agentId: string, level: ThinkingPreferen
     // 隐私模式 / 配额满时静默降级，偏好只在内存中生效。
   }
 }
+
+/** Server-side key (SQLite preferences table) for one agent's thinking preference. */
+export function serverKeyForThinking(agentId: string): string {
+  return `thinking.${agentId}`;
+}
+
+/** Merges server-persisted thinking preferences into the local cache; server values win. */
+export function mergeServerThinkingPreferences(items: Record<string, unknown>, storage: StorageLike | undefined = defaultStorage()): void {
+  for (const [key, value] of Object.entries(items)) {
+    if (!key.startsWith('thinking.') || (value !== 'off' && value !== 'minimal')) continue;
+    try {
+      storage?.setItem(THINKING_KEY_PREFIX + key.slice('thinking.'.length), value);
+    } catch {
+      // 本地缓存失败时下次启动再合并。
+    }
+  }
+}

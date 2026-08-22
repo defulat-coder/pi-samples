@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "Fleet-style multi-agent chat workbench powered by Pi Coding Agent",
   "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "turbo run dev --parallel",
     "dev:direct": "PORTLESS=0 turbo run dev --parallel",

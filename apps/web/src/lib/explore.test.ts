@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AgentSummary, PromptSummary, SkillSummary } from '@pi-workbench/contracts';
-import { AGENT_TEMPLATES, agentCardStats, filterSkillItems, mergeSkillItems, templateToCreateRequest } from './explore.js';
+import type { AgentSummary, AgentTemplate, PromptSummary, SkillSummary } from '@pi-workbench/contracts';
+import { agentCardStats, filterSkillItems, mergeSkillItems, templateToCreateRequest } from './explore.js';
 
 const agent: AgentSummary = {
   id: 'pi-assistant',
@@ -13,19 +13,18 @@ const agent: AgentSummary = {
   sessionCount: 3,
 };
 
-describe('agent templates', () => {
-  it('ships unique valid ids for every built-in template', () => {
-    const ids = AGENT_TEMPLATES.map((template) => template.id);
-    assert.equal(new Set(ids).size, ids.length);
-    for (const id of ids) assert.match(id, /^[a-z][a-z0-9-]{1,63}$/);
-    for (const template of AGENT_TEMPLATES) {
-      assert.ok(template.body.trim().length > 0);
-      assert.ok(template.suggestions.length > 0);
-    }
-  });
+const template: AgentTemplate = {
+  id: 'translator-pro',
+  name: '翻译助手',
+  mark: '译',
+  tagline: '中英互译与润色',
+  description: '在中英文之间互译。',
+  suggestions: ['把这段话译成英文'],
+  body: '你是翻译助手，专注中英互译。',
+};
 
+describe('agent templates', () => {
   it('maps a template into a create request and lets the user override the id', () => {
-    const template = AGENT_TEMPLATES[0]!;
     const request = templateToCreateRequest(template);
     assert.equal(request.id, template.id);
     assert.deepEqual(request.suggestions, template.suggestions);

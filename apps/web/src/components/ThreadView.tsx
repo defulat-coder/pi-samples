@@ -81,13 +81,11 @@ function MessageItem({ message }: { message: ChatMessage }) {
 
 export type ThreadViewProps = {
   messages: ChatMessage[];
-  /** 已持久化但本次页面加载前创建的历史会话：服务端不回放消息，仅提示。 */
-  historyUnavailable: boolean;
   /** 界面偏好「消息紧凑模式」：缩小消息纵向间距。 */
   compact?: boolean;
 };
 
-export function ThreadView({ messages, historyUnavailable, compact = false }: ThreadViewProps) {
+export function ThreadView({ messages, compact = false }: ThreadViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,13 +96,10 @@ export function ThreadView({ messages, historyUnavailable, compact = false }: Th
   return (
     <div className="thread-scroll" ref={scrollRef}>
       <div className={compact ? 'thread-column compact' : 'thread-column'}>
-        {historyUnavailable && (
-          <p className="thread-history-notice">历史消息不回放，继续提问即可接着该会话的上下文聊</p>
-        )}
         {messages.map((message) => (
           <MessageItem key={message.id} message={message} />
         ))}
-        {!messages.length && !historyUnavailable && (
+        {!messages.length && (
           <p className="thread-empty-note">输入第一条消息，开始这段对话。</p>
         )}
       </div>

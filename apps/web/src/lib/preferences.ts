@@ -49,3 +49,29 @@ export function writeUiPreference(
   }
   return { ...current, [key]: value };
 }
+
+/** Server-side key (SQLite preferences table) for one UI preference. */
+const SERVER_KEYS: Record<keyof UiPreferences, string> = {
+  compactMessages: 'ui.compact-messages',
+  sidebarCollapsed: 'ui.sidebar-collapsed',
+};
+
+export function serverKeyForPreference(key: keyof UiPreferences): string {
+  return SERVER_KEYS[key];
+}
+
+/** Merges server-persisted UI preferences into the local cache; server values win. */
+export function mergeServerUiPreferences(items: Record<string, unknown>, storage: StorageLike | undefined = defaultStorage()): UiPreferences {
+  const next = readUiPreferences(storage);
+  for (const key of Object.keys(SERVER_KEYS) as Array<keyof UiPreferences>) {
+    const value = items[SERVER_KEYS[key]];
+    if (typeof value !== 'boolean') continue;
+    next[key] = value;
+    try {
+      storage?.setItem(PREFERENCE_KEYS[key], value ? '1' : '0');
+    } catch {
+      // 本地缓存失败不影响内存中的合并结果。
+    }
+  }
+  return next;
+}

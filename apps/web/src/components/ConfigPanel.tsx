@@ -7,10 +7,11 @@ import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
 import { Info } from '@phosphor-icons/react/dist/icons/Info';
 import { FolderOpen } from '@phosphor-icons/react/dist/icons/FolderOpen';
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
-import { fetchAgent, fetchAgentResources } from '../lib/api.js';
+import { fetchAgent, fetchAgentResources, savePreference } from '../lib/api.js';
 import {
   DEFAULT_OPEN_SECTIONS,
   readThinkingPreference,
+  serverKeyForThinking,
   THINKING_PREFERENCE_OPTIONS,
   toggleSection,
   writeThinkingPreference,
@@ -197,6 +198,9 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
   const changeThinking = (level: ThinkingPreference) => {
     setThinking(level);
     writeThinkingPreference(agentId, level);
+    void savePreference(serverKeyForThinking(agentId), level).catch(() => {
+      // 服务端写穿失败时 localStorage 仍是权威缓存。
+    });
   };
 
   return (

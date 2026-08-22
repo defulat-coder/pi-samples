@@ -3,13 +3,13 @@ import type { AgentSummary, ChatStreamEvent, SessionSummary, SettingsResponse, U
 import { AnimatePresence, MotionConfig } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
-import { deleteSession, fetchInbox, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, streamChat } from './lib/api.js';
+import { deleteSession, fetchInbox, fetchPreferences, fetchSessionMessages, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference, streamChat } from './lib/api.js';
 import { createLiveTurn, reduceStreamEvent, type LiveTurn } from './lib/stream.js';
 import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
 import { newMessageId, type ChatMessage, type SystemView } from './lib/types.js';
-import { readThinkingPreference } from './lib/configPanel.js';
-import { readUiPreferences, writeUiPreference, type UiPreferences } from './lib/preferences.js';
+import { readThinkingPreference, mergeServerThinkingPreferences } from './lib/configPanel.js';
+import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { Sidebar } from './components/Sidebar.js';
 import { InboxColumn, type SessionFilter } from './components/InboxColumn.js';
 import { CommandPalette } from './components/CommandPalette.js';
@@ -29,8 +29,8 @@ import { SettingsView } from './components/SettingsView.js';
 
 type ThreadState = {
   messages: ChatMessage[];
-  /** true 表示该会话是本次页面加载之前创建的，历史消息不在内存中。 */
-  historyUnavailable: boolean;
+  /** true 表示历史消息已从服务端回放完成（或本次会话内产生，无需回放）。 */
+  historyLoaded: boolean;
 };
 
 export default function App() {
@@ -72,6 +72,29 @@ export default function App() {
     for (const item of inboxItems) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
     return map;
   }, [inboxItems]);
+
+  /** 回放一个已持久化会话的历史消息；加载期间新产生的内存消息优先保留。 */
+  const loadThread = useCallback(async (agentId: string, sessionId: string) => {
+    try {
+      const items = await fetchSessionMessages(agentId, sessionId);
+      const messages: ChatMessage[] = items.map((item) => ({
+        id: item.id,
+        role: item.role,
+        text: item.content,
+        ...(item.thinking ? { thinking: item.thinking } : {}),
+        ...(item.usage ? { usage: item.usage } : {}),
+        ...(item.stopReason === 'error' || item.stopReason === 'aborted' ? { error: item.errorMessage ?? '本轮回复失败' } : {}),
+      }));
+      setThreads((prev) => {
+        const existing = prev[sessionId];
+        if (existing && existing.messages.length) return { ...prev, [sessionId]: { ...existing, historyLoaded: true } };
+        return { ...prev, [sessionId]: { messages, historyLoaded: true } };
+      });
+    } catch {
+      // 历史读取失败不阻塞会话，仅标记已处理，避免反复请求。
+      setThreads((prev) => (prev[sessionId] ? { ...prev, [sessionId]: { ...prev[sessionId]!, historyLoaded: true } } : prev));
+    }
+  }, []);
 
   const loadSessions = useCallback(async (agentId: string) => {
     try {
@@ -117,7 +140,23 @@ export default function App() {
 
   const handlePreferenceChange = (key: keyof UiPreferences, value: boolean) => {
     setUiPreferences((current) => writeUiPreference(current, key, value));
+    void savePreference(serverKeyForPreference(key), value).catch(() => {
+      // 服务端写穿失败时 localStorage 仍是权威缓存。
+    });
   };
+
+  /** 服务端偏好（SQLite）覆盖本地缓存；本地读不到时保持默认。 */
+  const loadPreferences = useCallback(async () => {
+    try {
+      const items = await fetchPreferences();
+      const merged = mergeServerUiPreferences(items);
+      setUiPreferences(merged);
+      setSidebarCollapsed(merged.sidebarCollapsed);
+      mergeServerThinkingPreferences(items);
+    } catch {
+      // 偏好服务不可用时沿用本地缓存。
+    }
+  }, []);
 
   const bootstrap = useCallback(async () => {
     try {
@@ -130,10 +169,11 @@ export default function App() {
       }
       void loadInbox();
       void loadSettings();
+      void loadPreferences();
     } catch (error) {
       setFatal(error instanceof Error ? error.message : '工作区信息暂时无法读取');
     }
-  }, [loadSessions, loadInbox, loadSettings]);
+  }, [loadSessions, loadInbox, loadSettings, loadPreferences]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
@@ -156,7 +196,10 @@ export default function App() {
     setExploreView(null);
     setSystemView(null);
     setCurrentSessionId(sessionId);
-    setThreads((prev) => prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyUnavailable: true } });
+    if (!threads[sessionId]) {
+      setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
+      if (currentAgentId) void loadThread(currentAgentId, sessionId);
+    }
   };
 
   const newSession = () => {
@@ -204,7 +247,10 @@ export default function App() {
     }
     setConfigAgentId(null);
     setCurrentSessionId(sessionId);
-    setThreads((prev) => prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyUnavailable: true } });
+    if (!threads[sessionId]) {
+      setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
+      void loadThread(agentId, sessionId);
+    }
   };
 
   const handlePaletteAction = (action: PaletteAction) => {
@@ -272,8 +318,8 @@ export default function App() {
 
     const appendToThread = (key: string, items: ChatMessage[]) => {
       setThreads((prev) => {
-        const thread = prev[key] ?? { messages: [], historyUnavailable: false };
-        return { ...prev, [key]: { ...thread, messages: [...thread.messages, ...items], historyUnavailable: false } };
+        const thread = prev[key] ?? { messages: [], historyLoaded: true };
+        return { ...prev, [key]: { ...thread, messages: [...thread.messages, ...items], historyLoaded: true } };
       });
     };
 
@@ -468,7 +514,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <ThreadView messages={threadMessages} historyUnavailable={Boolean(currentThread?.historyUnavailable)} compact={uiPreferences.compactMessages} />
+                  <ThreadView messages={threadMessages} compact={uiPreferences.compactMessages} />
                   <div className="composer-wrap">
                     <div className="composer-inner">
                       <Composer

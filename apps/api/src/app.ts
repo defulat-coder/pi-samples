@@ -4,8 +4,8 @@ import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest } from '@pi-workbench/contracts';
-import { AGENT_BODY_MAX_BYTES, AgentCreateError, agentSummary, AgentSessionStore, createAgent, getAgent, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, piSessionRegistry, readPrompt, runAgentTurn, summarizeUsage } from '@pi-workbench/pi-agent';
+import type { AgentThinkingLevel, AgentTemplatesResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, PreferencesResponse, SessionMessagesResponse, UsageResponse } from '@pi-workbench/contracts';
+import { AGENT_BODY_MAX_BYTES, AGENT_TEMPLATES, AgentCreateError, agentSummary, AgentSessionStore, createAgent, getAgent, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, getPreferences, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, openWorkbenchDb, piSessionRegistry, readPrompt, recordUsageEvent, runAgentTurn, setPreference, summarizeTokenUsage, summarizeUsage, type WorkbenchDb } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 
 const AgentIdSchema = Type.String({ pattern: '^[a-z][a-z0-9-]{1,63}$' });
@@ -28,6 +28,9 @@ const ChatRequestSchema = Type.Object({
   thinking: Type.Optional(ThinkingLevelSchema),
 });
 
+const PreferenceKeySchema = Type.String({ pattern: '^(ui\\.[a-z-]{1,40}|thinking\\.[a-z][a-z0-9-]{1,63})$' });
+const PreferenceUpdateSchema = Type.Object({ key: PreferenceKeySchema, value: Type.Unknown() });
+
 // maxLength counts UTF-16 code units; createAgent re-checks the 32KB byte cap.
 const CreateAgentSchema = Type.Object({
   id: Type.Optional(AgentIdSchema),
@@ -39,7 +42,7 @@ const CreateAgentSchema = Type.Object({
   body: Type.String({ minLength: 1, maxLength: AGENT_BODY_MAX_BYTES }),
 });
 
-type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string };
+type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string; db?: WorkbenchDb };
 
 function projectRoot(): string {
   const candidates = [resolve(process.cwd()), resolve(process.cwd(), '..'), resolve(process.cwd(), '../..')];
@@ -49,6 +52,9 @@ function projectRoot(): string {
 export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
   const cwd = dependencies.cwd ?? projectRoot();
   const sessions = dependencies.sessionStore ?? new AgentSessionStore({ cwd });
+  // Generic workbench data (usage events, preferences) lives in .pi/workbench.db;
+  // Pi-specific state stays in Pi's own files.
+  const db = dependencies.db ?? openWorkbenchDb(resolve(sessions.sessionDir, '..', 'workbench.db'));
 
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
@@ -57,6 +63,9 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
   app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
   app.register(helmet, { contentSecurityPolicy: false });
+  app.addHook('onClose', async () => {
+    db.close();
+  });
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'pi-workbench-api', timestamp: new Date().toISOString() }));
 
@@ -99,7 +108,28 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       return { items, total: items.length };
     });
 
-    v1.get('/usage', async () => summarizeUsage(await sessions.listSessions(), loadAgents(cwd)));
+    v1.get('/templates', async (): Promise<AgentTemplatesResponse> => ({ items: [...AGENT_TEMPLATES] }));
+
+    // UI 偏好（ui.* / thinking.<agentId>）持久化在 SQLite；浏览器仍以 localStorage 做即时缓存。
+    v1.get('/preferences', async (): Promise<PreferencesResponse> => ({ items: getPreferences(db) }));
+
+    v1.put<{ Body: { key: string; value: unknown } }>('/preferences', { schema: { body: PreferenceUpdateSchema } }, async (request): Promise<PreferencesResponse> => {
+      setPreference(db, request.body.key, request.body.value);
+      return { items: getPreferences(db) };
+    });
+
+    v1.get('/usage', async (): Promise<UsageResponse> => {
+      const base = summarizeUsage(await sessions.listSessions(), loadAgents(cwd));
+      const tokenSummary = summarizeTokenUsage(db);
+      return {
+        ...base,
+        tokens: { input: tokenSummary.totalInput, output: tokenSummary.totalOutput, total: tokenSummary.totalTokens },
+        perAgent: base.perAgent.map((row) => {
+          const tokens = tokenSummary.perAgent.find((item) => item.agentId === row.agentId);
+          return { ...row, tokens: tokens ? { input: tokens.input, output: tokens.output, total: tokens.total } : { input: 0, output: 0, total: 0 } };
+        }),
+      };
+    });
 
     // Non-sensitive configuration only; provider keys never leave this process.
     v1.get('/settings', async () => {
@@ -173,6 +203,20 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       const session = await withOwnedSession(reply, () => sessions.getSession(request.params.sessionId, request.params.agentId));
       if (session === undefined && !reply.sent) return reply.code(404).send({ error: '会话不存在' });
       return session;
+    });
+
+    v1.get<{ Params: { agentId: string; sessionId: string } }>('/agents/:agentId/sessions/:sessionId/messages', {
+      schema: { params: Type.Object({ agentId: AgentIdSchema, sessionId: SessionIdSchema }) },
+    }, async (request, reply) => {
+      if (!agentOr404(request.params.agentId, reply)) return;
+      try {
+        const items = await sessions.listMessages(request.params.sessionId, request.params.agentId);
+        return { items } satisfies SessionMessagesResponse;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') return reply.code(409).send({ error: '该会话属于另一个 Agent' });
+        if (error instanceof Error && error.message === 'AGENT_SESSION_NOT_FOUND') return reply.code(404).send({ error: '会话不存在' });
+        throw error;
+      }
     });
 
     v1.patch<{ Params: { agentId: string; sessionId: string }; Body: { title: string } }>('/agents/:agentId/sessions/:sessionId', {
@@ -262,6 +306,9 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
           },
         });
         send({ type: 'done', answer: result.answer, ...(result.usage ? { usage: result.usage } : {}) });
+        if (result.usage) {
+          recordUsageEvent(db, { sessionId: session.id, agentId: agent.id, model: modelLabel.model, ...result.usage });
+        }
       } catch (error) {
         send({ type: 'error', error: error instanceof Error ? error.message : '流式响应失败' });
       } finally {

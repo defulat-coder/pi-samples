@@ -19,7 +19,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
     ? [
         { label: '累计会话', value: usage.totalSessions },
         { label: '累计提问', value: usage.totalQuestions },
-        { label: 'Agent 数', value: usage.agentCount },
+        { label: '累计 Token', value: usage.tokens.total.toLocaleString() },
         { label: '今日提问', value: usage.questionsToday },
       ]
     : [];
@@ -31,7 +31,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
           <ChartLine size={20} aria-hidden="true" />
           <div>
             <h3>用量</h3>
-            <p>本地会话的累计统计，数据来自 .pi/sessions 的持久化记录。</p>
+            <p>会话与提问来自 .pi/sessions 的持久化记录，Token 统计来自本地 SQLite（.pi/workbench.db）。</p>
           </div>
         </div>
         <button type="button" className="inbox-refresh" onClick={onRefresh} aria-label="刷新用量" disabled={loading}>
@@ -64,6 +64,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
                 <th>Agent</th>
                 <th>会话数</th>
                 <th>提问数</th>
+                <th>Token</th>
                 <th>最近活跃</th>
               </tr>
             </thead>
@@ -78,6 +79,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
                   </td>
                   <td className="usage-table-number">{row.sessionCount}</td>
                   <td className="usage-table-number">{row.questionCount}</td>
+                  <td className="usage-table-number">{row.tokens.total > 0 ? row.tokens.total.toLocaleString() : '—'}</td>
                   <td className="usage-table-time">
                     {row.lastActiveAt ? formatRelativeTime(row.lastActiveAt, now) : '从未使用'}
                   </td>

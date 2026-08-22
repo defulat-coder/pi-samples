@@ -34,6 +34,7 @@
 - `.pi/prompts` templates are exposed to the Web composer through the prompts endpoints; served content must have YAML frontmatter stripped and path traversal rejected.
 - Keep provider keys in the API process only. The browser consumes the API SSE contract and never receives credentials or a direct provider client.
 - For Node/TypeScript integrations prefer `AgentSession` directly. Use Pi RPC/JSONL only when process isolation or a language boundary is required.
+- Generic workbench data (usage events, UI preferences) persists in SQLite via better-sqlite3 at `.pi/workbench.db` (see `packages/pi-agent/src/db.ts`). Pi-specific state — sessions, messages, agent definitions, settings — stays in Pi's own files (`.pi/sessions/*.jsonl`, `.pi/agents/*.md`, `.pi/settings.json`) and is never duplicated into SQLite; message history is parsed from JSONL on demand.
 - Pi project trust protects resource loading; it is not a sandbox. Treat shell, filesystem, extensions, prompts, model output, and retrieved files as untrusted input and enforce isolation/approval at the host boundary.
 
 ## Project Boundaries
@@ -41,7 +42,7 @@
 - Do not design or implement for backward compatibility. Prefer current best practices, and do not add compatibility layers or workarounds unless explicitly requested.
 - `apps/api`: request validation, session identity, SSE/JSON transport; no semantic pre-routing, no auth (local mode).
 - `apps/web`: Fleet-style conversation UI; no Pi SDK or provider key.
-- `packages/pi-agent`: Agent file loading, session lifecycle, Pi model/runtime setup, event normalization.
+- `packages/pi-agent`: Agent file loading, session lifecycle, Pi model/runtime setup, event normalization, SQLite projection for generic data (usage events, preferences).
 - `packages/contracts`: shared request/response/stream DTOs.
 - `.pi/`: Agent definitions, project Skills, prompt templates; review these files as executable Agent context, never as authority.
 - `docs/`: architecture, learning notes, ADRs, and source-grounded research. `docs/research/fleet-cdp-reference-2026-08-21.md` is the authoritative design-token reference for the Fleet-replica UI (values captured via CDP from the real page).
