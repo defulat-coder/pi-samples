@@ -277,6 +277,90 @@ export interface SkillListResponse {
   total: number;
 }
 
+/** One entry of the skills.sh library (top list or search hit). */
+export interface LibrarySkillSummary {
+  /** skills.sh 详情页路径三段式 id，e.g. "vercel-labs/skills/find-skills"。 */
+  id: string;
+  name: string;
+  /** GitHub 仓库 "owner/repo"。 */
+  source: string;
+  /** 总安装量（从紧凑字符串如 "3.1M" 解析；搜索接口无此字段时为 0）。 */
+  installs: number;
+  /** 最近 8 周安装量 sparkline（仅榜单模式有）。 */
+  weeklyInstalls?: number[];
+  /** 榜单排名（仅榜单模式有，从 1 开始）。 */
+  rank?: number;
+  /** 描述（搜索接口不提供，榜单首页也没有；预留详情页 og:description）。 */
+  description?: string;
+  /** 已在本地 .agents/skills 或 .pi/skills 安装（按 name 匹配）。 */
+  installed: boolean;
+}
+
+/** Payload of GET /api/v1/skills/library; mode 区分榜单与搜索。 */
+export interface SkillLibraryResponse {
+  items: LibrarySkillSummary[];
+  total: number;
+  mode: 'top' | 'search';
+}
+
+/** 一个本地已安装技能：.agents/skills（skills CLI 装的第三方）或 .pi/skills（项目自带）。 */
+export interface InstalledSkillSummary {
+  name: string;
+  description?: string;
+  /** 正文预览（frontmatter 剥离后的前 200 字符）。 */
+  preview?: string;
+  /** skills-lock.json 里的 "owner/repo"；.pi/skills 条目无此字段。 */
+  source?: string;
+  /** 安装范围：'agents' = .agents/skills（universal），'pi' = .pi/skills。 */
+  scope: 'pi' | 'agents';
+  /** 项目相对路径，e.g. .agents/skills/research/SKILL.md */
+  path: string;
+}
+
+/** Payload of GET /api/v1/skills/installed。 */
+export interface InstalledSkillListResponse {
+  items: InstalledSkillSummary[];
+  total: number;
+}
+
+/** Payload of POST /api/v1/skills/install；source 需匹配 owner/repo，skillId 为单段 slug。 */
+export interface SkillInstallRequest {
+  /** `^[a-z0-9_.-]+/[a-z0-9_.-]+$`，API 侧再校验一次（execFile 参数数组，无 shell 拼接）。 */
+  source: string;
+  /** `^[a-z0-9_.-]+$`。 */
+  skillId: string;
+}
+
+/** Payload of POST /api/v1/skills/remove；name 为已安装技能名（`.agents/skills/<name>/` 目录名）。 */
+export interface SkillRemoveRequest {
+  /** `^[a-z0-9_.-]+$`。 */
+  name: string;
+}
+
+/** Payload of GET /api/v1/skills/installed/content：一个已安装技能的完整定义。 */
+export interface InstalledSkillContent {
+  name: string;
+  description?: string;
+  source?: string;
+  scope: 'pi' | 'agents';
+  /** SKILL.md 正文（frontmatter 已剥离，trim 后）。 */
+  content: string;
+  /** 原始 frontmatter 文本（不含 --- 分隔线）；无 frontmatter 时省略。 */
+  frontmatter?: string;
+}
+
+/** Payload of GET /api/v1/skills/library/detail：skills.sh 详情页解析结果。 */
+export interface LibrarySkillDetail {
+  /** skills.sh 三段式 id，e.g. "vercel-labs/skills/find-skills"。 */
+  id: string;
+  name: string;
+  source: string;
+  /** og:description（HTML 实体已解码；skills.sh 自身可能以 … 截断）。 */
+  description?: string;
+  /** 详情页侧栏的总安装量（紧凑字符串解析；缺失时省略）。 */
+  installs?: number;
+}
+
 export interface WorkspaceResponse {
   agents: AgentSummary[];
   prompts: PromptSummary[];

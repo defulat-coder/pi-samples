@@ -12,6 +12,7 @@ import { registerEventRoutes, WorkbenchEventBus } from './routes/events.js';
 import { registerMetaRoutes } from './routes/meta.js';
 import { registerPreferenceRoutes } from './routes/preferences.js';
 import { registerSessionRoutes } from './routes/sessions.js';
+import { registerSkillRoutes } from './routes/skills.js';
 import { registerUsageRoutes } from './routes/usage.js';
 
 type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string; db?: WorkbenchDb; approvalBridge?: ApprovalBridge };
@@ -56,6 +57,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
 
   app.register(async (v1) => {
     registerMetaRoutes(v1, ctx);
+    registerSkillRoutes(v1, ctx);
     registerAgentRoutes(v1, ctx);
     registerSessionRoutes(v1, ctx);
     registerApprovalRoutes(v1, ctx);

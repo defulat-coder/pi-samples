@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, stripFrontmatter } from '@earendil-works/pi-coding-agent';
-import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary, type UpdateAgentRequest, type UpdatePromptRequest } from '@pi-workbench/contracts';
+import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type InstalledSkillContent, type InstalledSkillSummary, type PromptDocument, type PromptSummary, type SkillSummary, type UpdateAgentRequest, type UpdatePromptRequest } from '@pi-workbench/contracts';
 
 const AGENT_ID_REGEX = new RegExp(AGENT_ID_PATTERN);
 const PROMPT_NAME_REGEX = /^[a-z0-9-]{1,80}$/;
@@ -225,6 +225,77 @@ export function listSkills(cwd: string): SkillSummary[] {
       const preview = previewOf(raw);
       return { name, path, ...(description ? { description } : {}), ...(preview ? { preview } : {}) };
     });
+}
+
+/**
+ * Reads the skills CLI lockfile (skills-lock.json, version 1) as name → "owner/repo".
+ * A missing or malformed lockfile yields an empty map — sources are informational only.
+ */
+function readSkillsLockSources(cwd: string): Map<string, string> {
+  const target = join(cwd, 'skills-lock.json');
+  const sources = new Map<string, string>();
+  if (!existsSync(target)) return sources;
+  try {
+    const parsed = JSON.parse(readFileSync(target, 'utf8')) as { skills?: Record<string, { source?: unknown }> };
+    for (const [name, entry] of Object.entries(parsed.skills ?? {})) {
+      if (typeof entry?.source === 'string' && entry.source.trim()) sources.set(name, entry.source.trim());
+    }
+  } catch {
+    // 坏 lockfile 不应拖垮技能列表。
+  }
+  return sources;
+}
+
+/**
+ * Lists every locally installed skill: .agents/skills (skills CLI, scope 'agents')
+ * plus .pi/skills (project-provided, scope 'pi'). Sources come from skills-lock.json
+ * by directory name. Absent directories yield [].
+ */
+export function listInstalledSkills(cwd: string): InstalledSkillSummary[] {
+  const sources = readSkillsLockSources(cwd);
+  const items: InstalledSkillSummary[] = [];
+  for (const scope of ['agents', 'pi'] as const) {
+    const base = scope === 'agents' ? '.agents/skills' : '.pi/skills';
+    const directory = join(cwd, base);
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })
+      .filter((item) => item.isDirectory() && existsSync(join(directory, item.name, 'SKILL.md')))
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const path = `${base}/${entry.name}/SKILL.md`;
+      const raw = readFileSync(join(cwd, path), 'utf8');
+      const { frontmatter } = parseFrontmatter(raw);
+      const name = typeof frontmatter.name === 'string' && frontmatter.name.trim() ? frontmatter.name.trim() : entry.name;
+      const description = typeof frontmatter.description === 'string' && frontmatter.description.trim() ? frontmatter.description.trim() : undefined;
+      const preview = previewOf(raw);
+      const source = scope === 'agents' ? sources.get(entry.name) : undefined;
+      items.push({ name, path, scope, ...(description ? { description } : {}), ...(preview ? { preview } : {}), ...(source ? { source } : {}) });
+    }
+  }
+  return items;
+}
+
+/** 匹配 SKILL.md 顶部的 YAML frontmatter 块（捕获组为不含 --- 的原文）。 */
+const FRONTMATTER_BLOCK = /^---\r?\n([\s\S]*?)\r?\n---/;
+
+/**
+ * Reads one installed skill's full SKILL.md. The entry is located through the same
+ * scan as listInstalledSkills (name = frontmatter name or directory name), and the
+ * path it yields is built from directory entries only — no traversal is possible.
+ * Returns undefined when no entry matches scope + name.
+ */
+export function readInstalledSkillContent(cwd: string, scope: 'pi' | 'agents', name: string): InstalledSkillContent | undefined {
+  const item = listInstalledSkills(cwd).find((entry) => entry.scope === scope && entry.name === name);
+  if (!item) return undefined;
+  const raw = readFileSync(join(cwd, item.path), 'utf8');
+  const frontmatter = FRONTMATTER_BLOCK.exec(raw)?.[1]?.trim();
+  return {
+    name: item.name,
+    scope: item.scope,
+    ...(item.description ? { description: item.description } : {}),
+    ...(item.source ? { source: item.source } : {}),
+    content: stripFrontmatter(raw).trim(),
+    ...(frontmatter ? { frontmatter } : {}),
+  };
 }
 
 /** Reads one prompt template body; the name pattern blocks path traversal by construction. */

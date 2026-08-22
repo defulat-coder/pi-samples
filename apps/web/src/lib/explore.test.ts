@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AgentSummary, AgentTemplate, PromptSummary, SkillSummary } from '@pi-workbench/contracts';
-import { agentCardStats, filterSkillItems, mergeSkillItems, templateToCreateRequest } from './explore.js';
+import type { AgentSummary, AgentTemplate } from '@pi-workbench/contracts';
+import { agentCardStats, formatInstallCount, templateToCreateRequest } from './explore.js';
 
 const agent: AgentSummary = {
   id: 'pi-assistant',
@@ -43,27 +43,13 @@ describe('agentCardStats', () => {
   });
 });
 
-describe('skill items', () => {
-  const prompts: PromptSummary[] = [
-    { name: 'explain', path: '.pi/prompts/explain.md', description: '解释一个主题', preview: '请解释……' },
-  ];
-  const skills: SkillSummary[] = [
-    { name: '调研助手', path: '.pi/skills/research/SKILL.md', description: '桌面调研', preview: '先搜一手来源。' },
-  ];
-
-  it('merges skills before prompts and keeps the kind marker', () => {
-    const items = mergeSkillItems(prompts, skills);
-    assert.deepEqual(items.map((item) => item.kind), ['skill', 'prompt']);
-    assert.equal(items[0]?.name, '调研助手');
-    assert.equal(items[1]?.name, 'explain');
-  });
-
-  it('filters by name, description or path, case-insensitive', () => {
-    const items = mergeSkillItems(prompts, skills);
-    assert.deepEqual(filterSkillItems(items, '').length, 2);
-    assert.deepEqual(filterSkillItems(items, 'EXPLAIN').map((item) => item.name), ['explain']);
-    assert.deepEqual(filterSkillItems(items, '调研').map((item) => item.name), ['调研助手']);
-    assert.deepEqual(filterSkillItems(items, 'prompts/').map((item) => item.name), ['explain']);
-    assert.deepEqual(filterSkillItems(items, '不存在'), []);
+describe('formatInstallCount', () => {
+  it('formats compact install counts', () => {
+    assert.equal(formatInstallCount(3_100_000), '3.1M');
+    assert.equal(formatInstallCount(2_000_000), '2M');
+    assert.equal(formatInstallCount(653_000), '653K');
+    assert.equal(formatInstallCount(12_300), '12.3K');
+    assert.equal(formatInstallCount(999), '999');
+    assert.equal(formatInstallCount(0), '0');
   });
 });

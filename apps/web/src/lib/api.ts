@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ApprovalDecisionRequest, ApprovalListResponse, ApprovalRecord, ApprovalState, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxItem, InboxResponse, InboxTab, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdateInboxStateRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ApprovalDecisionRequest, ApprovalListResponse, ApprovalRecord, ApprovalState, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxItem, InboxResponse, InboxTab, InstalledSkillContent, InstalledSkillListResponse, LibrarySkillDetail, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillInstallRequest, SkillLibraryResponse, SkillListResponse, SkillRemoveRequest, SkillSummary, UpdateAgentRequest, UpdateInboxStateRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -126,6 +126,53 @@ export async function updateAppendSystem(content: string): Promise<AppendSystemR
 export async function fetchSkills(): Promise<SkillSummary[]> {
   const payload = await readJson<SkillListResponse>(await fetch('/api/v1/skills'), '技能列表暂时无法读取');
   return payload.items;
+}
+
+export async function fetchInstalledSkills(): Promise<InstalledSkillListResponse> {
+  return readJson(await fetch('/api/v1/skills/installed'), '已安装技能暂时无法读取');
+}
+
+/** 读取一个已安装技能的完整 SKILL.md（正文去 frontmatter）。 */
+export async function fetchInstalledSkillContent(scope: 'pi' | 'agents', name: string): Promise<InstalledSkillContent> {
+  const params = new URLSearchParams({ scope, name });
+  return readJson(await fetch(`/api/v1/skills/installed/content?${params.toString()}`), '技能内容暂时无法读取');
+}
+
+/** skills.sh 详情页解析结果（og:description + 安装量），服务端有 1h 缓存。 */
+export async function fetchLibrarySkillDetail(source: string, skillId: string): Promise<LibrarySkillDetail> {
+  const params = new URLSearchParams({ source, skillId });
+  return readJson(await fetch(`/api/v1/skills/library/detail?${params.toString()}`), '技能详情暂时无法读取');
+}
+
+/** query ≥2 字符走搜索模式，否则返回 skills.sh 榜单。 */
+export async function fetchSkillLibrary(query = '', limit = 50): Promise<SkillLibraryResponse> {
+  const params = new URLSearchParams();
+  if (query) params.set('query', query);
+  params.set('limit', String(limit));
+  return readJson(await fetch(`/api/v1/skills/library?${params.toString()}`), '技能库暂时无法读取');
+}
+
+/** 安装成功/失败后都返回最新的已安装列表；失败抛出服务端消息。 */
+export async function installSkill(request: SkillInstallRequest): Promise<InstalledSkillListResponse> {
+  return readJson(
+    await fetch('/api/v1/skills/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+    '技能暂时无法安装',
+  );
+}
+
+export async function removeSkill(request: SkillRemoveRequest): Promise<InstalledSkillListResponse> {
+  return readJson(
+    await fetch('/api/v1/skills/remove', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+    '技能暂时无法删除',
+  );
 }
 
 export async function fetchAgentTemplates(): Promise<AgentTemplate[]> {

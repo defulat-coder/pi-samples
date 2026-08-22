@@ -62,6 +62,24 @@ export const UpdatePromptSchema = Type.Object({
 // 空内容（trim 后）表示删除 .pi/APPEND_SYSTEM.md。
 export const UpdateAppendSystemSchema = Type.Object({ content: Type.String({ maxLength: 16000 }) });
 
+// 技能库：install/remove 的入参直接拼进 npx 参数数组（execFile，无 shell），pattern 再挡一层。
+export const SkillSourceSchema = Type.String({ pattern: '^[a-z0-9_.-]+/[a-z0-9_.-]+$', maxLength: 200 });
+export const SkillNameSchema = Type.String({ pattern: '^[a-z0-9_.-]+$', maxLength: 100 });
+export const SkillInstallSchema = Type.Object({ source: SkillSourceSchema, skillId: SkillNameSchema });
+export const SkillRemoveSchema = Type.Object({ name: SkillNameSchema });
+// query ≥2 字符走 skills.sh 搜索，否则返回首页榜单；limit 封顶 100。
+export const SkillLibraryQuerySchema = Type.Object({
+  query: Type.Optional(Type.String({ maxLength: 200 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+});
+// 已安装技能内容：scope 限定两个目录，name 与 remove 同一 pattern（挡路径穿越）。
+export const SkillContentQuerySchema = Type.Object({
+  scope: Type.Union([Type.Literal('pi'), Type.Literal('agents')]),
+  name: SkillNameSchema,
+});
+// skills.sh 详情：source/skillId 与 install 同一 pattern。
+export const SkillDetailQuerySchema = Type.Object({ source: SkillSourceSchema, skillId: SkillNameSchema });
+
 // 审批：id 来自扩展的 uuid，pattern 同时挡住路径穿越；state 过滤见 contracts ApprovalState。
 export const ApprovalStateSchema = Type.Unsafe<ApprovalState>({
   enum: ['pending', 'approved', 'always', 'denied', 'denied_with_reason', 'expired'],

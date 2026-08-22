@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentCreateError, createAgent, deriveAgentId, getAgent, listPrompts, listSkills, loadAgents, readAppendSystem, readPrompt, updateAgent, writeAppendSystem, writePrompt } from './agents.js';
+import { AgentCreateError, createAgent, deriveAgentId, getAgent, listInstalledSkills, listPrompts, listSkills, loadAgents, readAppendSystem, readInstalledSkillContent, readPrompt, updateAgent, writeAppendSystem, writePrompt } from './agents.js';
 import { getPiProjectRoot } from './index.js';
 
 const roots: string[] = [];
@@ -306,5 +306,88 @@ describe('listSkills', () => {
 
   it('returns an empty list for the real project while .pi/skills is empty', () => {
     assert.deepEqual(listSkills(getPiProjectRoot()), []);
+  });
+});
+
+describe('listInstalledSkills', () => {
+  it('returns an empty list when both skill directories are absent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-installed-skills-empty-'));
+    roots.push(root);
+    assert.deepEqual(listInstalledSkills(root), []);
+  });
+
+  it('lists .agents/skills and .pi/skills with scope and lockfile source', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-installed-skills-'));
+    roots.push(root);
+    mkdirSync(join(root, '.agents', 'skills', 'web-research'), { recursive: true });
+    writeFileSync(
+      join(root, '.agents', 'skills', 'web-research', 'SKILL.md'),
+      `---\nname: web-research\ndescription: 联网调研。\n---\n\n先搜索再总结。\n`,
+    );
+    mkdirSync(join(root, '.pi', 'skills', 'local-skill'), { recursive: true });
+    writeFileSync(join(root, '.pi', 'skills', 'local-skill', 'SKILL.md'), '只有正文。');
+    writeFileSync(
+      join(root, 'skills-lock.json'),
+      JSON.stringify({ version: 1, skills: { 'web-research': { source: 'acme/skills', sourceType: 'github', skillPath: 'skills/web-research/SKILL.md', computedHash: 'abc' } } }),
+    );
+    const items = listInstalledSkills(root);
+    assert.deepEqual(items.map((item) => item.name), ['web-research', 'local-skill']);
+    const agents = items.find((item) => item.scope === 'agents');
+    assert.equal(agents?.path, '.agents/skills/web-research/SKILL.md');
+    assert.equal(agents?.source, 'acme/skills');
+    assert.equal(agents?.description, '联网调研。');
+    assert.equal(agents?.preview, '先搜索再总结。');
+    const pi = items.find((item) => item.scope === 'pi');
+    assert.equal(pi?.path, '.pi/skills/local-skill/SKILL.md');
+    assert.equal(pi?.source, undefined);
+    assert.equal(pi?.preview, '只有正文。');
+  });
+
+  it('survives a missing or malformed lockfile', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-installed-skills-lock-'));
+    roots.push(root);
+    mkdirSync(join(root, '.agents', 'skills', 'solo'), { recursive: true });
+    writeFileSync(join(root, '.agents', 'skills', 'solo', 'SKILL.md'), '---\nname: solo\n---\n\n正文。\n');
+    assert.deepEqual(listInstalledSkills(root).map((item) => item.source), [undefined]);
+    writeFileSync(join(root, 'skills-lock.json'), '{ not json');
+    assert.deepEqual(listInstalledSkills(root).map((item) => item.source), [undefined]);
+  });
+});
+
+describe('readInstalledSkillContent', () => {
+  function contentRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), 'pi-skill-content-'));
+    roots.push(root);
+    mkdirSync(join(root, '.agents', 'skills', 'web-research'), { recursive: true });
+    writeFileSync(
+      join(root, '.agents', 'skills', 'web-research', 'SKILL.md'),
+      `---\nname: web-research\ndescription: 联网调研。\n---\n\n## 步骤\n\n1. 先搜索。\n2. 再总结。\n`,
+    );
+    mkdirSync(join(root, '.pi', 'skills', 'plain'), { recursive: true });
+    writeFileSync(join(root, '.pi', 'skills', 'plain', 'SKILL.md'), '没有 frontmatter 的正文。\n');
+    return root;
+  }
+
+  it('returns the full body with frontmatter stripped plus the raw frontmatter text', () => {
+    const root = contentRoot();
+    const doc = readInstalledSkillContent(root, 'agents', 'web-research');
+    assert.ok(doc);
+    assert.equal(doc.name, 'web-research');
+    assert.equal(doc.scope, 'agents');
+    assert.equal(doc.description, '联网调研。');
+    assert.equal(doc.content, '## 步骤\n\n1. 先搜索。\n2. 再总结。');
+    assert.equal(doc.frontmatter, 'name: web-research\ndescription: 联网调研。');
+  });
+
+  it('omits frontmatter for files without one and rejects unknown or traversal names', () => {
+    const root = contentRoot();
+    const plain = readInstalledSkillContent(root, 'pi', 'plain');
+    assert.ok(plain);
+    assert.equal(plain.content, '没有 frontmatter 的正文。');
+    assert.equal(plain.frontmatter, undefined);
+    assert.equal(readInstalledSkillContent(root, 'agents', 'missing'), undefined);
+    assert.equal(readInstalledSkillContent(root, 'agents', '../settings'), undefined);
+    // name 匹配 scope：同名不同 scope 不串。
+    assert.equal(readInstalledSkillContent(root, 'pi', 'web-research'), undefined);
   });
 });

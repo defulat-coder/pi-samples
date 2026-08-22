@@ -14,7 +14,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --test \"dist/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
   },

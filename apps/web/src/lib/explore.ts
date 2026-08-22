@@ -1,4 +1,4 @@
-import type { AgentSummary, AgentTemplate, CreateAgentRequest, PromptSummary, SkillSummary } from '@pi-workbench/contracts';
+import type { AgentSummary, AgentTemplate, CreateAgentRequest } from '@pi-workbench/contracts';
 
 /** EXPLORE 组的三个视图；同一时间至多打开一个。 */
 export type ExploreView = 'agents' | 'templates' | 'skills';
@@ -24,36 +24,9 @@ export function agentCardStats(agent: AgentSummary): { suggestionCount: number; 
   return { suggestionCount: agent.suggestions.length, sessionCount: agent.sessionCount ?? 0 };
 }
 
-/** Skills 页的统一条目：prompt 模板与 skill 资源共用卡片结构。 */
-export type SkillItem = {
-  kind: 'prompt' | 'skill';
-  name: string;
-  path: string;
-  description?: string;
-  preview?: string;
-};
-
-export function mergeSkillItems(prompts: PromptSummary[], skills: SkillSummary[]): SkillItem[] {
-  const promptItems: SkillItem[] = prompts.map((prompt) => ({
-    kind: 'prompt',
-    name: prompt.name,
-    path: prompt.path,
-    ...(prompt.description ? { description: prompt.description } : {}),
-    ...(prompt.preview ? { preview: prompt.preview } : {}),
-  }));
-  const skillItems: SkillItem[] = skills.map((skill) => ({
-    kind: 'skill',
-    name: skill.name,
-    path: skill.path,
-    ...(skill.description ? { description: skill.description } : {}),
-    ...(skill.preview ? { preview: skill.preview } : {}),
-  }));
-  return [...skillItems, ...promptItems];
-}
-
-/** 按名称 / 描述 / 路径过滤技能条目，大小写不敏感。 */
-export function filterSkillItems(items: SkillItem[], query: string): SkillItem[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((item) => [item.name, item.description, item.path].some((field) => field?.toLowerCase().includes(q)));
+/** 技能库卡片的紧凑安装量：3100000 → "3.1M"，653000 → "653K"。 */
+export function formatInstallCount(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 100_000 ? 0 : 1).replace(/\.0$/, '')}K`;
+  return String(count);
 }

@@ -28,7 +28,7 @@ const approval: PendingApproval = {
   createdAt: new Date(1_700_000_000_000).toISOString(),
 };
 
-/** 最小 mock：hijack 后的 raw response 只需要 write/setHeader/flushHeaders/end。 */
+/** 最小 mock：hijack 后的 raw response 只需要 write/setHeader/flushHeaders/end/once（add 监听 raw 的 close）。 */
 function fakeClient(captured: string[]): { request: FastifyRequest; reply: FastifyReply; raw: { write: (chunk: string) => void; writableEnded: boolean; destroyed: boolean } } {
   const raw = {
     statusCode: 0,
@@ -38,6 +38,7 @@ function fakeClient(captured: string[]): { request: FastifyRequest; reply: Fasti
     flushHeaders: () => undefined,
     write: (chunk: string) => captured.push(chunk),
     end: () => undefined,
+    once: () => undefined,
   };
   const reply = { raw, hijack: () => undefined } as unknown as FastifyReply;
   const request = { raw: { once: () => undefined } } as unknown as FastifyRequest;

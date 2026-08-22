@@ -791,10 +791,11 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 .agent-card-stats { font-size: 12px; color: var(--text-quaternary); }
 .agent-card-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: auto; }
 
-/* Skills 页（§11.6）：搜索框 + 卡片网格 */
+/* Skills 页（§11.6，Fleet 16-skills.json 实测）：搜索框 192px + 卡片 button 网格（容器 2~3 列） */
+.explore { container-type: inline-size; }
 .explore-toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
 .explore-search {
-  display: flex; align-items: center; gap: var(--space-2); height: 26px; width: 240px;
+  display: flex; align-items: center; gap: var(--space-2); height: 26px; width: 192px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-primary);
   padding: 0 10px; color: var(--text-quaternary);
 }
@@ -805,23 +806,38 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
   text-transform: uppercase; color: var(--text-quaternary);
 }
 .explore-section-label:not(:first-child) { margin-top: var(--space-5); }
-.skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-3); max-width: 1024px; }
+.skills-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-3); max-width: 1024px; }
+@container (min-width: 560px) { .skills-grid { grid-template-columns: repeat(2, 1fr); } }
+@container (min-width: 860px) { .skills-grid { grid-template-columns: repeat(3, 1fr); } }
+/* 卡片即 button（Fleet：354.7×142.8、圆角 8px、1px #e2e8f0、padding 16px、gap 12px） */
 .skill-card {
-  display: flex; flex-direction: column; gap: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-3); width: 100%; text-align: left;
   border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-primary);
-  padding: var(--space-4); transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  padding: var(--space-4); cursor: pointer;
+  transition: background var(--duration-normal) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .skill-card:hover { background: var(--bg-secondary); }
-.skill-card-head { display: flex; align-items: center; gap: var(--space-2); color: var(--text-quaternary); }
+.skill-card:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent); }
+/* 提示词模板卡片不可点（无详情端点）：去掉手型与按压缩放 */
+.skill-card.static { cursor: default; }
+.skill-card.static:active { transform: none; }
+.skill-card-head { display: flex; align-items: center; gap: var(--space-2); color: var(--text-quaternary); min-width: 0; }
 .skill-card-head strong { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-card-desc {
-  font-size: 12px; line-height: 1.65; color: var(--text-tertiary); min-height: calc(2 * 1.65em);
+  font-size: 12px; line-height: 1.625; color: var(--text-tertiary); min-height: calc(2 * 1.625em);
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
 .skill-card-preview {
   font-size: 12px; line-height: 1.6; color: var(--text-quaternary);
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
+/* 卡底来源行（Fleet 底部作者行：4px gap 小图标 + 12px 弱色文字） */
+.skill-card-meta {
+  display: flex; align-items: center; gap: var(--space-1); margin-top: auto; min-width: 0;
+  font-size: 12px; color: var(--text-quaternary);
+}
+.skill-card-meta svg { flex: none; }
+.skill-card-meta .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-card-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-quaternary); }
 .explore-empty {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
@@ -831,6 +847,40 @@ button.agent-card:hover, .template-card:hover { background: var(--bg-secondary);
 .explore-empty-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
 .explore-empty-hint { margin: 0; font-size: 12px; }
 .explore-hint { margin: 0; font-size: 12px; color: var(--text-quaternary); }
+
+/* Skills 页双 tab（已安装 / 技能库）：分段样式沿用 inbox 的 session-tabs */
+.explore-tabs { margin-bottom: var(--space-4); max-width: 320px; }
+.skill-card-scope {
+  margin-left: auto; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+  color: var(--text-quaternary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.skill-card-rank { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-quaternary); }
+.skill-card-installs { flex: none; font-size: 12px; color: var(--text-quaternary); }
+.skill-card-installed { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; font-size: 12px; color: var(--text-tertiary); }
+.explore-empty .header-button { margin-top: var(--space-2); }
+
+/* 技能详情弹窗：面板投影沿用 palette 的 --popover-shadow（filter drop-shadow 组） */
+.skill-dialog {
+  display: flex; flex-direction: column; width: 560px; max-width: calc(100vw - 48px); max-height: 72vh;
+  border-radius: var(--radius-xl); background: var(--bg-primary); filter: var(--popover-shadow); overflow: hidden;
+}
+.skill-dialog-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); color: var(--text-quaternary);
+}
+.skill-dialog-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.skill-dialog-title strong { font-size: 16px; font-weight: 600; letter-spacing: -0.48px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-dialog-title small { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-quaternary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-dialog-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.skill-dialog-badges { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.skill-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+  color: var(--text-quaternary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.skill-dialog-desc { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-tertiary); }
+.skill-dialog-loading { display: flex; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-6); color: var(--text-quaternary); font-size: 12px; }
+.skill-dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); }
+.skill-dialog .markdown { font-size: 13px; }
 
 /* 模板创建弹窗 */
 .modal-backdrop {
