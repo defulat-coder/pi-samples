@@ -109,6 +109,38 @@ describe('ApprovalBridge', () => {
     assert.equal(JSON.parse(readFileSync(join(responsesDir, 'req-3.json'), 'utf8')).state, 'always');
   });
 
+  it('始终允许把 bash 命令持久化进项目策略文件（幂等）', async () => {
+    const { root, bridge, requestsDir } = fixture();
+    const policyPath = join(root, '.pi', 'agent', 'pi-permissions.jsonc');
+    mkdirSync(join(root, '.pi', 'agent'), { recursive: true });
+    writeFileSync(policyPath, '{\n  // comment\n  "bash": { "*": "ask" },\n  "defaultPolicy": { "bash": "ask" }\n}\n');
+    const message = "Agent 'pi-assistant' requested bash command 'ls -al' (matched '*'). Allow this command?";
+    writeRequest(requestsDir, { message });
+    await bridge.scan();
+
+    bridge.respond('req-1', { approved: true, always: true });
+    const policy = readFileSync(policyPath, 'utf8');
+    assert.match(policy, /"bash": \{\n {4}"ls -al": "allow",\n?\s+"\*": "ask"/, '命令应作为 allow 规则插到 bash 段首');
+    assert.match(policy, /\/\/ comment/, 'JSONC 注释必须保留');
+
+    // 幂等：同一命令再次始终允许不重复写。
+    writeRequest(requestsDir, { id: 'req-2', responseNonce: 'nonce-2', message });
+    await bridge.scan();
+    bridge.respond('req-2', { approved: true, always: true });
+    const again = readFileSync(policyPath, 'utf8');
+    assert.equal(again.split('"ls -al"').length - 1, 1, '同一命令不得重复持久化');
+  });
+
+  it('非扩展 ask 文案的 always 不触碰策略文件', async () => {
+    const { root, bridge, requestsDir } = fixture();
+    writeRequest(requestsDir, { message: '运行 bash: ls -la' });
+    await bridge.scan();
+
+    bridge.respond('req-1', { approved: true, always: true });
+    assert.equal(getApproval(bridge.db, 'req-1')?.state, 'always');
+    assert.ok(!existsSync(join(root, '.pi', 'agent', 'pi-permissions.jsonc')), '无法解析命令时不应创建策略文件');
+  });
+
   it('重复决策 409 语义、未知 id 404 语义', async () => {
     const { bridge, requestsDir } = fixture();
     writeRequest(requestsDir);

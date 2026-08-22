@@ -214,6 +214,37 @@ describe('pi-permission-system spike（无 UI 宿主 + subagent 文件转发）'
     }
   });
 
+  it('始终允许：同一命令第二次执行不再产生审批请求', { timeout: 60_000 }, async () => {
+    assert.ok(session);
+    const alwaysMarker = join(projectCwd, 'always-marker.txt');
+    const command = `printf always-run > "${alwaysMarker}"`;
+
+    const runTurn = async () => {
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall('bash', { command }), { stopReason: 'toolUse' }),
+        fauxAssistantMessage('always turn done'),
+      ]);
+      await session!.prompt('运行 always 命令');
+    };
+
+    // 第一次：命中 ask，响应 always。
+    const firstTurn = runTurn();
+    await respondToNextRequest({ approved: true, state: 'always' });
+    await firstTurn;
+    assert.ok(existsSync(alwaysMarker), '第一次批准后命令应执行');
+
+    // 第二次：同一命令应直接命中会话级 allow 规则，不再写请求文件。
+    rmSync(alwaysMarker, { force: true });
+    const secondTurn = runTurn();
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const leftoverRequests = existsSync(forwardingDir('requests'))
+      ? readdirSync(forwardingDir('requests')).filter((name) => name.endsWith('.json'))
+      : [];
+    await secondTurn;
+    assert.deepEqual(leftoverRequests, [], '始终允许后同一命令不应再次请求审批');
+    assert.ok(existsSync(alwaysMarker), '第二次命令应无审批直接执行');
+  });
+
   it('拒绝路径：approved=false 时工具被阻断，turn 正常收尾', { timeout: 60_000 }, async () => {
     assert.ok(session);
     const deniedMarker = join(projectCwd, 'denied-marker.txt');

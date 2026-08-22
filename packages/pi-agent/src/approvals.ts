@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, watch, wr
 import { join } from 'node:path';
 import type { ApprovalDecisionRequest, ApprovalState, PendingApproval } from '@pi-workbench/contracts';
 import { getApproval, getPendingApprovalsBySession, listApprovals, recordPendingApproval, resolveApproval, type StoredApproval, type WorkbenchDb } from './db.js';
-import { getPermissionForwardingSessionsDir } from './permissions.js';
+import { getPermissionForwardingSessionsDir, extractBashCommandFromAskMessage, persistBashAllowRule } from './permissions.js';
 
 /**
  * 审批桥：pi-permission-system 扩展在 headless（无 UI + subagent env）模式下把 ask 决策
@@ -83,6 +83,8 @@ function toPendingApproval(approval: StoredApproval): PendingApproval {
 
 export class ApprovalBridge {
   readonly db: WorkbenchDb;
+  /** 项目根；策略持久化（persistBashAllowRule）也以此定位。 */
+  readonly cwd: string;
   /** 监听根：.../permission-forwarding/sessions（其下每个子目录是一个 targetSessionId）。 */
   readonly sessionsDir: string;
   private readonly resolveAgentId?: (sessionId: string) => Promise<string | undefined>;
@@ -95,6 +97,7 @@ export class ApprovalBridge {
 
   constructor(options: ApprovalBridgeOptions) {
     this.db = options.db;
+    this.cwd = options.cwd;
     this.sessionsDir = getPermissionForwardingSessionsDir(options.cwd);
     this.resolveAgentId = options.resolveAgentId;
     if (options.onPending) this.pendingListeners.add(options.onPending);
@@ -210,6 +213,18 @@ export class ApprovalBridge {
     writeFileSync(tmp, JSON.stringify(response));
     renameSync(tmp, file);
     resolveApproval(this.db, row.id, state);
+    // 「始终允许」升级为项目级持久规则：扩展的会话内规则在重启/新会话/空闲淘汰后丢失，
+    // 写入策略文件后对所有后续会话生效（best-effort，失败不影响本次审批）。
+    if (decision.approved && decision.always) {
+      const command = extractBashCommandFromAskMessage(row.message);
+      if (command) {
+        try {
+          persistBashAllowRule(this.cwd, command);
+        } catch {
+          // 策略文件写入失败仅影响持久化，响应文件已发出。
+        }
+      }
+    }
     return getApproval(this.db, row.id)!;
   }
 

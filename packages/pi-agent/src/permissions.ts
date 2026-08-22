@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 
@@ -49,4 +50,43 @@ export function loadPermissionExtension(cwd: string): Promise<InlineExtension> {
     return loaded.default as InlineExtension;
   })();
   return cachedExtension;
+}
+
+/**
+ * 从扩展的 bash ask 文案中提取原始命令。
+ * 格式见 permission-prompts.ts formatAskPrompt：
+ * `... requested bash command '<cmd>' (matched '<pattern>'). Allow this command?`（matched 段可选）。
+ * 命令内含单引号时靠后缀锚定，贪婪匹配仍成立。
+ */
+export function extractBashCommandFromAskMessage(message: string): string | undefined {
+  const match = /requested bash command '([\s\S]*)'(?: \(matched '[^']*'\))?\. Allow this command\?$/.exec(message);
+  return match?.[1];
+}
+
+/**
+ * 把「始终允许」的 bash 命令持久化为项目策略（.pi/agent/pi-permissions.jsonc）里的 allow 规则。
+ * 文本级插入以保留 JSONC 注释；扩展的 PermissionManager 按 mtime 缓存、每次检查按需重读，
+ * 写入后对运行中的会话同样即时生效。注意 wildcard 语义：命令里的 `*`/`?` 会成为通配符。
+ */
+export function persistBashAllowRule(cwd: string, command: string): void {
+  const file = resolve(cwd, '.pi', 'agent', 'pi-permissions.jsonc');
+  const key = JSON.stringify(command);
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '{\n}\n';
+
+  const bashMatch = /"bash"\s*:\s*\{/.exec(text);
+  if (bashMatch) {
+    const insertAt = bashMatch.index + bashMatch[0].length;
+    // bash 段的值都是字符串、无嵌套对象，最近的 `}` 即段尾（段内注释含 `}` 的极端情形不支持）。
+    const blockEnd = text.indexOf('}', insertAt);
+    const block = text.slice(insertAt, blockEnd === -1 ? undefined : blockEnd);
+    if (new RegExp(`${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`).test(block)) return;
+    writeFileSync(file, `${text.slice(0, insertAt)}\n    ${key}: "allow",${text.slice(insertAt)}`);
+    return;
+  }
+
+  // 无 bash 段：在根对象末尾补一段。
+  const lastBrace = text.lastIndexOf('}');
+  const before = text.slice(0, lastBrace).trimEnd();
+  const needsComma = !before.endsWith('{') && !before.endsWith(',');
+  writeFileSync(file, `${before}${needsComma ? ',' : ''}\n  "bash": { ${key}: "allow" }\n}\n`);
 }

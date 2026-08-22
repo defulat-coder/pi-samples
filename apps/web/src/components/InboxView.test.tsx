@@ -247,14 +247,14 @@ describe('InboxView 工具审批（HITL）', () => {
     assert.ok(changed.length > 0, '决策成功后应触发 onInboxChanged 刷新收件箱');
   });
 
-  it('「始终允许」POST { approved: true, always: true }，并注明仅当前会话有效', async () => {
+  it('「始终允许」POST { approved: true, always: true }，并注明写入项目权限策略', async () => {
     const calls = stubFetch([APPROVAL_ITEM]);
     renderInbox();
 
     const row = (await screen.findByText('排查构建失败')).closest('.inbox-row')!;
     fireEvent.doubleClick(row);
     const always = await screen.findByRole('button', { name: '始终允许' });
-    assert.equal(always.getAttribute('title'), '仅当前运行会话内有效');
+    assert.equal(always.getAttribute('title'), '写入项目权限策略，长期生效');
     fireEvent.click(always);
 
     await waitFor(() => {

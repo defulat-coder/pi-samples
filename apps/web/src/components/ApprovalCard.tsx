@@ -88,9 +88,9 @@ export function ApprovalCard({ approval, agentName, onSettled }: {
           <button
             type="button"
             className="header-button"
-            title="仅当前运行会话内有效"
+            title="写入项目权限策略，长期生效"
             disabled={submitting}
-            onClick={() => void decide({ approved: true, always: true }, '已批准，本会话内同类调用将自动放行')}
+            onClick={() => void decide({ approved: true, always: true }, '已批准，该命令已写入项目权限策略，后续自动放行')}
           >
             始终允许
           </button>
