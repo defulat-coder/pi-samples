@@ -210,7 +210,7 @@ input, textarea { font: inherit; color: inherit; }
 .session-tab {
   display: inline-flex; align-items: center; gap: var(--space-1); height: 20px;
   border-radius: var(--radius-xs); padding: 2px var(--space-2);
-  font-size: 13px; font-weight: 500; line-height: 15.6px; letter-spacing: -0.13px; color: var(--text-secondary);
+  font-size: 12px; font-weight: 500; line-height: 14.4px; letter-spacing: -0.12px; color: var(--text-secondary);
   transition: background var(--duration-fast), color var(--duration-fast), transform var(--duration-fast) var(--ease-out);
 }
 .session-tab:hover { background: var(--bg-secondary-hover); }
@@ -266,15 +266,17 @@ input, textarea { font: inherit; color: inherit; }
 .agent-chip.medium { width: 32px; height: 32px; border-radius: var(--radius-lg); font-size: 13px; }
 
 .session-group-label {
-  padding: var(--space-1) 10px; margin-top: var(--space-2);
+  padding: var(--space-1) 12px; margin-top: var(--space-2);
   font-size: 10px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-quaternary);
 }
-.session-row { gap: var(--space-2); }
+/* 会话行：右缘留白与 Fleet 收件箱行一致（padding 0 12px），不再紧贴列边框 */
+.session-row { gap: var(--space-2); padding: var(--space-1) 12px; }
 .session-row.active { background: var(--bg-secondary); }
 /* 收起态 hover 不隐藏蓝点（没有行尾按钮可让位） */
 .sidebar.collapsed .agent-row:hover .agent-badge { display: inline-flex; }
-.session-row .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; font-size: 14px; line-height: 20px; }
-.session-row .session-count { flex: none; font-size: 12px; color: var(--text-quaternary); }
+/* 用户口味调整：比 Fleet 实测（14px/700）收一档，13px/600 */
+.session-row .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; line-height: 18px; }
+.session-row .session-count { flex: none; font-size: 11px; color: var(--text-quaternary); }
 .session-row .session-row-actions { display: none; align-items: center; gap: 2px; flex: none; }
 .session-row:hover .session-row-actions { display: inline-flex; }
 .session-row:hover .session-count { display: none; }
@@ -313,19 +315,19 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-column.collapsed { width: 44px; align-items: center; padding-top: var(--space-3); border-right-color: transparent; }
 .inbox-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
 .inbox-column-header h3 {
-  margin: 0; font-size: 16px; line-height: 19.2px; letter-spacing: -0.48px; font-weight: 600;
+  margin: 0; font-size: 14px; line-height: 16.8px; letter-spacing: -0.28px; font-weight: 600;
   color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .inbox-column .session-tabs { margin: var(--space-3) var(--space-4) var(--space-4); }
 .inbox-column-scroll {
   display: flex; flex: 1; flex-direction: column; gap: 2px;
-  overflow-y: auto; overflow-x: hidden; padding: 0 var(--space-2) var(--space-4);
+  overflow-y: auto; overflow-x: hidden; padding: 0 10px var(--space-4);
 }
 /* 空态（Fleet 实测：居中、48px padding、32px 图标 + 14px 弱色文字） */
 .inbox-column-empty {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--space-2); padding: var(--space-8); color: var(--text-quaternary);
-  font-size: 14px; line-height: 16.1px;
+  font-size: 13px; line-height: 15.6px;
 }
 
 /* ===== 用量条 ===== */
@@ -368,8 +370,9 @@ input, textarea { font: inherit; color: inherit; }
   max-width: 70%; border-radius: var(--radius-xl); border-bottom-right-radius: 0;
   border: 1px solid var(--border-subtle); background: var(--bg-secondary); padding: var(--space-2) var(--space-3);
 }
-.user-bubble p { margin: 0; white-space: pre-wrap; font-size: 16px; line-height: 26px; color: var(--text-secondary); }
-.assistant-body { max-width: 100%; min-width: 0; font-size: 15px; line-height: 1.75; color: var(--text-primary); }
+/* 用户口味调整：对话字号比 Fleet 实测收一档（气泡 16→15、正文 15→14） */
+.user-bubble p { margin: 0; white-space: pre-wrap; font-size: 15px; line-height: 24px; color: var(--text-secondary); }
+.assistant-body { max-width: 100%; min-width: 0; font-size: 14px; line-height: 1.7; color: var(--text-primary); }
 .assistant-body.streaming::after {
   content: ''; display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px;
   border-radius: 1px; background: var(--brand); animation: caret-blink 0.9s ease-in-out infinite;
