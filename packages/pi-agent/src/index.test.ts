@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, listPiModels } from './index.js';
+import { createPiAgentSession, getPiModelConfig, getPiProjectRoot, KeyedExecutor, listPiModels } from './index.js';
 
 const roots: string[] = [];
 
@@ -58,5 +58,28 @@ describe('pi agent runtime', () => {
 
   it('throws explicitly when the configured model is not in the catalog', async () => {
     await assert.rejects(() => createPiAgentSession({ cwd: fixtureCwd(), agentId: 'agent-one', persistSession: false, model: 'no-such-model' }), /Pi model not found/);
+  });
+});
+
+describe('KeyedExecutor', () => {
+  it('serializes tasks per key while different keys stay parallel', async () => {
+    const executor = new KeyedExecutor();
+    const order: string[] = [];
+    const gate = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+    await Promise.all([
+      executor.run('a', async () => { order.push('a1:start'); await gate(); order.push('a1:end'); }),
+      executor.run('a', async () => { order.push('a2:start'); await gate(); order.push('a2:end'); }),
+      executor.run('b', async () => { order.push('b1:start'); await gate(); order.push('b1:end'); }),
+    ]);
+
+    assert.ok(order.indexOf('a1:end') < order.indexOf('a2:start'), '同 key 的任务必须串行');
+    assert.ok(order.indexOf('b1:start') < order.indexOf('a1:end'), '不同 key 的任务应并行');
+  });
+
+  it('propagates task errors without poisoning the queue', async () => {
+    const executor = new KeyedExecutor();
+    await assert.rejects(() => executor.run('a', async () => { throw new Error('boom'); }), /boom/);
+    assert.equal(await executor.run('a', async () => 'ok'), 'ok');
   });
 });

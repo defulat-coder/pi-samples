@@ -187,20 +187,22 @@ describe('Pi Workbench API', () => {
   });
 
   it('streams an explicit error when Pi is disabled instead of a fallback answer', async () => {
+    const before = (await sessions.listSessions('pi-assistant')).length;
     const response = await app.inject({ method: 'POST', url: '/api/v1/chat', payload: { agentId: 'pi-assistant', message: 'Pi session 生命周期是什么？' } });
     assert.equal(response.statusCode, 200);
     assert.match(String(response.headers['content-type']), /^text\/event-stream/);
-    assert.match(response.body, /event: start/);
-    assert.match(response.body, /"sessionId":"session_[a-f0-9-]+"/);
     assert.match(response.body, /event: error/);
     assert.match(response.body, /Pi 模型未启用/);
-    assert.doesNotMatch(response.body, /event: done|fallback|降级/);
+    // Pi 未启用时不创建空会话，也没有 start/done 事件。
+    assert.doesNotMatch(response.body, /event: start|event: done|fallback|降级/);
+    assert.equal((await sessions.listSessions('pi-assistant')).length, before);
   });
 
-  it('reuses an existing session for chat and reports cross-agent reuse as a conflict', async () => {
-    const response = await app.inject({ method: 'POST', url: '/api/v1/chat', payload: { agentId: 'pi-assistant', sessionId: 'chat-bound-session', message: '你好' } });
-    assert.equal(response.statusCode, 200);
-    assert.match(response.body, /"sessionId":"chat-bound-session"/);
+  it('rejects cross-agent chat reuse as a conflict before any Pi runtime work', async () => {
+    // 绑定关系在 hijack 前校验：同 Agent 的既有会话不会被误判。
+    await sessions.createSession('pi-assistant', 'chat-bound-session');
+    const owned = await app.inject({ method: 'POST', url: '/api/v1/chat', payload: { agentId: 'pi-assistant', sessionId: 'chat-bound-session', message: '你好' } });
+    assert.equal(owned.statusCode, 200, '同 Agent 复用不应 409（Pi 未启用时走流内错误）');
     const persisted = await sessions.getSession('chat-bound-session', 'pi-assistant');
     assert.equal(persisted?.agentId, 'pi-assistant');
 

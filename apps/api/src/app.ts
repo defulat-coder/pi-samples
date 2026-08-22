@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { Type } from '@sinclair/typebox';
-import type { AgentThinkingLevel, AgentTemplatesResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, PreferencesResponse, SessionMessagesResponse, UsageResponse } from '@pi-workbench/contracts';
+import type { AgentThinkingLevel, AgentTemplatesResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, PreferencesResponse, SessionMessagesResponse, SessionSummary, UsageResponse } from '@pi-workbench/contracts';
 import { AGENT_BODY_MAX_BYTES, AGENT_TEMPLATES, AgentCreateError, agentSummary, AgentSessionStore, createAgent, getAgent, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, getPreferences, listAgentResources, listPrompts, listPiModels, listSkills, loadAgents, openWorkbenchDb, piSessionRegistry, readPrompt, recordUsageEvent, runAgentTurn, setPreference, summarizeTokenUsage, summarizeUsage, type WorkbenchDb } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 
@@ -263,18 +263,25 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
         }
       }
 
-      const session = await withOwnedSession(reply, () =>
-        request.body.sessionId
-          ? sessions.ensureSession(request.body.sessionId, agent.id)
-          : sessions.createSession(agent.id),
-      );
-      if (session === undefined) return;
+      // Pre-hijack binding validation so cross-agent reuse gets a real 409 response.
+      if (request.body.sessionId) {
+        try {
+          await sessions.getSession(request.body.sessionId, agent.id);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH') {
+            return reply.code(409).send({ error: '该会话属于另一个 Agent' });
+          }
+          throw error;
+        }
+      }
 
       const thinkingLevel: AgentThinkingLevel = request.body.thinking ?? getPiThinkingLevel(undefined, cwd);
       const modelLabel = { ...getPiModelConfig({}, cwd), ...(request.body.model ? { model: request.body.model } : {}), thinkingLevel };
 
       const raw = reply.raw;
       let clientClosed = false;
+      let finished = false;
+      let activeSessionId: string | undefined;
       reply.hijack();
       raw.statusCode = 200;
       raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -282,7 +289,13 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       raw.setHeader('Connection', 'keep-alive');
       raw.setHeader('X-Accel-Buffering', 'no');
       raw.flushHeaders?.();
-      request.raw.once('aborted', () => { clientClosed = true; });
+      // 'aborted' is deprecated since Node 18; 'close' covers disconnects. Once the
+      // client is gone we abort the Pi turn instead of burning tokens into the void.
+      request.raw.once('close', () => {
+        if (finished) return;
+        clientClosed = true;
+        if (activeSessionId) void piSessionRegistry.abort(agent.id, activeSessionId);
+      });
 
       const send = (event: ChatStreamEvent) => {
         if (clientClosed || raw.writableEnded || raw.destroyed) return;
@@ -292,10 +305,42 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
           clientClosed = true;
         }
       };
+      // Comment-frame heartbeat keeps the stream alive through proxies during long thinking.
+      const heartbeat = setInterval(() => {
+        if (clientClosed || raw.writableEnded || raw.destroyed) return;
+        try {
+          raw.write(': ping\n\n');
+        } catch {
+          clientClosed = true;
+        }
+      }, 15000);
+
+      // Pi disabled 时不创建空会话：错误事件先于任何 session 持久化。
+      if (!config.PI_AGENT_ENABLED) {
+        send({ type: 'error', error: 'Pi 模型未启用，无法开始会话' });
+        finished = true;
+        clearInterval(heartbeat);
+        if (!raw.writableEnded) raw.end();
+        return;
+      }
+
+      // 绑定已在 hijack 前校验过；这里的 MISMATCH 只可能来自并发竞争，按流内错误处理。
+      let session: SessionSummary;
+      try {
+        session = request.body.sessionId
+          ? await sessions.ensureSession(request.body.sessionId, agent.id)
+          : await sessions.createSession(agent.id);
+      } catch (error) {
+        send({ type: 'error', error: error instanceof Error && error.message === 'AGENT_SESSION_MISMATCH' ? '该会话属于另一个 Agent' : '会话暂时无法创建' });
+        finished = true;
+        clearInterval(heartbeat);
+        if (!raw.writableEnded) raw.end();
+        return;
+      }
+      activeSessionId = session.id;
 
       send({ type: 'start', sessionId: session.id, agentId: agent.id, model: modelLabel });
       try {
-        if (!config.PI_AGENT_ENABLED) throw new Error('Pi 模型未启用，无法开始会话');
         const result = await runAgentTurn(agent.id, session.id, request.body.message, {
           thinkingLevel: request.body.thinking,
           ...(request.body.model ? { model: request.body.model } : {}),
@@ -312,6 +357,8 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
       } catch (error) {
         send({ type: 'error', error: error instanceof Error ? error.message : '流式响应失败' });
       } finally {
+        finished = true;
+        clearInterval(heartbeat);
         if (!raw.writableEnded) raw.end();
       }
     });

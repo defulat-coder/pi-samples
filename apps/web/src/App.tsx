@@ -7,10 +7,11 @@ import { deleteSession, fetchInbox, fetchPreferences, fetchSessionMessages, fetc
 import { createLiveTurn, reduceStreamEvent, type LiveTurn } from './lib/stream.js';
 import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
-import { newMessageId, type ChatMessage, type SystemView } from './lib/types.js';
+import { newMessageId, type ChatMessage, type SystemView, type ViewState } from './lib/types.js';
 import { readThinkingPreference, mergeServerThinkingPreferences } from './lib/configPanel.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { Sidebar } from './components/Sidebar.js';
+import { Toasts, type Toast } from './components/Toasts.js';
 import { InboxColumn, type SessionFilter } from './components/InboxColumn.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { ShortcutsModal } from './components/ShortcutsModal.js';
@@ -49,16 +50,29 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [configAgentId, setConfigAgentId] = useState<string | null>(null);
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
-  const [inboxOpen, setInboxOpen] = useState(false);
-  const [exploreView, setExploreView] = useState<ExploreView | null>(null);
-  const [systemView, setSystemView] = useState<SystemView | null>(null);
+  /** 主区域互斥视图：chat / inbox / explore / system 由 union 类型保证同一时刻只有一个。 */
+  const [view, setView] = useState<ViewState>({ kind: 'chat' });
   const [inboxItems, setInboxItems] = useState<SessionSummary[]>([]);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  /** 用户可见的错误通知；4 秒自动消失。 */
+  const notify = useCallback((text: string) => {
+    const id = ++toastSeq.current;
+    setToasts((prev) => [...prev, { id, text }]);
+    setTimeout(() => setToasts((prev) => prev.filter((toast) => toast.id !== id)), 4000);
+  }, []);
+
+  // 派生布尔值保持既有判断语义；写入一律走 setView。
+  const inboxOpen = view.kind === 'inbox';
+  const exploreView = view.kind === 'explore' ? view.view : null;
+  const systemView = view.kind === 'system' ? view.view : null;
 
   const currentAgent: AgentSummary | undefined = workspace?.agents.find((agent) => agent.id === currentAgentId);
   const sessions = useMemo(
@@ -91,30 +105,31 @@ export default function App() {
         return { ...prev, [sessionId]: { messages, historyLoaded: true } };
       });
     } catch {
-      // 历史读取失败不阻塞会话，仅标记已处理，避免反复请求。
+      // 历史读取失败：标记已处理避免反复请求，并告知用户可以重试。
       setThreads((prev) => (prev[sessionId] ? { ...prev, [sessionId]: { ...prev[sessionId]!, historyLoaded: true } } : prev));
+      notify('历史消息暂时无法读取，重新打开会话可重试');
     }
-  }, []);
+  }, [notify]);
 
   const loadSessions = useCallback(async (agentId: string) => {
     try {
       const items = await fetchSessions(agentId);
       setSessionsByAgent((prev) => ({ ...prev, [agentId]: items }));
     } catch {
-      // 会话列表失败不阻塞主界面。
+      notify('会话列表暂时无法读取');
     }
-  }, []);
+  }, [notify]);
 
   const loadInbox = useCallback(async () => {
     setInboxLoading(true);
     try {
       setInboxItems(await fetchInbox());
     } catch {
-      // 收件箱失败不阻塞主界面。
+      notify('收件箱暂时无法读取');
     } finally {
       setInboxLoading(false);
     }
-  }, []);
+  }, [notify]);
 
   const loadUsage = useCallback(async () => {
     setUsageLoading(true);
@@ -141,7 +156,8 @@ export default function App() {
   const handlePreferenceChange = (key: keyof UiPreferences, value: boolean) => {
     setUiPreferences((current) => writeUiPreference(current, key, value));
     void savePreference(serverKeyForPreference(key), value).catch(() => {
-      // 服务端写穿失败时 localStorage 仍是权威缓存。
+      // 服务端写穿失败时 localStorage 仍是权威缓存，但让用户知道没有持久化。
+      notify('偏好已在本机生效，但未能同步到服务端');
     });
   };
 
@@ -184,45 +200,39 @@ export default function App() {
     setCurrentAgentId(agentId);
     setCurrentSessionId(null);
     setConfigAgentId(null);
-    setInboxOpen(false);
-    setExploreView(null);
-    setSystemView(null);
+    setView({ kind: 'chat' });
     if (!sessionsByAgent[agentId]) void loadSessions(agentId);
+  };
+
+  /** 初始化一个线程占位并回放历史消息（selectSession / openInboxItem 共用）。 */
+  const ensureThread = (agentId: string, sessionId: string) => {
+    if (threads[sessionId]) return;
+    setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
+    void loadThread(agentId, sessionId);
   };
 
   const selectSession = (sessionId: string) => {
     if (sessionId === currentSessionId && !exploreView && !systemView) return;
-    setInboxOpen(false);
-    setExploreView(null);
-    setSystemView(null);
+    setView({ kind: 'chat' });
     setCurrentSessionId(sessionId);
-    if (!threads[sessionId]) {
-      setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
-      if (currentAgentId) void loadThread(currentAgentId, sessionId);
-    }
+    if (currentAgentId) ensureThread(currentAgentId, sessionId);
   };
 
   const newSession = () => {
-    setInboxOpen(false);
-    setExploreView(null);
-    setSystemView(null);
+    setView({ kind: 'chat' });
     setCurrentSessionId(null);
     setConfigAgentId(null);
   };
 
-  const openExplore = (view: ExploreView) => {
-    setInboxOpen(false);
+  const openExplore = (target: ExploreView) => {
     setConfigAgentId(null);
-    setSystemView(null);
-    setExploreView(view);
+    setView({ kind: 'explore', view: target });
   };
 
-  const openSystem = (view: SystemView) => {
-    setInboxOpen(false);
-    setExploreView(null);
+  const openSystem = (target: SystemView) => {
     setConfigAgentId(null);
-    setSystemView(view);
-    if (view === 'usage') void loadUsage();
+    setView({ kind: 'system', view: target });
+    if (target === 'usage') void loadUsage();
     else void loadSettings();
   };
 
@@ -232,13 +242,11 @@ export default function App() {
     } catch {
       // 刷新失败时下次进入页面再拉。
     }
-    setExploreView('agents');
+    setView({ kind: 'explore', view: 'agents' });
   };
 
   const openInboxItem = (agentId: string, sessionId: string) => {
-    setInboxOpen(false);
-    setExploreView(null);
-    setSystemView(null);
+    setView({ kind: 'chat' });
     if (agentId !== currentAgentId) {
       abortRef.current?.abort();
       setLiveTurn(null);
@@ -247,23 +255,16 @@ export default function App() {
     }
     setConfigAgentId(null);
     setCurrentSessionId(sessionId);
-    if (!threads[sessionId]) {
-      setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
-      void loadThread(agentId, sessionId);
-    }
+    ensureThread(agentId, sessionId);
   };
 
   const handlePaletteAction = (action: PaletteAction) => {
     switch (action.kind) {
       case 'chat':
-        setInboxOpen(false);
-        setExploreView(null);
-        setSystemView(null);
+        setView({ kind: 'chat' });
         break;
       case 'inbox':
-        setExploreView(null);
-        setSystemView(null);
-        setInboxOpen(true);
+        setView({ kind: 'inbox' });
         void loadInbox();
         break;
       case 'explore':
@@ -287,7 +288,7 @@ export default function App() {
       await renameSession(currentAgentId, sessionId, title);
       await loadSessions(currentAgentId);
     } catch {
-      // 失败时保留旧标题。
+      notify('会话名称暂时无法保存');
     }
   };
 
@@ -304,7 +305,7 @@ export default function App() {
       await loadSessions(currentAgentId);
       void loadInbox();
     } catch {
-      // 删除失败时列表保持原样。
+      notify('会话暂时无法删除');
     }
   };
 
@@ -435,8 +436,8 @@ export default function App() {
           onNewAgent={() => openExplore('templates')}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenShortcuts={() => setShortcutsOpen(true)}
-          onOpenInbox={() => { setExploreView(null); setSystemView(null); setInboxOpen(true); void loadInbox(); }}
-          onCloseInbox={() => { setInboxOpen(false); setExploreView(null); setSystemView(null); }}
+          onOpenInbox={() => { setView({ kind: 'inbox' }); void loadInbox(); }}
+          onCloseInbox={() => setView({ kind: 'chat' })}
           onOpenExplore={openExplore}
           onOpenSystem={openSystem}
         />
@@ -553,6 +554,8 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        <Toasts toasts={toasts} />
       </div>
     </MotionConfig>
   );

@@ -377,6 +377,20 @@ input, textarea { font: inherit; color: inherit; }
 }
 .message-error-card-detail { margin: 2px 0 0; font-size: 12px; line-height: 1.6; color: var(--error-text-detail); word-break: break-all; }
 
+/* toast 通知 */
+.toast-stack {
+  position: fixed; bottom: var(--space-6); left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  z-index: 90; pointer-events: none;
+}
+.toast {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: var(--radius-full);
+  border: 1px solid var(--error-border); background: var(--error-bg);
+  font-size: 12.5px; color: var(--error-text);
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+}
+
 /* thinking 折叠区 */
 .thinking-block { margin-top: var(--space-2); }
 .thinking-block summary {

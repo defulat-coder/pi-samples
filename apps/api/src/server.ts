@@ -1,8 +1,25 @@
+import { piSessionRegistry } from '@pi-workbench/pi-agent';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 
 const config = loadConfig();
 const app = buildApp(config);
+
+/** Disposes Pi runtimes and closes the SQLite handle before exiting. */
+async function shutdown(signal: string): Promise<void> {
+  app.log.info(`${signal} received, shutting down`);
+  try {
+    await piSessionRegistry.closeAll();
+    await app.close();
+  } catch (error) {
+    app.log.error(error);
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 try {
   await app.listen({ port: config.PORT, host: config.HOST });

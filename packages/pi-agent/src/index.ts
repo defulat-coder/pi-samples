@@ -231,9 +231,22 @@ async function collectTurn(runtime: PiAgentSession, message: string, options: Ag
   }
 }
 
+/** Serializes async tasks per key so one AgentSession never runs concurrent turns. */
+export class KeyedExecutor {
+  private readonly tails = new Map<string, Promise<unknown>>();
+
+  run<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const next = (this.tails.get(key) ?? Promise.resolve()).then(task);
+    // The stored tail swallows rejections so one failed turn never blocks the queue.
+    this.tails.set(key, next.catch(() => undefined));
+    return next;
+  }
+}
+
 /** Keeps one Pi session per agent/session pair so contexts never share a runtime. */
 export class PiSessionRegistry {
   private readonly sessions = new Map<string, Promise<PiAgentSession>>();
+  private readonly executor = new KeyedExecutor();
 
   private getOrCreate(agentId: string, sessionId: string, options: Omit<PiAgentSessionOptions, 'agentId' | 'sessionId'> = {}): Promise<PiAgentSession> {
     const key = `${agentId}:${sessionId}`;
@@ -245,15 +258,25 @@ export class PiSessionRegistry {
   }
 
   async run(agentId: string, sessionId: string, message: string, options: AgentTurnOptions = {}, sessionOptions: Omit<PiAgentSessionOptions, 'agentId' | 'sessionId'> = {}): Promise<AgentTurnResult> {
-    const runtime = await this.getOrCreate(agentId, sessionId, sessionOptions);
-    if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
-    if (options.model && runtime.session.model?.id !== options.model) {
-      const { provider } = getPiModelConfig({}, runtime.cwd);
-      const model = provider ? runtime.session.modelRuntime.getModel(provider, options.model) : undefined;
-      if (!model) throw new Error(`Pi model not found: ${provider ?? 'default'}/${options.model}`);
-      await runtime.session.setModel(model);
-    }
-    return collectTurn(runtime, message, options);
+    // Concurrent /chat turns on the same session would interleave prompt() calls and
+    // delta subscriptions on one AgentSession; serialize them per key.
+    return this.executor.run(`${agentId}:${sessionId}`, async () => {
+      const runtime = await this.getOrCreate(agentId, sessionId, sessionOptions);
+      if (sessionOptions.thinkingLevel && runtime.session.thinkingLevel !== sessionOptions.thinkingLevel) runtime.session.setThinkingLevel(sessionOptions.thinkingLevel);
+      if (options.model && runtime.session.model?.id !== options.model) {
+        const { provider } = getPiModelConfig({}, runtime.cwd);
+        const model = provider ? runtime.session.modelRuntime.getModel(provider, options.model) : undefined;
+        if (!model) throw new Error(`Pi model not found: ${provider ?? 'default'}/${options.model}`);
+        await runtime.session.setModel(model);
+      }
+      return collectTurn(runtime, message, options);
+    });
+  }
+
+  /** Aborts the running turn of one session (e.g. when the SSE client disconnects). */
+  async abort(agentId: string, sessionId: string): Promise<void> {
+    const runtime = this.sessions.get(`${agentId}:${sessionId}`);
+    if (runtime) await (await runtime).session.abort();
   }
 
   async close(agentId: string, sessionId: string): Promise<void> {

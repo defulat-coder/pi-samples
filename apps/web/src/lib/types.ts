@@ -1,4 +1,5 @@
 import type { ChatModelLabel, ChatUsage } from '@pi-workbench/contracts';
+import type { ExploreView } from './explore.js';
 
 /** One rendered message in the thread view. */
 export type ChatMessage = {
@@ -25,3 +26,10 @@ export function newMessageId(): string {
 
 /** 系统页面（用量 / 设置）；同一时间至多打开一个，与会话、收件箱、探索区互斥。 */
 export type SystemView = 'usage' | 'settings';
+
+/** 主区域视图状态机：互斥由类型保证，不再手工维护三连 set。 */
+export type ViewState =
+  | { kind: 'chat' }
+  | { kind: 'inbox' }
+  | { kind: 'explore'; view: ExploreView }
+  | { kind: 'system'; view: SystemView };
