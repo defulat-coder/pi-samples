@@ -2,17 +2,18 @@ import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import { AgentSessionStore, getPiProjectRoot, openWorkbenchDb, type WorkbenchDb } from '@pi-workbench/pi-agent';
+import { AgentSessionStore, ApprovalBridge, getPiProjectRoot, openWorkbenchDb, type WorkbenchDb } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
 import type { AppContext } from './context.js';
 import { registerAgentRoutes } from './routes/agents.js';
+import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerMetaRoutes } from './routes/meta.js';
 import { registerPreferenceRoutes } from './routes/preferences.js';
 import { registerSessionRoutes } from './routes/sessions.js';
 import { registerUsageRoutes } from './routes/usage.js';
 
-type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string; db?: WorkbenchDb };
+type AppDependencies = { sessionStore?: AgentSessionStore; cwd?: string; db?: WorkbenchDb; approvalBridge?: ApprovalBridge };
 
 export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDependencies = {}): FastifyInstance {
   const cwd = dependencies.cwd ?? getPiProjectRoot();
@@ -20,7 +21,12 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   // Generic workbench data (usage events, preferences) lives in .pi/workbench.db;
   // Pi-specific state stays in Pi's own files.
   const db = dependencies.db ?? openWorkbenchDb(resolve(cwd, '.pi/workbench.db'));
-  const ctx: AppContext = { config, cwd, sessions, db };
+  // 审批桥：监听扩展的转发文件树，把 pending 审批落进 SQLite。
+  const approvalBridge =
+    dependencies.approvalBridge ??
+    new ApprovalBridge({ db, cwd, resolveAgentId: async (sessionId) => (await sessions.getSession(sessionId))?.agentId });
+  approvalBridge.start();
+  const ctx: AppContext = { config, cwd, sessions, db, approvalBridge };
 
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
@@ -31,6 +37,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   app.register(cors, { origin: config.WEB_ORIGIN });
   app.register(helmet, { contentSecurityPolicy: false });
   app.addHook('onClose', async () => {
+    approvalBridge.close();
     db.close();
   });
 
@@ -40,6 +47,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
     registerMetaRoutes(v1, ctx);
     registerAgentRoutes(v1, ctx);
     registerSessionRoutes(v1, ctx);
+    registerApprovalRoutes(v1, ctx);
     registerPreferenceRoutes(v1, ctx);
     registerUsageRoutes(v1, ctx);
     registerChatRoutes(v1, ctx);

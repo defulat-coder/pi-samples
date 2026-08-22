@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import type { ApprovalRecord, ApprovalState } from '@pi-workbench/contracts';
 
 /**
  * SQLite projection for generic workbench data (usage events, UI preferences).
@@ -34,6 +35,22 @@ const MIGRATIONS: readonly string[] = [
     read_at TEXT,
     completed_at TEXT
   );
+  `,
+  `
+  CREATE TABLE approvals (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_id TEXT,
+    agent_name TEXT NOT NULL,
+    message TEXT NOT NULL,
+    state TEXT NOT NULL,
+    response_nonce TEXT NOT NULL,
+    target_session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX idx_approvals_state ON approvals(state);
+  CREATE INDEX idx_approvals_session ON approvals(session_id);
   `,
 ];
 
@@ -164,4 +181,94 @@ export function setInboxCompleted(db: WorkbenchDb, sessionId: string, agentId: s
 /** Session 删除时清理对应的收件箱状态。 */
 export function deleteInboxState(db: WorkbenchDb, sessionId: string): void {
   db.prepare('DELETE FROM inbox_state WHERE session_id = ?').run(sessionId);
+}
+
+/** 审批记录是通用工作台数据（走 SQLite）；responseNonce/targetSessionId 只用于回写扩展响应文件，不下发给浏览器。 */
+export interface StoredApproval extends ApprovalRecord {
+  responseNonce: string;
+  targetSessionId: string;
+}
+
+export interface PendingApprovalInput {
+  id: string;
+  sessionId: string;
+  agentId?: string;
+  agentName: string;
+  message: string;
+  responseNonce: string;
+  targetSessionId: string;
+  createdAt: string;
+}
+
+type ApprovalRow = {
+  id: string;
+  sessionId: string;
+  agentId: string | null;
+  agentName: string;
+  message: string;
+  state: ApprovalState;
+  responseNonce: string;
+  targetSessionId: string;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+const APPROVAL_SELECT = `SELECT id, session_id AS sessionId, agent_id AS agentId, agent_name AS agentName, message,
+       state, response_nonce AS responseNonce, target_session_id AS targetSessionId,
+       created_at AS createdAt, resolved_at AS resolvedAt FROM approvals`;
+
+function approvalFromRow(row: ApprovalRow): StoredApproval {
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    ...(row.agentId ? { agentId: row.agentId } : {}),
+    agentName: row.agentName,
+    message: row.message,
+    state: row.state,
+    responseNonce: row.responseNonce,
+    targetSessionId: row.targetSessionId,
+    createdAt: row.createdAt,
+    ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
+  };
+}
+
+/** 记录新的 pending 审批；按 id 幂等（watcher 重复扫描不产生回调），返回是否新插入。 */
+export function recordPendingApproval(db: WorkbenchDb, approval: PendingApprovalInput): boolean {
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO approvals (id, session_id, agent_id, agent_name, message, state, response_nonce, target_session_id, created_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    )
+    .run(approval.id, approval.sessionId, approval.agentId ?? null, approval.agentName, approval.message, approval.responseNonce, approval.targetSessionId, approval.createdAt);
+  return result.changes > 0;
+}
+
+export function getApproval(db: WorkbenchDb, id: string): StoredApproval | undefined {
+  const row = db.prepare(`${APPROVAL_SELECT} WHERE id = ?`).get(id) as ApprovalRow | undefined;
+  return row ? approvalFromRow(row) : undefined;
+}
+
+/** 按 state 过滤（缺省全部），created_at 倒序。 */
+export function listApprovals(db: WorkbenchDb, state?: ApprovalState): StoredApproval[] {
+  const rows = (
+    state
+      ? db.prepare(`${APPROVAL_SELECT} WHERE state = ? ORDER BY created_at DESC`).all(state)
+      : db.prepare(`${APPROVAL_SELECT} ORDER BY created_at DESC`).all()
+  ) as ApprovalRow[];
+  return rows.map(approvalFromRow);
+}
+
+/** 写入终态与处理时间；调用方负责先校验当前 state 为 pending。 */
+export function resolveApproval(db: WorkbenchDb, id: string, state: ApprovalState): void {
+  db.prepare('UPDATE approvals SET state = ?, resolved_at = ? WHERE id = ?').run(state, new Date().toISOString(), id);
+}
+
+/** 收件箱集成：session_id → pending 审批（每会话最多取最新一条）。 */
+export function getPendingApprovalsBySession(db: WorkbenchDb): Map<string, StoredApproval> {
+  const map = new Map<string, StoredApproval>();
+  for (const approval of listApprovals(db, 'pending')) {
+    const existing = map.get(approval.sessionId);
+    if (!existing || approval.createdAt > existing.createdAt) map.set(approval.sessionId, approval);
+  }
+  return map;
 }

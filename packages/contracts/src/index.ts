@@ -84,6 +84,8 @@ export interface InboxItem extends SessionSummary {
   read: boolean;
   /** 被标记完成（或出错/中断后又有成功运行）的时间；未完成为 undefined。 */
   completedAt?: string;
+  /** 该会话有待人工审批的工具调用时携带；有待审批的会话会并入 attention tab。 */
+  pendingApproval?: PendingApproval;
 }
 
 /** Payload of GET /api/v1/inbox; items 按 tab 过滤、updatedAt 倒序。 */
@@ -155,6 +157,49 @@ export type ChatStreamEvent =
   /** Pi auto-retry lifecycle: emitted when a failed turn is retried. */
   | { type: 'retry'; attempt: number; maxAttempts: number; errorMessage: string }
   | { type: 'error'; error: string };
+
+/**
+ * 审批状态：pending 等待人工决策；approved/always 已批准（always = 本次会话内同类放行，
+ * 由扩展内存语义承接）；denied* 已拒绝；expired = 请求文件已消失（扩展超时或外部消费），
+ * 不会回写扩展，仅作为 SQLite 终态。
+ */
+export type ApprovalState = 'pending' | 'approved' | 'always' | 'denied' | 'denied_with_reason' | 'expired';
+
+/** 一条等待人工审批的工具调用；审批桥把扩展的转发请求文件落成此记录。 */
+export interface PendingApproval {
+  /** 扩展请求文件里的 request id（即文件名 <id>.json）。 */
+  id: string;
+  /** 发起审批的会话（请求文件的 requesterSessionId）。 */
+  sessionId: string;
+  /** 由会话的 agent 绑定反查得到；会话已删除时缺省。 */
+  agentId?: string;
+  /** 请求文件里的 requesterAgentName。 */
+  agentName: string;
+  /** 扩展给出的待审批描述（工具与参数摘要）。 */
+  message: string;
+  createdAt: string;
+}
+
+/** 审批全量记录：pending 叠加最终状态与处理时间。 */
+export interface ApprovalRecord extends PendingApproval {
+  state: ApprovalState;
+  resolvedAt?: string;
+}
+
+/** Payload of GET /api/v1/approvals; state 缺省时返回全部记录。 */
+export interface ApprovalListResponse {
+  items: ApprovalRecord[];
+  total: number;
+}
+
+/** Payload of POST /api/v1/approvals/:id/decision。 */
+export interface ApprovalDecisionRequest {
+  approved: boolean;
+  /** 拒绝时附带给扩展的 denialReason。 */
+  reason?: string;
+  /** 批准且 always=true 时 state 写 "always"（本次会话内同类调用放行，由扩展承接）。 */
+  always?: boolean;
+}
 
 /** Project resources visible to an agent plus its persisted run statistics. */
 export interface AgentResources {

@@ -706,6 +706,30 @@ input, textarea { font: inherit; color: inherit; }
 .inbox-detail-banner p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-detail-loading { margin: var(--space-8) auto; font-size: 13px; color: var(--text-quaternary); }
 
+/* HITL 审批：行上蓝色「待审批」药丸 + 详情顶部审批卡片（模式对齐 Fleet 中断卡片） */
+.inbox-status.approval { background: var(--brand-secondary); color: var(--text-brand); }
+.approval-card {
+  display: flex; flex-direction: column; gap: var(--space-2); flex: none;
+  margin: var(--space-3) var(--space-4) 0; padding: var(--space-3);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+  background: var(--bg-primary); box-shadow: var(--button-shadow);
+}
+.approval-card-head { display: flex; align-items: center; gap: var(--space-2); color: var(--brand); }
+.approval-card-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.approval-card-agent { font-size: 12px; color: var(--text-quaternary); }
+.approval-card-time { margin-left: auto; font-size: 12px; color: var(--text-quaternary); }
+.approval-card-message { margin: 0; font-size: 13px; color: var(--text-secondary); word-break: break-word; }
+.approval-card-hint { margin: 0; font-size: 12px; color: var(--text-quaternary); }
+.approval-card-actions, .approval-card-deny { display: flex; align-items: center; gap: var(--space-2); }
+.approval-card-deny input {
+  flex: 1; min-width: 0; height: 26px; padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-size: 13px;
+}
+.approval-card-deny input:focus { outline: none; border-color: var(--brand); }
+.approval-card .header-button:disabled { opacity: 0.5; }
+.header-button.danger { color: var(--error-text); border-color: var(--error-border); }
+.header-button.danger:hover { background: var(--error-bg); }
+
 /* ===== 探索区：Agents / Templates / Skills（§11.4、§11.6） ===== */
 .explore { display: flex; flex: 1; flex-direction: column; overflow-y: auto; padding: var(--space-5) var(--space-5) var(--space-9); }
 .explore-header { margin-bottom: var(--space-5); }

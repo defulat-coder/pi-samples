@@ -6,18 +6,22 @@ import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle';
 import { EnvelopeOpen } from '@phosphor-icons/react/dist/icons/EnvelopeOpen';
 import { EnvelopeSimple } from '@phosphor-icons/react/dist/icons/EnvelopeSimple';
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
+import { Play } from '@phosphor-icons/react/dist/icons/Play';
+import { ShieldCheck } from '@phosphor-icons/react/dist/icons/ShieldCheck';
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { X } from '@phosphor-icons/react/dist/icons/X';
 import { deleteSession, fetchInbox, fetchSessionMessages, updateInboxState } from '../lib/api.js';
 import { cx } from '../lib/cx.js';
+import type { InboxResumeMode } from '../lib/inboxResume.js';
 import { formatRelativeTime } from '../lib/sessions.js';
 import { MOTION_EASE } from '../lib/motion.js';
 import type { ChatMessage } from '../lib/types.js';
 import { useAsyncData } from '../hooks/useAsyncData.js';
 import { useWorkspace } from '../context/WorkspaceContext.js';
 import { AgentChip } from './AgentChip.js';
+import { ApprovalCard } from './ApprovalCard.js';
 import { ThreadView } from './ThreadView.js';
 
 /** 搜索输入防抖：输入停顿后再真正发起过滤请求。 */
@@ -93,6 +97,12 @@ function InboxRow({ item, agentName, agentMark, selected, now, handlers }: {
           {attentionLabel(item)}
         </span>
       )}
+      {item.pendingApproval && (
+        <span className="inbox-status approval">
+          <ShieldCheck size={12} weight="fill" aria-hidden="true" />
+          待审批
+        </span>
+      )}
       <span className="inbox-title">
         <span className="inbox-title-text">{item.title}</span>
         {item.read && item.preview && <span className="inbox-preview"> — {item.preview}</span>}
@@ -129,12 +139,16 @@ function InboxRow({ item, agentName, agentMark, selected, now, handlers }: {
   );
 }
 
-function InboxDetail({ item, agentName, agentMark, onClose, onOpenChat }: {
+function InboxDetail({ item, agentName, agentMark, onClose, onOpenChat, onResume, onInboxChanged }: {
   item: InboxItem;
   agentName: string;
   agentMark: string;
   onClose: () => void;
   onOpenChat: () => void;
+  /** 恢复动作：aborted →「继续」，其余（error）→「重试」。 */
+  onResume: () => void;
+  /** 审批决策落定后调用，触发收件箱刷新（卡片消失、行出队）。 */
+  onInboxChanged: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
 
@@ -147,6 +161,9 @@ function InboxDetail({ item, agentName, agentMark, onClose, onOpenChat }: {
     return () => { cancelled = true; };
   }, [item.agentId, item.id]);
 
+  const resumable = isAttention(item);
+  const ResumeIcon = item.attentionReason === 'aborted' ? Play : ArrowClockwise;
+
   return (
     <>
       <div className="inbox-detail-header">
@@ -158,10 +175,17 @@ function InboxDetail({ item, agentName, agentMark, onClose, onOpenChat }: {
           <X size={14} />
         </button>
       </div>
-      {isAttention(item) && (
+      {item.pendingApproval && (
+        <ApprovalCard approval={item.pendingApproval} agentName={agentName} onSettled={onInboxChanged} />
+      )}
+      {resumable && (
         <div className="inbox-detail-banner" role="status">
           <WarningCircle size={14} weight="fill" aria-hidden="true" />
           <p>{item.attentionDetail ?? `${attentionLabel(item)}，可以在聊天中继续`}</p>
+          <button type="button" className="header-button primary" onClick={onResume}>
+            <ResumeIcon size={13} weight="bold" />
+            {item.attentionReason === 'aborted' ? '继续' : '重试'}
+          </button>
           <button type="button" className="header-button" onClick={onOpenChat}>在聊天中打开继续</button>
         </div>
       )}
@@ -177,11 +201,13 @@ function InboxDetail({ item, agentName, agentMark, onClose, onOpenChat }: {
 export type InboxViewProps = {
   /** 「在聊天中打开」：跳到聊天视图并挂载该会话。 */
   onOpen: (agentId: string, sessionId: string) => void;
+  /** 恢复动作：打开会话后就地发起一轮（retry 重发最后一条用户消息，continue 发「请继续」）。 */
+  onResume: (agentId: string, sessionId: string, mode: InboxResumeMode) => void;
   /** 行内已读/删除等变更后调用，让 App 刷新侧边栏徽标与会话列表。 */
   onInboxChanged: () => void;
 };
 
-export function InboxView({ onOpen, onInboxChanged }: InboxViewProps) {
+export function InboxView({ onOpen, onResume, onInboxChanged }: InboxViewProps) {
   const { workspace, notify } = useWorkspace();
   const agents = workspace.agents;
   const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
@@ -373,6 +399,8 @@ export function InboxView({ onOpen, onInboxChanged }: InboxViewProps) {
                 agentMark={agentMark(detail.agentId)}
                 onClose={() => setDetailId(null)}
                 onOpenChat={() => onOpen(detail.agentId, detail.id)}
+                onResume={() => onResume(detail.agentId, detail.id, detail.attentionReason === 'aborted' ? 'continue' : 'retry')}
+                onInboxChanged={onInboxChanged}
               />
             </motion.aside>
           )}

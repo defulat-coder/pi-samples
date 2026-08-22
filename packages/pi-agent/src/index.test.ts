@@ -37,11 +37,11 @@ describe('pi agent runtime', () => {
     assert.ok(ids.includes('k3-256k'));
   });
 
-  it('creates a pure-chat session without any tools', async () => {
+  it('creates a session with the pilot tool allowlist guarded by the permission extension', async () => {
     const runtime = await createPiAgentSession({ cwd: fixtureCwd(), agentId: 'agent-one', persistSession: false });
     try {
       assert.equal(runtime.agentId, 'agent-one');
-      assert.deepEqual(runtime.session.getActiveToolNames(), []);
+      assert.deepEqual([...runtime.session.getActiveToolNames()].sort(), ['bash', 'find', 'grep', 'ls', 'read']);
       assert.match(runtime.session.systemPrompt, /你是 agent-one。/);
     } finally {
       runtime.close();

@@ -3,13 +3,14 @@ import type {
   InboxItem,
   InboxResponse,
   InboxTab,
+  PendingApproval,
   RenameSessionRequest,
   SessionListResponse,
   SessionMessagesResponse,
   SessionSummary,
   UpdateInboxStateRequest,
 } from '@pi-workbench/contracts';
-import { deleteInboxState, getInboxStates, piSessionRegistry, setInboxCompleted, setInboxRead, type InboxState } from '@pi-workbench/pi-agent';
+import { deleteInboxState, getInboxStates, piSessionRegistry, setInboxCompleted, setInboxRead, type InboxState, type StoredApproval } from '@pi-workbench/pi-agent';
 import { AgentParamsSchema, InboxQuerySchema, RenameSessionSchema, SessionParamsSchema, UpdateInboxStateSchema } from '../schemas.js';
 import { agentOr404, withOwnedSession, type AppContext } from '../context.js';
 
@@ -18,9 +19,26 @@ function isRead(session: SessionSummary, state: InboxState | undefined): boolean
   return Boolean(state?.readAt && state.readAt >= session.updatedAt);
 }
 
-function toInboxItem(session: SessionSummary, state: InboxState | undefined): InboxItem {
+/** StoredApproval → 合同 PendingApproval（剥掉 nonce/targetSessionId 等传输字段）。 */
+function toPendingApproval(approval: StoredApproval): PendingApproval {
+  return {
+    id: approval.id,
+    sessionId: approval.sessionId,
+    ...(approval.agentId ? { agentId: approval.agentId } : {}),
+    agentName: approval.agentName,
+    message: approval.message,
+    createdAt: approval.createdAt,
+  };
+}
+
+function toInboxItem(session: SessionSummary, state: InboxState | undefined, pendingApproval?: StoredApproval): InboxItem {
   const completedAt = state?.completedAt ?? undefined;
-  return { ...session, read: isRead(session, state), ...(completedAt ? { completedAt } : {}) };
+  return {
+    ...session,
+    read: isRead(session, state),
+    ...(completedAt ? { completedAt } : {}),
+    ...(pendingApproval ? { pendingApproval: toPendingApproval(pendingApproval) } : {}),
+  };
 }
 
 export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -29,12 +47,14 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
     const query = request.query.q?.trim().toLowerCase();
     const sessions = await ctx.sessions.listSessions();
     let states = getInboxStates(ctx.db);
+    // 有待审批工具调用的会话并入 attention（不动 needsAttention 的 JSONL 推导逻辑）。
+    const pendingApprovals = ctx.approvalBridge.pendingBySession();
 
     // 自动完成：曾进过收件箱（有 inbox_state 记录）、尚未完成，且最新一轮已成功。
     let changed = false;
     for (const session of sessions) {
       const state = states.get(session.id);
-      if (state && !state.completedAt && !session.needsAttention) {
+      if (state && !state.completedAt && !session.needsAttention && !pendingApprovals.has(session.id)) {
         setInboxCompleted(ctx.db, session.id, session.agentId, true);
         changed = true;
       }
@@ -43,7 +63,7 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
 
     const inTab = sessions.filter((session) => {
       const completed = Boolean(states.get(session.id)?.completedAt);
-      const attention = session.needsAttention && !completed;
+      const attention = (session.needsAttention || pendingApprovals.has(session.id)) && !completed;
       if (tab === 'attention') return attention;
       if (tab === 'completed') return completed;
       return attention || completed;
@@ -53,7 +73,7 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): vo
     const filtered = query ? inTab.filter((session) => session.title.toLowerCase().includes(query) || (session.preview ?? '').toLowerCase().includes(query)) : inTab;
     const items = filtered
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((session) => toInboxItem(session, states.get(session.id)));
+      .map((session) => toInboxItem(session, states.get(session.id), pendingApprovals.get(session.id)));
     return { items, total: items.length, unreadCount };
   });
 

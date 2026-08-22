@@ -40,7 +40,15 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [threads, setThreads] = useState<Record<string, ThreadState>>({});
   const [liveTurn, setLiveTurn] = useState<(LiveTurn & { messageId: string }) | null>(null);
+  /** liveTurn 的同步镜像：interrupt 后同一事件循环里调 send 时读到的是最新值，不受闭包快照影响。 */
+  const liveTurnRef = useRef<(LiveTurn & { messageId: string }) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  /** 同步更新 liveTurn 的 state 与 ref。 */
+  const updateLiveTurn = (turn: (LiveTurn & { messageId: string }) | null) => {
+    liveTurnRef.current = turn;
+    setLiveTurn(turn);
+  };
 
   /** 回放一个已持久化会话的历史消息；加载期间新产生的内存消息优先保留。 */
   const loadThread = useCallback(async (agentId: string, sessionId: string) => {
@@ -84,21 +92,25 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
     setCurrentSessionId((current) => (current === sessionId ? null : current));
   }, []);
 
-  /** 中断进行中的流式 turn（切换 Agent 时调用）。 */
+  /** 中断进行中的流式 turn（切换 Agent 或收件箱恢复动作前调用）。 */
   const interrupt = useCallback(() => {
     abortRef.current?.abort();
+    liveTurnRef.current = null;
     setLiveTurn(null);
   }, []);
 
-  /** 发起一轮对话；进行中有 turn 时直接忽略（服务端同 session 也会串行化）。 */
-  const send = (text: string, agentId: string, model?: string) => {
-    if (liveTurn) return;
+  /**
+   * 发起一轮对话；进行中有 turn 时直接忽略（服务端同 session 也会串行化）。
+   * 显式传入 targetSessionId（如收件箱重试/继续）时跳过当前会话/草稿推导，直接落到该会话。
+   */
+  const send = (text: string, agentId: string, model?: string, targetSessionId?: string) => {
+    if (liveTurnRef.current) return;
 
     const userMessage: ChatMessage = { id: newMessageId(), role: 'user', text };
     const assistantMessage: ChatMessage = { id: newMessageId(), role: 'assistant', text: '', streaming: true };
     // 草稿线程没有服务端 sessionId：下一轮仍按新会话发起，不能把草稿 key 发给服务端。
-    const pendingKey = currentSessionId && threads[currentSessionId]?.pending ? currentSessionId : null;
-    const sessionKey = currentSessionId && !pendingKey ? currentSessionId : null;
+    const pendingKey = !targetSessionId && currentSessionId && threads[currentSessionId]?.pending ? currentSessionId : null;
+    const sessionKey = targetSessionId ?? (currentSessionId && !pendingKey ? currentSessionId : null);
     const threadKey = sessionKey ?? pendingKey ?? `draft-${newMessageId()}`;
 
     const appendToThread = (key: string, items: ChatMessage[], pending = false) => {
@@ -115,7 +127,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
     abortRef.current = controller;
     // 本轮的可变进度收敛到一个对象：turn 由 reduceStreamEvent 折叠，sessionId 在 start 后确定。
     const progress = { turn: createLiveTurn(), sessionId: sessionKey as string | null };
-    setLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
+    updateLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
 
     /** 把已确定的回答/错误落进线程消息；读取调用时刻的最新 progress。 */
     const finalize = (answer: string, error: string | undefined, interrupted = false) => {
@@ -151,7 +163,7 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
           return next;
         });
       }
-      setLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
+      updateLiveTurn({ ...progress.turn, messageId: assistantMessage.id });
     };
 
     // 请求参数在事件到达前同步求值，此处 progress.sessionId 即 sessionKey。
@@ -191,8 +203,9 @@ export function useChatController({ notify, onTurnSettled }: ChatControllerOptio
         }
       })
       .finally(() => {
-        abortRef.current = null;
-        setLiveTurn(null);
+        if (abortRef.current === controller) abortRef.current = null;
+        // 只清自己的 liveTurn：interrupt 后同一事件循环里可能已发起新一轮（如收件箱恢复动作），不能误清。
+        if (liveTurnRef.current?.messageId === assistantMessage.id) updateLiveTurn(null);
         onTurnSettled(agentId);
       });
   };

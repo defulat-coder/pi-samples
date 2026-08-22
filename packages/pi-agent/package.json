@@ -11,19 +11,24 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@earendil-works/pi-tui": "0.84.2",
     "@pi-workbench/contracts": "workspace:*",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.0.3",
+    "pi-permission-system": "0.8.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/build-permission-ext.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit && eslint --config ../../eslint.config.js src",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
     "@pi-workbench/eslint": "workspace:*",
     "@types/better-sqlite3": "^9.6.0",
-    "eslint": "^10.9.0"
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.0",
+    "tsx": "^4.23.12"
   }
 }

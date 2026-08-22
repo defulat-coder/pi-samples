@@ -8,13 +8,16 @@ import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-
 import type { ChatUsage } from '@pi-workbench/contracts';
 import { getAgent } from './agents.js';
 import { getModelRuntime, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, type PiThinkingLevel } from './model-config.js';
+import { loadPermissionExtension } from './permissions.js';
 import { assertSessionAgentBinding, getPiSessionDir, initializeSessionFile } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 export { getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listPiModels } from './model-config.js';
 export type { PiModelConfig, PiThinkingLevel } from './model-config.js';
 export * from './agents.js';
+export * from './approvals.js';
 export * from './db.js';
+export * from './permissions.js';
 export * from './session-store.js';
 export * from './templates.js';
 export * from './usage.js';
@@ -63,7 +66,9 @@ function projectExtensionsEnabled(explicit?: boolean): boolean {
 
 /**
  * Creates one Pi AgentSession for an agent bound to one immutable session.
- * No custom tools are registered: agents in this round are pure chat.
+ * Tools are a host-controlled pilot allowlist (read/grep/find/ls + bash); the
+ * pi-permission-system extension guards every call — read-only tools are allowed
+ * by policy, bash goes through HITL approval forwarding, everything else is denied.
  */
 export async function createPiAgentSession(options: PiAgentSessionOptions): Promise<PiAgentSession> {
   const cwd = options.cwd ?? getPiProjectRoot();
@@ -73,10 +78,13 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
   const model = modelConfig.provider && modelConfig.model ? modelRuntime.getModel(modelConfig.provider, modelConfig.model) : undefined;
   if (!model) throw new Error(`Pi model not found: ${modelConfig.provider ?? 'default'}/${modelConfig.model ?? 'default'}`);
 
+  // 审批扩展必须在构造 ResourceLoader 前加载（进程级转发 env 在 import 扩展前设置）。
+  const permissionExtension = await loadPermissionExtension(cwd);
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
     appendSystemPromptOverride: (base) => [...base, agent.body],
+    extensionFactories: [permissionExtension],
     noExtensions: !projectExtensionsEnabled(options.projectExtensions),
     // Themes are inert in the Web UI but remain part of the Pi resource graph.
     noThemes: false,
@@ -104,7 +112,8 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
     modelRuntime,
     resourceLoader,
     model,
-    tools: [],
+    // 试点工具白名单：宿主控制，agent 文件不得声明或扩展工具（契约不变）。
+    tools: ['read', 'grep', 'find', 'ls', 'bash'],
     thinkingLevel: getPiThinkingLevel(options.thinkingLevel, cwd),
   });
 

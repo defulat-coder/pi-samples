@@ -3,8 +3,9 @@ import type { AgentSummary, SessionSummary, WorkspaceResponse } from '@pi-workbe
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
-import { deleteSession, fetchInbox, fetchPreferences, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference } from './lib/api.js';
+import { deleteSession, fetchInbox, fetchPreferences, fetchSessionMessages, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference } from './lib/api.js';
 import { cx } from './lib/cx.js';
+import { buildInboxResumeText, INBOX_CONTINUE_TEXT, type InboxResumeMode } from './lib/inboxResume.js';
 import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
 import type { SystemView, ViewState } from './lib/types.js';
@@ -13,6 +14,7 @@ import { MOTION_EASE } from './lib/motion.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
 import { useAsyncData } from './hooks/useAsyncData.js';
 import { useChatController } from './hooks/useChatController.js';
+import { useVisiblePolling } from './hooks/useVisiblePolling.js';
 import { WorkspaceProvider } from './context/WorkspaceContext.js';
 import { Sidebar } from './components/Sidebar.js';
 import { Toasts, type Toast } from './components/Toasts.js';
@@ -34,6 +36,8 @@ import { SettingsView } from './components/SettingsView.js';
 
 /** toast 自动消失时长。 */
 const TOAST_DURATION_MS = 4000;
+/** 收件箱轮询间隔：让 HITL 审批请求及时冒泡到收件箱与侧栏徽标。 */
+const INBOX_POLL_INTERVAL_MS = 15_000;
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
@@ -90,6 +94,9 @@ export default function App() {
   const settings = useAsyncData(fetchSettings);
   const { reload: reloadInbox } = inbox;
   const { reload: reloadSettings } = settings;
+
+  // 15s 轮询 attention 收件箱（仅页面可见时），reload 身份稳定，与手动/onTurnSettled 刷新共用同一条路径。
+  useVisiblePolling(() => void reloadInbox(), INBOX_POLL_INTERVAL_MS);
 
   /** 每个 Agent 的未读待处理会话数（对齐 Fleet /threads/count?agent_id= 徽标语义），来自收件箱 attention 数据。 */
   const attentionByAgent = useMemo(() => {
@@ -226,6 +233,28 @@ export default function App() {
     }
     setConfigAgentId(null);
     chat.openSession(agentId, sessionId);
+  };
+
+  /**
+   * 收件箱「恢复闭环」：先把会话打开到聊天视图，再就地发起一轮——
+   * retry 重发该会话最后一条用户消息，continue 发固定文本「请继续」。
+   * 成功后由 onTurnSettled 触发收件箱刷新，后端自动转 Completed。
+   */
+  const handleInboxResume = async (agentId: string, sessionId: string, mode: InboxResumeMode) => {
+    // 先清掉可能进行中的 turn：否则 send 会被 liveTurn 守卫吞掉（openInboxItem 只在跨 Agent 时 interrupt）。
+    chat.interrupt();
+    openInboxItem(agentId, sessionId);
+    let text: string | null = INBOX_CONTINUE_TEXT;
+    if (mode === 'retry') {
+      text = await fetchSessionMessages(agentId, sessionId)
+        .then((messages) => buildInboxResumeText(messages, 'retry'))
+        .catch(() => null);
+    }
+    if (!text) {
+      notify('没有可重试的消息');
+      return;
+    }
+    chat.send(text, agentId, selectedModel, sessionId);
   };
 
   /** 收件箱内变更（已读/删除）后：刷新徽标数据，并同步当前 Agent 的会话列表。 */
@@ -368,6 +397,7 @@ export default function App() {
             ) : inboxOpen ? (
               <InboxView
                 onOpen={openInboxItem}
+                onResume={(agentId, sessionId, mode) => void handleInboxResume(agentId, sessionId, mode)}
                 onInboxChanged={handleInboxChanged}
               />
             ) : (

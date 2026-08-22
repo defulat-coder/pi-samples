@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { AGENT_ID_PATTERN, AGENT_THINKING_LEVELS, type AgentThinkingLevel } from '@pi-workbench/contracts';
+import { AGENT_ID_PATTERN, AGENT_THINKING_LEVELS, type AgentThinkingLevel, type ApprovalState } from '@pi-workbench/contracts';
 import { AGENT_BODY_MAX_BYTES } from '@pi-workbench/pi-agent';
 
 export const AgentIdSchema = Type.String({ pattern: AGENT_ID_PATTERN });
@@ -61,3 +61,15 @@ export const UpdatePromptSchema = Type.Object({
 
 // 空内容（trim 后）表示删除 .pi/APPEND_SYSTEM.md。
 export const UpdateAppendSystemSchema = Type.Object({ content: Type.String({ maxLength: 16000 }) });
+
+// 审批：id 来自扩展的 uuid，pattern 同时挡住路径穿越；state 过滤见 contracts ApprovalState。
+export const ApprovalStateSchema = Type.Unsafe<ApprovalState>({
+  enum: ['pending', 'approved', 'always', 'denied', 'denied_with_reason', 'expired'],
+});
+export const ApprovalQuerySchema = Type.Object({ state: Type.Optional(ApprovalStateSchema) });
+export const ApprovalParamsSchema = Type.Object({ id: Type.String({ pattern: '^[A-Za-z0-9-]{1,64}$' }) });
+export const ApprovalDecisionSchema = Type.Object({
+  approved: Type.Boolean(),
+  reason: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+  always: Type.Optional(Type.Boolean()),
+});

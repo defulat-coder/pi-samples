@@ -1,0 +1,13 @@
+diff --git a/src/model-option-compatibility.ts b/src/model-option-compatibility.ts
+index 1804c864d5d87978686bf5b2869635d356251243..eaae20c56815676abe1ca74baf4cbe4f59542fa0 100644
+--- a/src/model-option-compatibility.ts
++++ b/src/model-option-compatibility.ts
+@@ -5,7 +5,7 @@ import {
+   type Context as LlmContext,
+   type Model,
+   type SimpleStreamOptions,
+-} from "@earendil-works/pi-ai";
++} from "@earendil-works/pi-ai/compat";
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+ 
+ const GUARDED_TEMPERATURE_APIS = [

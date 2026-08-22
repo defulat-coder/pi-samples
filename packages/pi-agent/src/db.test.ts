@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { deleteInboxState, getInboxStates, getPreferences, openWorkbenchDb, recordUsageEvent, setInboxCompleted, setInboxRead, setPreference, summarizeTokenUsage } from './db.js';
 
 describe('openWorkbenchDb', () => {
-  it('creates the usage_events, preferences and inbox_state tables on an in-memory database', () => {
+  it('creates the usage_events, preferences, inbox_state and approvals tables on an in-memory database', () => {
     const db = openWorkbenchDb(':memory:');
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>).map(
       (row) => row.name,
     );
-    assert.deepEqual(tables, ['inbox_state', 'preferences', 'usage_events']);
+    assert.deepEqual(tables, ['approvals', 'inbox_state', 'preferences', 'usage_events']);
   });
 
   it('is idempotent: reopening an existing database keeps the schema and data', () => {

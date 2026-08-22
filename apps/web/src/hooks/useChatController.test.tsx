@@ -154,6 +154,88 @@ describe('useChatController', () => {
     assert.equal(assistant.streaming, false);
   });
 
+  it('显式 targetSessionId：跳过当前会话推导，直接落到指定会话', async () => {
+    const bodies: string[] = [];
+    const channel = sseChannel();
+    globalThis.fetch = (async (url, init) => {
+      const href = String(url);
+      if (href.includes('/chat')) {
+        bodies.push(String(init?.body));
+        return channel.response;
+      }
+      if (href.includes('/sessions/s1/messages')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              { id: 'm1', role: 'user', content: '历史问题', timestamp: '2026-01-01T00:00:00Z' },
+              { id: 'm2', role: 'assistant', content: '历史回答', timestamp: '2026-01-01T00:00:01Z' },
+            ],
+          }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+    const { result, settled } = setup();
+
+    act(() => result.current.openSession('agent-one', 's1'));
+    await waitFor(() => assert.equal(result.current.threadMessages.length, 2));
+
+    // 收件箱恢复动作的调用形态：当前打开的是 s1，但本轮显式发到 s9。
+    act(() => result.current.send('再试一次', 'agent-one', undefined, 's9'));
+    assert.equal(JSON.parse(bodies[0]!).sessionId, 's9', '显式 targetSessionId 直接作为请求 sessionId');
+    assert.equal(result.current.currentSessionId, 's1', '不改变当前会话');
+    assert.deepEqual(result.current.threadMessages.map((message) => message.text), ['历史问题', '历史回答'], '当前线程不被追加');
+
+    await act(async () => {
+      channel.emit('done', { answer: '好了' });
+      channel.close();
+    });
+    assert.deepEqual(settled, ['agent-one']);
+
+    // 目标会话的线程已在本地建好：打开时不回源重拉，直接呈现本轮消息。
+    act(() => result.current.openSession('agent-one', 's9'));
+    assert.deepEqual(
+      result.current.threadMessages.map((message) => [message.role, message.text]),
+      [['user', '再试一次'], ['assistant', '好了']],
+    );
+  });
+
+  it('interrupt 后同一事件循环内可立即 send，旧轮次的收尾不会清新一轮的 liveTurn', async () => {
+    const channels: Array<ReturnType<typeof sseChannel>> = [];
+    globalThis.fetch = (async (url, init) => {
+      const href = String(url);
+      if (href.includes('/chat')) {
+        const channel = sseChannel();
+        channels.push(channel);
+        init?.signal?.addEventListener('abort', () => channel.fail(new DOMException('The operation was aborted', 'AbortError')));
+        return channel.response;
+      }
+      if (href.includes('/messages')) return new Response(JSON.stringify({ items: [] }));
+      throw new Error(`unexpected fetch: ${href}`);
+    }) as typeof fetch;
+    const { result } = setup();
+
+    act(() => result.current.send('第一轮', 'agent-one'));
+    assert.ok(result.current.liveTurn);
+
+    // 收件箱恢复动作的调用形态：先 interrupt 清场，紧接着（同一 act）发起新一轮。
+    act(() => {
+      result.current.interrupt();
+      result.current.send('第二轮', 'agent-one');
+    });
+    assert.equal(channels.length, 2, 'interrupt 后紧接着的 send 不应被 liveTurn 守卫吞掉');
+
+    await act(async () => undefined); // 让被中断轮次的 catch/finally 跑完
+    assert.ok(result.current.liveTurn, '旧轮次的 finally 不应清新一轮的 liveTurn');
+
+    await act(async () => {
+      channels[1]!.emit('done', { answer: '第二轮回答' });
+      channels[1]!.close();
+    });
+    assert.equal(result.current.liveTurn, null);
+    assert.equal(result.current.threadMessages.at(-1)!.text, '第二轮回答');
+  });
+
   it('流中途断线后自动回放服务端已持久化的内容，补齐本地截断的回答', async () => {
     const channel = sseChannel();
     globalThis.fetch = (async (url) => {

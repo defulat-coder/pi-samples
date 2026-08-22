@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxItem, InboxResponse, InboxTab, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdateInboxStateRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, AppendSystemResponse, ApprovalDecisionRequest, ApprovalListResponse, ApprovalRecord, ApprovalState, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxItem, InboxResponse, InboxTab, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UpdateAgentRequest, UpdateInboxStateRequest, UpdatePromptRequest, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -77,6 +77,22 @@ export async function deleteSession(agentId: string, sessionId: string): Promise
 
 export async function fetchPrompt(name: string): Promise<PromptDocument> {
   return readJson(await fetch(`/api/v1/prompts/${encodeURIComponent(name)}`), '提示词暂时无法读取');
+}
+
+export async function fetchApprovals(state?: ApprovalState): Promise<ApprovalListResponse> {
+  const params = state ? `?state=${encodeURIComponent(state)}` : '';
+  return readJson(await fetch(`/api/v1/approvals${params}`), '审批列表暂时无法读取');
+}
+
+/** POSTs 人工审批决策；409（已被处理/已过期）单独报错，便于调用方提示后刷新。 */
+export async function decideApproval(id: string, decision: ApprovalDecisionRequest): Promise<ApprovalRecord> {
+  const response = await fetch(`/api/v1/approvals/${encodeURIComponent(id)}/decision`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(decision),
+  });
+  if (response.status === 409) throw new Error('该审批已被处理');
+  return readJson(response, '审批操作暂时无法提交');
 }
 
 /** PUTs one prompt template rewrite; server errors (400/404) surface their message. */
