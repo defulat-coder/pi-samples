@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, PreferencesResponse, PromptDocument, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentDetail, AgentResources, AgentTemplate, AgentTemplatesResponse, AgentThinkingLevel, ChatRequest, ChatStreamEvent, CreateAgentRequest, InboxResponse, PreferencesResponse, PromptDocument, SessionListResponse, SessionMessage, SessionMessagesResponse, SessionSummary, SettingsResponse, SkillListResponse, SkillSummary, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
 import { decodeStreamEvent, extractSseBlocks, flushSseBlocks } from './stream.js';
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
@@ -28,7 +28,7 @@ export async function fetchAgentResources(agentId: string): Promise<AgentResourc
 }
 
 export async function fetchSessions(agentId: string): Promise<SessionSummary[]> {
-  const payload = await readJson<{ items: SessionSummary[] }>(await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/sessions`), '会话列表暂时无法读取');
+  const payload = await readJson<SessionListResponse>(await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/sessions`), '会话列表暂时无法读取');
   return payload.items;
 }
 
@@ -42,7 +42,7 @@ export async function fetchSessionMessages(agentId: string, sessionId: string): 
 }
 
 export async function fetchInbox(): Promise<SessionSummary[]> {
-  const payload = await readJson<{ items: SessionSummary[] }>(await fetch('/api/v1/inbox'), '收件箱暂时无法读取');
+  const payload = await readJson<InboxResponse>(await fetch('/api/v1/inbox'), '收件箱暂时无法读取');
   return payload.items;
 }
 
@@ -67,7 +67,7 @@ export async function fetchPrompt(name: string): Promise<PromptDocument> {
 }
 
 export async function fetchSkills(): Promise<SkillSummary[]> {
-  const payload = await readJson<{ items: SkillSummary[] }>(await fetch('/api/v1/skills'), '技能列表暂时无法读取');
+  const payload = await readJson<SkillListResponse>(await fetch('/api/v1/skills'), '技能列表暂时无法读取');
   return payload.items;
 }
 

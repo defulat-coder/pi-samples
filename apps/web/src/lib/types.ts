@@ -21,7 +21,7 @@ export type ChatMessage = {
 };
 
 export function newMessageId(): string {
-  return `msg_${Math.random().toString(36).slice(2, 10)}`;
+  return `msg_${crypto.randomUUID()}`;
 }
 
 /** 系统页面（用量 / 设置）；同一时间至多打开一个，与会话、收件箱、探索区互斥。 */

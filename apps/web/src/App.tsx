@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentSummary, ChatStreamEvent, SessionSummary, SettingsResponse, UsageResponse, WorkspaceResponse } from '@pi-workbench/contracts';
+import type { AgentSummary, SessionSummary, WorkspaceResponse } from '@pi-workbench/contracts';
 import { AnimatePresence, MotionConfig } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
-import { deleteSession, fetchInbox, fetchPreferences, fetchSessionMessages, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference, streamChat } from './lib/api.js';
-import { createLiveTurn, reduceStreamEvent, type LiveTurn } from './lib/stream.js';
+import { deleteSession, fetchInbox, fetchPreferences, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference } from './lib/api.js';
+import { cx } from './lib/cx.js';
 import { sortSessions } from './lib/sessions.js';
 import type { ExploreView } from './lib/explore.js';
-import { newMessageId, type ChatMessage, type SystemView, type ViewState } from './lib/types.js';
-import { readThinkingPreference, mergeServerThinkingPreferences } from './lib/configPanel.js';
+import type { SystemView, ViewState } from './lib/types.js';
+import { mergeServerThinkingPreferences } from './lib/configPanel.js';
 import { mergeServerUiPreferences, readUiPreferences, serverKeyForPreference, writeUiPreference, type UiPreferences } from './lib/preferences.js';
+import { useAsyncData } from './hooks/useAsyncData.js';
+import { useChatController } from './hooks/useChatController.js';
 import { Sidebar } from './components/Sidebar.js';
 import { Toasts, type Toast } from './components/Toasts.js';
 import { InboxColumn, type SessionFilter } from './components/InboxColumn.js';
@@ -28,20 +30,11 @@ import { SkillsView } from './components/SkillsView.js';
 import { UsageView } from './components/UsageView.js';
 import { SettingsView } from './components/SettingsView.js';
 
-type ThreadState = {
-  messages: ChatMessage[];
-  /** true 表示历史消息已从服务端回放完成（或本次会话内产生，无需回放）。 */
-  historyLoaded: boolean;
-};
-
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
   const [fatal, setFatal] = useState('');
   const [currentAgentId, setCurrentAgentId] = useState<string | undefined>(undefined);
   const [sessionsByAgent, setSessionsByAgent] = useState<Record<string, SessionSummary[]>>({});
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [threads, setThreads] = useState<Record<string, ThreadState>>({});
-  const [liveTurn, setLiveTurn] = useState<(LiveTurn & { messageId: string }) | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(() => readUiPreferences());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readUiPreferences().sidebarCollapsed);
@@ -52,15 +45,8 @@ export default function App() {
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
   /** 主区域互斥视图：chat / inbox / explore / system 由 union 类型保证同一时刻只有一个。 */
   const [view, setView] = useState<ViewState>({ kind: 'chat' });
-  const [inboxItems, setInboxItems] = useState<SessionSummary[]>([]);
-  const [inboxLoading, setInboxLoading] = useState(false);
-  const [usage, setUsage] = useState<UsageResponse | null>(null);
-  const [usageLoading, setUsageLoading] = useState(false);
-  const [settings, setSettings] = useState<SettingsResponse | null>(null);
-  const [settingsLoading, setSettingsLoading] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
 
   /** 用户可见的错误通知；4 秒自动消失。 */
   const notify = useCallback((text: string) => {
@@ -79,37 +65,17 @@ export default function App() {
     () => (currentAgentId ? sortSessions(sessionsByAgent[currentAgentId] ?? []) : []),
     [sessionsByAgent, currentAgentId],
   );
-  const currentThread: ThreadState | undefined = currentSessionId ? threads[currentSessionId] : undefined;
+
+  const inbox = useAsyncData(fetchInbox, { onError: () => notify('收件箱暂时无法读取') });
+  const usage = useAsyncData(fetchUsage);
+  const settings = useAsyncData(fetchSettings);
+
   /** 每个 Agent 的待处理会话数，来自收件箱数据。 */
   const attentionByAgent = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const item of inboxItems) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
+    for (const item of inbox.data ?? []) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
     return map;
-  }, [inboxItems]);
-
-  /** 回放一个已持久化会话的历史消息；加载期间新产生的内存消息优先保留。 */
-  const loadThread = useCallback(async (agentId: string, sessionId: string) => {
-    try {
-      const items = await fetchSessionMessages(agentId, sessionId);
-      const messages: ChatMessage[] = items.map((item) => ({
-        id: item.id,
-        role: item.role,
-        text: item.content,
-        ...(item.thinking ? { thinking: item.thinking } : {}),
-        ...(item.usage ? { usage: item.usage } : {}),
-        ...(item.stopReason === 'error' || item.stopReason === 'aborted' ? { error: item.errorMessage ?? '本轮回复失败' } : {}),
-      }));
-      setThreads((prev) => {
-        const existing = prev[sessionId];
-        if (existing && existing.messages.length) return { ...prev, [sessionId]: { ...existing, historyLoaded: true } };
-        return { ...prev, [sessionId]: { messages, historyLoaded: true } };
-      });
-    } catch {
-      // 历史读取失败：标记已处理避免反复请求，并告知用户可以重试。
-      setThreads((prev) => (prev[sessionId] ? { ...prev, [sessionId]: { ...prev[sessionId]!, historyLoaded: true } } : prev));
-      notify('历史消息暂时无法读取，重新打开会话可重试');
-    }
-  }, [notify]);
+  }, [inbox.data]);
 
   const loadSessions = useCallback(async (agentId: string) => {
     try {
@@ -120,38 +86,13 @@ export default function App() {
     }
   }, [notify]);
 
-  const loadInbox = useCallback(async () => {
-    setInboxLoading(true);
-    try {
-      setInboxItems(await fetchInbox());
-    } catch {
-      notify('收件箱暂时无法读取');
-    } finally {
-      setInboxLoading(false);
-    }
-  }, [notify]);
-
-  const loadUsage = useCallback(async () => {
-    setUsageLoading(true);
-    try {
-      setUsage(await fetchUsage());
-    } catch {
-      // 用量页失败时保留旧数据。
-    } finally {
-      setUsageLoading(false);
-    }
-  }, []);
-
-  const loadSettings = useCallback(async () => {
-    setSettingsLoading(true);
-    try {
-      setSettings(await fetchSettings());
-    } catch {
-      // 设置页失败时保留旧数据。
-    } finally {
-      setSettingsLoading(false);
-    }
-  }, []);
+  const chat = useChatController({
+    notify,
+    onTurnSettled: (agentId) => {
+      void loadSessions(agentId);
+      void inbox.reload();
+    },
+  });
 
   const handlePreferenceChange = (key: keyof UiPreferences, value: boolean) => {
     setUiPreferences((current) => writeUiPreference(current, key, value));
@@ -183,44 +124,39 @@ export default function App() {
         setCurrentAgentId((prev) => prev ?? first.id);
         void loadSessions(first.id);
       }
-      void loadInbox();
-      void loadSettings();
+      void inbox.reload();
+      void settings.reload();
       void loadPreferences();
     } catch (error) {
       setFatal(error instanceof Error ? error.message : '工作区信息暂时无法读取');
     }
-  }, [loadSessions, loadInbox, loadSettings, loadPreferences]);
+  }, [loadSessions, loadPreferences, inbox.reload, settings.reload]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
+  const send = (text: string) => {
+    if (currentAgentId) chat.send(text, currentAgentId, selectedModel);
+  };
+
   const selectAgent = (agentId: string) => {
     if (agentId === currentAgentId && !exploreView && !systemView) return;
-    abortRef.current?.abort();
-    setLiveTurn(null);
+    chat.interrupt();
     setCurrentAgentId(agentId);
-    setCurrentSessionId(null);
+    chat.closeSession();
     setConfigAgentId(null);
     setView({ kind: 'chat' });
     if (!sessionsByAgent[agentId]) void loadSessions(agentId);
   };
 
-  /** 初始化一个线程占位并回放历史消息（selectSession / openInboxItem 共用）。 */
-  const ensureThread = (agentId: string, sessionId: string) => {
-    if (threads[sessionId]) return;
-    setThreads((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: { messages: [], historyLoaded: false } }));
-    void loadThread(agentId, sessionId);
-  };
-
   const selectSession = (sessionId: string) => {
-    if (sessionId === currentSessionId && !exploreView && !systemView) return;
+    if (sessionId === chat.currentSessionId && !exploreView && !systemView) return;
     setView({ kind: 'chat' });
-    setCurrentSessionId(sessionId);
-    if (currentAgentId) ensureThread(currentAgentId, sessionId);
+    if (currentAgentId) chat.openSession(currentAgentId, sessionId);
   };
 
   const newSession = () => {
     setView({ kind: 'chat' });
-    setCurrentSessionId(null);
+    chat.closeSession();
     setConfigAgentId(null);
   };
 
@@ -232,8 +168,8 @@ export default function App() {
   const openSystem = (target: SystemView) => {
     setConfigAgentId(null);
     setView({ kind: 'system', view: target });
-    if (target === 'usage') void loadUsage();
-    else void loadSettings();
+    if (target === 'usage') void usage.reload();
+    else void settings.reload();
   };
 
   const handleAgentCreated = async () => {
@@ -248,14 +184,12 @@ export default function App() {
   const openInboxItem = (agentId: string, sessionId: string) => {
     setView({ kind: 'chat' });
     if (agentId !== currentAgentId) {
-      abortRef.current?.abort();
-      setLiveTurn(null);
+      chat.interrupt();
       setCurrentAgentId(agentId);
       if (!sessionsByAgent[agentId]) void loadSessions(agentId);
     }
     setConfigAgentId(null);
-    setCurrentSessionId(sessionId);
-    ensureThread(agentId, sessionId);
+    chat.openSession(agentId, sessionId);
   };
 
   const handlePaletteAction = (action: PaletteAction) => {
@@ -265,7 +199,7 @@ export default function App() {
         break;
       case 'inbox':
         setView({ kind: 'inbox' });
-        void loadInbox();
+        void inbox.reload();
         break;
       case 'explore':
         openExplore(action.view);
@@ -296,92 +230,11 @@ export default function App() {
     if (!currentAgentId) return;
     try {
       await deleteSession(currentAgentId, sessionId);
-      if (sessionId === currentSessionId) setCurrentSessionId(null);
-      setThreads((prev) => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
+      chat.removeThread(sessionId);
       await loadSessions(currentAgentId);
-      void loadInbox();
+      void inbox.reload();
     } catch {
       notify('会话暂时无法删除');
-    }
-  };
-
-  const send = (text: string) => {
-    const agentId = currentAgentId;
-    if (!agentId || liveTurn) return;
-
-    const userMessage: ChatMessage = { id: newMessageId(), role: 'user', text };
-    const assistantMessage: ChatMessage = { id: newMessageId(), role: 'assistant', text: '', streaming: true };
-    const sessionKey = currentSessionId;
-
-    const appendToThread = (key: string, items: ChatMessage[]) => {
-      setThreads((prev) => {
-        const thread = prev[key] ?? { messages: [], historyLoaded: true };
-        return { ...prev, [key]: { ...thread, messages: [...thread.messages, ...items], historyLoaded: true } };
-      });
-    };
-
-    if (sessionKey) appendToThread(sessionKey, [userMessage, assistantMessage]);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let turn = createLiveTurn();
-    let resolvedSessionId = sessionKey;
-    setLiveTurn({ ...turn, messageId: assistantMessage.id });
-
-    const onEvent = (event: ChatStreamEvent) => {
-      turn = reduceStreamEvent(turn, event);
-      if (event.type === 'start' && !resolvedSessionId) {
-        resolvedSessionId = event.sessionId;
-        setCurrentSessionId(event.sessionId);
-        appendToThread(event.sessionId, [userMessage, assistantMessage]);
-      }
-      setLiveTurn({ ...turn, messageId: assistantMessage.id });
-    };
-
-    streamChat(
-      { agentId, message: text, thinking: readThinkingPreference(agentId), ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {}), ...(selectedModel ? { model: selectedModel } : {}) },
-      onEvent,
-      controller.signal,
-    )
-      .then((done) => {
-        finalize(turn.answer || done.answer, undefined);
-      })
-      .catch((error: Error) => {
-        if (controller.signal.aborted) {
-          finalize(turn.answer, undefined, true);
-          return;
-        }
-        finalize(turn.answer, error.message || '流式响应失败');
-      })
-      .finally(() => {
-        abortRef.current = null;
-        setLiveTurn(null);
-        void loadSessions(agentId);
-        void loadInbox();
-      });
-
-    function finalize(answer: string, error: string | undefined, interrupted = false) {
-      const key = resolvedSessionId;
-      if (!key) return;
-      setThreads((prev) => {
-        const thread = prev[key];
-        if (!thread) return prev;
-        return {
-          ...prev,
-          [key]: {
-            ...thread,
-            messages: thread.messages.map((message) =>
-              message.id === assistantMessage.id
-                ? { ...message, text: answer, thinking: turn.thinking || undefined, streaming: false, error, ...(interrupted ? { interrupted: true } : {}), model: turn.model, usage: turn.usage }
-                : message,
-            ),
-          },
-        };
-      });
     }
   };
 
@@ -404,18 +257,7 @@ export default function App() {
     );
   }
 
-  const threadMessages: ChatMessage[] = (() => {
-    if (!currentSessionId) return [];
-    const base = currentThread?.messages ?? [];
-    if (!liveTurn) return base;
-    return base.map((message) =>
-      message.id === liveTurn.messageId
-        ? { ...message, text: liveTurn.answer, thinking: liveTurn.thinking || undefined, streaming: true, ...(liveTurn.retry ? { retry: liveTurn.retry } : {}) }
-        : message,
-    );
-  })();
-
-  const showWelcome = !currentSessionId;
+  const showWelcome = !chat.currentSessionId;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -425,18 +267,18 @@ export default function App() {
           currentAgentId={currentAgentId}
           collapsed={sidebarCollapsed}
           inboxOpen={inboxOpen}
-          inboxCount={inboxItems.length}
+          inboxCount={(inbox.data ?? []).length}
           attentionByAgent={attentionByAgent}
           exploreView={exploreView}
           systemView={systemView}
-          workspaceInfo={settings ? `${settings.workspace.name} · ${settings.workspace.sessionDir}` : undefined}
+          workspaceInfo={settings.data ? `${settings.data.workspace.name} · ${settings.data.workspace.sessionDir}` : undefined}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           onSelectAgent={selectAgent}
           onOpenConfig={setConfigAgentId}
           onNewAgent={() => openExplore('templates')}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenShortcuts={() => setShortcutsOpen(true)}
-          onOpenInbox={() => { setView({ kind: 'inbox' }); void loadInbox(); }}
+          onOpenInbox={() => { setView({ kind: 'inbox' }); void inbox.reload(); }}
           onCloseInbox={() => setView({ kind: 'chat' })}
           onOpenExplore={openExplore}
           onOpenSystem={openSystem}
@@ -446,7 +288,7 @@ export default function App() {
           <InboxColumn
             title={currentAgent.name}
             sessions={sessions}
-            currentSessionId={currentSessionId}
+            currentSessionId={chat.currentSessionId}
             filter={sessionFilter}
             collapsed={inboxColumnCollapsed}
             onToggleCollapsed={() => setInboxColumnCollapsed((value) => !value)}
@@ -467,15 +309,15 @@ export default function App() {
           ) : exploreView === 'skills' ? (
             <SkillsView prompts={workspace.prompts} />
           ) : systemView === 'usage' ? (
-            <UsageView usage={usage} loading={usageLoading} onRefresh={() => void loadUsage()} />
+            <UsageView usage={usage.data} loading={usage.loading} onRefresh={() => void usage.reload()} />
           ) : systemView === 'settings' ? (
-            <SettingsView settings={settings} loading={settingsLoading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
+            <SettingsView settings={settings.data} loading={settings.loading} preferences={uiPreferences} onPreferenceChange={handlePreferenceChange} />
           ) : inboxOpen ? (
             <InboxView
-              items={inboxItems}
+              items={inbox.data ?? []}
               agents={workspace.agents}
-              loading={inboxLoading}
-              onRefresh={() => void loadInbox()}
+              loading={inbox.loading}
+              onRefresh={() => void inbox.reload()}
               onOpen={openInboxItem}
             />
           ) : (
@@ -489,7 +331,7 @@ export default function App() {
                   {currentAgentId && (
                     <button
                       type="button"
-                      className={configAgentId ? 'header-button active' : 'header-button'}
+                      className={cx('header-button', configAgentId && 'active')}
                       onClick={() => setConfigAgentId((prev) => (prev ? null : currentAgentId))}
                     >
                       <SlidersHorizontal size={13} />
@@ -506,7 +348,7 @@ export default function App() {
                     <Composer
                       prompts={workspace.prompts}
                       models={workspace.models}
-                      disabled={Boolean(liveTurn)}
+                      disabled={Boolean(chat.liveTurn)}
                       selectedModel={selectedModel}
                       onSelectModel={setSelectedModel}
                       onSend={send}
@@ -515,14 +357,13 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <ThreadView messages={threadMessages} compact={uiPreferences.compactMessages} />
+                  <ThreadView messages={chat.threadMessages} compact={uiPreferences.compactMessages} />
                   <div className="composer-wrap">
                     <div className="composer-inner">
                       <Composer
                         prompts={workspace.prompts}
                         models={workspace.models}
-                        disabled={Boolean(liveTurn)}
-                        queued={Boolean(liveTurn)}
+                        disabled={Boolean(chat.liveTurn)}
                         selectedModel={selectedModel}
                         onSelectModel={setSelectedModel}
                         onSend={send}

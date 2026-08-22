@@ -4,8 +4,8 @@ import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import { formatRelativeTime, sortSessions } from '../lib/sessions.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { MOTION_EASE } from '../lib/motion.js';
+import { AgentChip } from './AgentChip.js';
 
 function attentionLabel(session: SessionSummary): string {
   return session.attentionReason === 'aborted' ? '已中断' : '出错';
@@ -21,7 +21,7 @@ export type InboxViewProps = {
 
 export function InboxView({ items, agents, loading, onRefresh, onOpen }: InboxViewProps) {
   const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
-  const agentMark = (agentId: string) => agents.find((agent) => agent.id === agentId)?.mark.slice(0, 2) ?? '?';
+  const agentMark = (agentId: string) => agents.find((agent) => agent.id === agentId)?.mark ?? '?';
   const rows = sortSessions(items);
   const now = new Date();
 
@@ -55,11 +55,11 @@ export function InboxView({ items, agents, loading, onRefresh, onOpen }: InboxVi
               className="inbox-row"
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: motionEase }}
+              transition={{ duration: 0.2, ease: MOTION_EASE }}
               onClick={() => onOpen(session.agentId, session.id)}
               title={session.attentionDetail ?? session.title}
             >
-              <span className="agent-chip" aria-hidden="true">{agentMark(session.agentId)}</span>
+              <AgentChip mark={agentMark(session.agentId)} />
               <span className="inbox-agent">{agentName(session.agentId)}</span>
               <span className="inbox-status">
                 <WarningCircle size={12} weight="fill" aria-hidden="true" />

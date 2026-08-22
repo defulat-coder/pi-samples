@@ -1,14 +1,33 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { SessionManager, type SessionEntry, type SessionInfo } from '@earendil-works/pi-coding-agent';
-import type { SessionMessage, SessionSummary } from '@pi-workbench/contracts';
+import { SessionManager, type SessionEntry, type SessionHeader, type SessionInfo } from '@earendil-works/pi-coding-agent';
+import { AGENT_ID_PATTERN, type SessionMessage, type SessionSummary } from '@pi-workbench/contracts';
 
 export const PI_WORKBENCH_AGENT_ENTRY = 'pi-workbench.agent';
 export const PI_WORKBENCH_SESSION_TITLE_ENTRY = 'pi-workbench.session-title';
 
+const AGENT_ID_REGEX = new RegExp(AGENT_ID_PATTERN);
+
 type AgentEntryData = { agentId: string };
 type SessionTitleEntryData = { title: string };
+
+/** Session/binding contract violations; `code` doubles as the message so existing callers keep working. */
+export type SessionBindingErrorCode =
+  | 'AGENT_BINDING_CONFLICT'
+  | 'AGENT_BINDING_MISSING'
+  | 'AGENT_BINDING_INVALID'
+  | 'AGENT_SESSION_MISMATCH'
+  | 'AGENT_SESSION_NOT_FOUND';
+
+export class SessionBindingError extends Error {
+  readonly code: SessionBindingErrorCode;
+  constructor(code: SessionBindingErrorCode) {
+    super(code);
+    this.name = 'SessionBindingError';
+    this.code = code;
+  }
+}
 
 export function getPiSessionDir(cwd: string): string {
   const configured = process.env.PI_SESSION_DIR?.trim();
@@ -23,17 +42,37 @@ export function getPiSessionDir(cwd: string): string {
 }
 
 /**
+ * Creates a persisted JSONL session file and stamps it with the immutable agent
+ * binding. SessionManager only persists once the file carries its header, so the
+ * header is written first ('wx' fails on a stale file) and the binding entry is
+ * appended through a reopened manager. Shared by AgentSessionStore and the Pi
+ * runtime factory in index.ts.
+ */
+export function initializeSessionFile(options: { cwd: string; sessionDir: string; agentId: string; id?: string }): { manager: SessionManager; file: string; header: SessionHeader } {
+  const { cwd, sessionDir, agentId, id } = options;
+  mkdirSync(sessionDir, { recursive: true });
+  const created = SessionManager.create(cwd, sessionDir, id ? { id } : undefined);
+  const file = created.getSessionFile();
+  const header = created.getHeader();
+  if (!file || !header) throw new Error('Pi session file could not be initialized');
+  if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
+  const manager = SessionManager.open(file, sessionDir, cwd);
+  manager.appendCustomEntry(PI_WORKBENCH_AGENT_ENTRY, { agentId } satisfies AgentEntryData);
+  return { manager, file, header };
+}
+
+/**
  * Every persisted Web session carries exactly one immutable agent binding as a
  * JSONL custom entry. Sessions without a binding are invalid and are never
  * migrated or inferred; a mismatched binding is rejected.
  */
 export function assertSessionAgentBinding(entries: SessionEntry[], expectedAgentId?: string): string {
   const bindings = entries.filter((item) => item.type === 'custom' && item.customType === PI_WORKBENCH_AGENT_ENTRY && item.data && typeof item.data === 'object');
-  if (bindings.length !== 1) throw new Error(bindings.length ? 'AGENT_BINDING_CONFLICT' : 'AGENT_BINDING_MISSING');
+  if (bindings.length !== 1) throw new SessionBindingError(bindings.length ? 'AGENT_BINDING_CONFLICT' : 'AGENT_BINDING_MISSING');
   const entry = bindings[0]!;
   const agentId = entry.type === 'custom' ? (entry.data as Partial<AgentEntryData>).agentId : undefined;
-  if (typeof agentId !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(agentId)) throw new Error('AGENT_BINDING_INVALID');
-  if (expectedAgentId && agentId !== expectedAgentId) throw new Error('AGENT_SESSION_MISMATCH');
+  if (typeof agentId !== 'string' || !AGENT_ID_REGEX.test(agentId)) throw new SessionBindingError('AGENT_BINDING_INVALID');
+  if (expectedAgentId && agentId !== expectedAgentId) throw new SessionBindingError('AGENT_SESSION_MISMATCH');
   return agentId;
 }
 
@@ -146,30 +185,24 @@ export class AgentSessionStore {
     const existing = await this.findInfo(id);
     if (existing) {
       const record = await this.recordFromInfo(existing);
-      if (!record || record.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
+      if (!record || record.agentId !== agentId) throw new SessionBindingError('AGENT_SESSION_MISMATCH');
       return record;
     }
-    mkdirSync(this.sessionDir, { recursive: true });
-    const manager = SessionManager.create(this.cwd, this.sessionDir, { id });
-    const file = manager.getSessionFile();
-    const header = manager.getHeader();
-    if (!file || !header) throw new Error('Pi session file could not be initialized');
-    if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
-    SessionManager.open(file, this.sessionDir, this.cwd).appendCustomEntry(PI_WORKBENCH_AGENT_ENTRY, { agentId } satisfies AgentEntryData);
+    const { file, header } = initializeSessionFile({ cwd: this.cwd, sessionDir: this.sessionDir, agentId, id });
     return (await this.recordFromInfo({ path: file, id: header.id, cwd: header.cwd, created: new Date(header.timestamp), modified: new Date(header.timestamp), messageCount: 0, firstMessage: '', allMessagesText: '' }))!;
   }
 
   /** Creates the session when absent; rejects reuse through another agent. */
   async ensureSession(id: string, agentId: string): Promise<SessionSummary> {
     const existing = await this.getSession(id);
-    if (existing && existing.agentId !== agentId) throw new Error('AGENT_SESSION_MISMATCH');
+    if (existing && existing.agentId !== agentId) throw new SessionBindingError('AGENT_SESSION_MISMATCH');
     return existing ?? this.createSession(agentId, id);
   }
 
   async getSession(id: string, expectedAgentId?: string): Promise<SessionSummary | undefined> {
     const info = await this.findInfo(id);
     const record = info ? await this.recordFromInfo(info) : undefined;
-    if (record && expectedAgentId && record.agentId !== expectedAgentId) throw new Error('AGENT_SESSION_MISMATCH');
+    if (record && expectedAgentId && record.agentId !== expectedAgentId) throw new SessionBindingError('AGENT_SESSION_MISMATCH');
     return record;
   }
 
@@ -211,7 +244,7 @@ export class AgentSessionStore {
 
   private async openSession(id: string, expectedAgentId?: string): Promise<SessionManager> {
     const info = await this.findInfo(id);
-    if (!info) throw new Error('AGENT_SESSION_NOT_FOUND');
+    if (!info) throw new SessionBindingError('AGENT_SESSION_NOT_FOUND');
     const manager = SessionManager.open(info.path, this.sessionDir, this.cwd);
     assertSessionAgentBinding(manager.getEntries(), expectedAgentId);
     return manager;

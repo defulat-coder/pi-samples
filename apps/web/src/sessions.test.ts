@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SessionSummary } from '@pi-workbench/contracts';
-import { filterAttention, formatRelativeTime, groupSessions, matchesQuery, sortSessions } from './lib/sessions.js';
+import { filterAttention, formatRelativeTime, groupSessions, sortSessions } from './lib/sessions.js';
 
 function session(id: string, updatedAt: string, title = id): SessionSummary {
   return { id, agentId: 'pi-assistant', title, createdAt: updatedAt, updatedAt, questionCount: 1, needsAttention: false };
@@ -42,16 +42,6 @@ describe('sortSessions', () => {
     const sorted = sortSessions(items);
     assert.deepEqual(sorted.map((item) => item.id), ['b', 'a']);
     assert.deepEqual(items.map((item) => item.id), ['a', 'b']);
-  });
-});
-
-describe('matchesQuery', () => {
-  it('空查询匹配一切，否则大小写不敏感子串匹配', () => {
-    assert.equal(matchesQuery('', '任意'), true);
-    assert.equal(matchesQuery('  ', '任意'), true);
-    assert.equal(matchesQuery('PI', 'Pi 助手'), true);
-    assert.equal(matchesQuery('助手', 'Pi 助手', undefined), true);
-    assert.equal(matchesQuery('不存在', 'Pi 助手'), false);
   });
 });
 

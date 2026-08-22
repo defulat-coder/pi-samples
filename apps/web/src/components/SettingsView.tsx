@@ -2,8 +2,8 @@ import { motion } from 'motion/react';
 import type { SettingsResponse } from '@pi-workbench/contracts';
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
 import type { UiPreferences } from '../lib/preferences.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
 
 const THINKING_LABELS: Record<string, string> = {
   off: '关闭',
@@ -29,7 +29,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val
       role="switch"
       aria-checked={checked}
       aria-label={label}
-      className={checked ? 'toggle active' : 'toggle'}
+      className={cx('toggle', checked && 'active')}
       onClick={() => onChange(!checked)}
     >
       <span className="toggle-thumb" aria-hidden="true" />
@@ -58,7 +58,7 @@ export function SettingsView({ settings, loading, preferences, onPreferenceChang
           className="settings-groups"
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2, ease: motionEase }}
+          transition={{ duration: 0.2, ease: MOTION_EASE }}
         >
           <section className="settings-card">
             <h4>模型</h4>

@@ -7,7 +7,10 @@ import { Check } from '@phosphor-icons/react/dist/icons/Check';
 import { Cpu } from '@phosphor-icons/react/dist/icons/Cpu';
 import { Terminal } from '@phosphor-icons/react/dist/icons/Terminal';
 import { fetchPrompt } from '../lib/api.js';
+import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
 import { filterPrompts, movePromptSelection, promptQueryFromInput } from '../lib/prompts.js';
+import { useDismissable } from '../hooks/useDismissable.js';
 
 type ModelCatalog = WorkspaceResponse['models'];
 
@@ -15,14 +18,10 @@ export type ComposerProps = {
   prompts: PromptSummary[];
   models: ModelCatalog;
   disabled: boolean;
-  /** 会话进行中时切换 placeholder。 */
-  queued?: boolean;
   selectedModel: string | undefined;
   onSelectModel: (model: string | undefined) => void;
   onSend: (text: string) => void;
 };
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
 
 function ModelMenu({ models, selectedModel, onSelect, onClose }: {
   models: ModelCatalog;
@@ -32,18 +31,7 @@ function ModelMenu({ models, selectedModel, onSelect, onClose }: {
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) onClose();
-    };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  useDismissable(ref, onClose);
 
   const currentName = models.current.model ?? '默认';
   return (
@@ -55,14 +43,14 @@ function ModelMenu({ models, selectedModel, onSelect, onClose }: {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 4 }}
-      transition={{ duration: 0.15, ease: motionEase }}
+      transition={{ duration: 0.15, ease: MOTION_EASE }}
     >
       <span className="model-menu-label">模型</span>
       <button
         type="button"
         role="option"
         aria-selected={selectedModel === undefined}
-        className={selectedModel === undefined ? 'model-option selected' : 'model-option'}
+        className={cx('model-option', selectedModel === undefined && 'selected')}
         onClick={() => { onSelect(undefined); onClose(); }}
       >
         <span className="model-option-name">默认（{currentName}）</span>
@@ -74,7 +62,7 @@ function ModelMenu({ models, selectedModel, onSelect, onClose }: {
           role="option"
           key={model.id}
           aria-selected={selectedModel === model.id}
-          className={selectedModel === model.id ? 'model-option selected' : 'model-option'}
+          className={cx('model-option', selectedModel === model.id && 'selected')}
           onClick={() => { onSelect(model.id); onClose(); }}
         >
           <span className="model-option-name">{model.name}</span>
@@ -85,7 +73,7 @@ function ModelMenu({ models, selectedModel, onSelect, onClose }: {
   );
 }
 
-export function Composer({ prompts, models, disabled, queued, selectedModel, onSelectModel, onSend }: ComposerProps) {
+export function Composer({ prompts, models, disabled, selectedModel, onSelectModel, onSend }: ComposerProps) {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState(0);
@@ -154,7 +142,7 @@ export function Composer({ prompts, models, disabled, queued, selectedModel, onS
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2, ease: motionEase }}
+            transition={{ duration: 0.2, ease: MOTION_EASE }}
           >
             <p className="prompt-panel-label">提示词</p>
             <div className="prompt-panel-list" role="listbox" aria-label="提示词列表">
@@ -164,7 +152,7 @@ export function Composer({ prompts, models, disabled, queued, selectedModel, onS
                   role="option"
                   aria-selected={index === activePrompt}
                   key={prompt.name}
-                  className={index === activePrompt ? 'prompt-row active' : 'prompt-row'}
+                  className={cx('prompt-row', index === activePrompt && 'active')}
                   onMouseEnter={() => setActivePrompt(index)}
                   onClick={() => void applyPrompt(prompt.name)}
                 >
@@ -186,7 +174,7 @@ export function Composer({ prompts, models, disabled, queued, selectedModel, onS
         value={text}
         onChange={(event) => { setText(event.target.value); setPanelDismissed(false); }}
         onKeyDown={onKeyDown}
-        placeholder={queued ? '发送消息将排队等待…' : '输入消息，或输入 / 使用提示词…'}
+        placeholder="输入消息，或输入 / 使用提示词…"
         aria-label="消息输入框"
         rows={2}
       />

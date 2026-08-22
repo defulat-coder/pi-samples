@@ -4,8 +4,9 @@ import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch';
 import { X } from '@phosphor-icons/react/dist/icons/X';
 import { createAgent, fetchAgentTemplates } from '../lib/api.js';
 import { templateToCreateRequest, type AgentTemplate } from '../lib/explore.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { useAsyncData } from '../hooks/useAsyncData.js';
+import { MOTION_EASE } from '../lib/motion.js';
+import { AgentChip } from './AgentChip.js';
 
 export type TemplatesViewProps = {
   /** 创建成功后调用：刷新工作区并跳到 Agents 列表。 */
@@ -14,19 +15,13 @@ export type TemplatesViewProps = {
 
 /** Templates 页（§11.4）：后端内置模板卡片 + 「使用模板」在 .pi/agents/ 创建真实 agent 文件。 */
 export function TemplatesView({ onCreated }: TemplatesViewProps) {
-  const [templates, setTemplates] = useState<AgentTemplate[] | null>(null);
+  const templates = useAsyncData(fetchAgentTemplates, { onError: (cause) => setLoadError(cause.message) });
   const [loadError, setLoadError] = useState('');
   const [draft, setDraft] = useState<{ template: AgentTemplate; id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let stale = false;
-    fetchAgentTemplates()
-      .then((items) => { if (!stale) setTemplates(items); })
-      .catch((cause: Error) => { if (!stale) setLoadError(cause.message); });
-    return () => { stale = true; };
-  }, []);
+  useEffect(() => { void templates.reload(); }, [templates.reload]);
 
   const submit = async () => {
     if (!draft || busy) return;
@@ -50,19 +45,19 @@ export function TemplatesView({ onCreated }: TemplatesViewProps) {
         <p>从内置模板创建一个新的工作区 Agent（写入 .pi/agents/）。</p>
       </header>
 
-      {templates === null && <p className="system-page-loading">{loadError || '正在加载模板…'}</p>}
+      {templates.data === null && <p className="system-page-loading">{loadError || '正在加载模板…'}</p>}
       <div className="explore-grid" role="list">
-        {(templates ?? []).map((template, index) => (
+        {(templates.data ?? []).map((template, index) => (
           <motion.div
             role="listitem"
             key={template.id}
             className="agent-card template-card"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: motionEase, delay: index * 0.04 }}
+            transition={{ duration: 0.25, ease: MOTION_EASE, delay: index * 0.04 }}
           >
             <span className="agent-card-head">
-              <span className="agent-chip medium" aria-hidden="true">{template.mark.slice(0, 2)}</span>
+              <AgentChip mark={template.mark} className="medium" />
               <span className="agent-card-title">
                 <strong>{template.name}</strong>
                 <small>{template.tagline}</small>
@@ -101,7 +96,7 @@ export function TemplatesView({ onCreated }: TemplatesViewProps) {
               initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ duration: 0.2, ease: motionEase }}
+              transition={{ duration: 0.2, ease: MOTION_EASE }}
               onClick={(event) => event.stopPropagation()}
             >
               <div className="modal-head">

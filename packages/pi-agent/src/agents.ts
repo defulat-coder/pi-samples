@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, stripFrontmatter } from '@earendil-works/pi-coding-agent';
-import type { AgentDetail, AgentResources, AgentSummary, CreateAgentRequest, PromptDocument, PromptSummary, SkillSummary } from '@pi-workbench/contracts';
+import { AGENT_ID_PATTERN, type AgentDetail, type AgentResources, type AgentSummary, type CreateAgentRequest, type PromptDocument, type PromptSummary, type SkillSummary } from '@pi-workbench/contracts';
 
-const AGENT_ID_REGEX = /^[a-z][a-z0-9-]{1,63}$/;
+const AGENT_ID_REGEX = new RegExp(AGENT_ID_PATTERN);
 const PROMPT_NAME_REGEX = /^[a-z0-9-]{1,80}$/;
 /** Hard cap for a generated agent file; enforced again at the API schema. */
 export const AGENT_BODY_MAX_BYTES = 32 * 1024;

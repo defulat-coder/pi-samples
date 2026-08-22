@@ -3,8 +3,8 @@ import type { UsageResponse } from '@pi-workbench/contracts';
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
 import { ChartLine } from '@phosphor-icons/react/dist/icons/ChartLine';
 import { formatRelativeTime } from '../lib/sessions.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { MOTION_EASE } from '../lib/motion.js';
+import { AgentChip } from './AgentChip.js';
 
 export type UsageViewProps = {
   usage: UsageResponse | null;
@@ -47,7 +47,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
             className="usage-stats"
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: motionEase }}
+            transition={{ duration: 0.2, ease: MOTION_EASE }}
           >
             {stats.map((stat) => (
               <div className="usage-stat" key={stat.label}>
@@ -73,7 +73,7 @@ export function UsageView({ usage, loading, onRefresh }: UsageViewProps) {
                 <tr key={row.agentId}>
                   <td>
                     <span className="usage-table-agent">
-                      <span className="agent-chip" aria-hidden="true">{row.mark.slice(0, 2)}</span>
+                      <AgentChip mark={row.mark} />
                       {row.name}
                     </span>
                   </td>

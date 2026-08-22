@@ -6,8 +6,8 @@ import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from '../lib/types.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
 
 function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -16,7 +16,7 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
     <div className="thinking-block">
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
-          <span className={streaming ? 'thinking-dot active' : 'thinking-dot'} aria-hidden="true" />
+          <span className={cx('thinking-dot', streaming && 'active')} aria-hidden="true" />
           {streaming ? '正在思考…' : `思考过程 · ${text.length} 字符`}
           <CaretRight size={12} className="caret" aria-hidden="true" />
         </summary>
@@ -33,7 +33,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
         className="message-row user"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2, ease: motionEase }}
+        transition={{ duration: 0.2, ease: MOTION_EASE }}
       >
         <div className="user-bubble">
           <p>{message.text}</p>
@@ -46,9 +46,9 @@ function MessageItem({ message }: { message: ChatMessage }) {
       className="message-row assistant"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: motionEase }}
+      transition={{ duration: 0.2, ease: MOTION_EASE }}
     >
-      <div className={message.streaming ? 'assistant-body streaming' : 'assistant-body'}>
+      <div className={cx('assistant-body', message.streaming && 'streaming')}>
         {message.thinking && <ThinkingBlock text={message.thinking} streaming={message.streaming} />}
         <div className="markdown">
           <Markdown remarkPlugins={[remarkGfm]}>{message.text || (message.streaming ? '　' : '')}</Markdown>
@@ -95,7 +95,7 @@ export function ThreadView({ messages, compact = false }: ThreadViewProps) {
 
   return (
     <div className="thread-scroll" ref={scrollRef}>
-      <div className={compact ? 'thread-column compact' : 'thread-column'}>
+      <div className={cx('thread-column', compact && 'compact')}>
         {messages.map((message) => (
           <MessageItem key={message.id} message={message} />
         ))}

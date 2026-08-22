@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentSummary } from '@pi-workbench/contracts';
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown';
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle';
@@ -14,7 +14,10 @@ import { SidebarSimple } from '@phosphor-icons/react/dist/icons/SidebarSimple';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { Users } from '@phosphor-icons/react/dist/icons/Users';
 import type { ExploreView } from '../lib/explore.js';
+import { cx } from '../lib/cx.js';
 import type { SystemView } from '../lib/types.js';
+import { useDismissable } from '../hooks/useDismissable.js';
+import { AgentChip } from './AgentChip.js';
 
 export type SidebarProps = {
   agents: AgentSummary[];
@@ -74,24 +77,11 @@ export function Sidebar(props: SidebarProps) {
   }, [props.onToggleCollapsed, props.onOpenPalette]);
 
   // 工作区信息弹层：点外部或 Escape 关闭
-  useEffect(() => {
-    if (!workspaceOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!workspaceRef.current?.contains(event.target as Node)) setWorkspaceOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setWorkspaceOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [workspaceOpen]);
+  const closeWorkspace = useCallback(() => setWorkspaceOpen(false), []);
+  useDismissable(workspaceRef, closeWorkspace, workspaceOpen);
 
   return (
-    <nav className={collapsed ? 'sidebar collapsed' : 'sidebar'} aria-label="侧边栏">
+    <nav className={cx('sidebar', collapsed && 'collapsed')} aria-label="侧边栏">
       <div className="sidebar-brand-row">
         <div className="sidebar-fold workspace-wrap" ref={workspaceRef}>
           <button
@@ -137,7 +127,7 @@ export function Sidebar(props: SidebarProps) {
       <div className="sidebar-scroll">
         <button
           type="button"
-          className={chatActive ? 'nav-row active' : 'nav-row'}
+          className={cx('nav-row', chatActive && 'active')}
           aria-current={chatActive ? 'page' : undefined}
           onClick={props.onCloseInbox}
           title="会话"
@@ -147,7 +137,7 @@ export function Sidebar(props: SidebarProps) {
         </button>
         <button
           type="button"
-          className={inboxOpen ? 'nav-row active' : 'nav-row'}
+          className={cx('nav-row', inboxOpen && 'active')}
           aria-current={inboxOpen ? 'page' : undefined}
           onClick={props.onOpenInbox}
           title="收件箱"
@@ -170,7 +160,7 @@ export function Sidebar(props: SidebarProps) {
 
         <div className="group-header">
           <button type="button" className="group-header-toggle" onClick={() => setExploreOpen((open) => !open)} aria-expanded={exploreOpen}>
-            <CaretDown size={12} className={exploreOpen ? 'group-header-chevron' : 'group-header-chevron closed'} />
+            <CaretDown size={12} className={cx('group-header-chevron', !exploreOpen && 'closed')} />
             <span className="group-header-label">探索</span>
           </button>
         </div>
@@ -178,7 +168,7 @@ export function Sidebar(props: SidebarProps) {
           <>
             <button
               type="button"
-              className={exploreView === 'agents' ? 'nav-row active' : 'nav-row'}
+              className={cx('nav-row', exploreView === 'agents' && 'active')}
               aria-current={exploreView === 'agents' ? 'page' : undefined}
               onClick={() => props.onOpenExplore('agents')}
               title="Agents"
@@ -188,7 +178,7 @@ export function Sidebar(props: SidebarProps) {
             </button>
             <button
               type="button"
-              className={exploreView === 'templates' ? 'nav-row active' : 'nav-row'}
+              className={cx('nav-row', exploreView === 'templates' && 'active')}
               aria-current={exploreView === 'templates' ? 'page' : undefined}
               onClick={() => props.onOpenExplore('templates')}
               title="模板"
@@ -198,7 +188,7 @@ export function Sidebar(props: SidebarProps) {
             </button>
             <button
               type="button"
-              className={exploreView === 'skills' ? 'nav-row active' : 'nav-row'}
+              className={cx('nav-row', exploreView === 'skills' && 'active')}
               aria-current={exploreView === 'skills' ? 'page' : undefined}
               onClick={() => props.onOpenExplore('skills')}
               title="技能"
@@ -213,7 +203,7 @@ export function Sidebar(props: SidebarProps) {
 
         <div className="group-header">
           <button type="button" className="group-header-toggle" onClick={() => setAgentsOpen((open) => !open)} aria-expanded={agentsOpen}>
-            <CaretDown size={12} className={agentsOpen ? 'group-header-chevron' : 'group-header-chevron closed'} />
+            <CaretDown size={12} className={cx('group-header-chevron', !agentsOpen && 'closed')} />
             <span className="group-header-label">我的 Agent</span>
           </button>
           <button type="button" className="group-add-button" onClick={props.onNewAgent} aria-label="新建 Agent" title="从模板新建 Agent">
@@ -227,12 +217,12 @@ export function Sidebar(props: SidebarProps) {
                 role="button"
                 tabIndex={0}
                 key={agent.id}
-                className={agent.id === currentAgentId ? 'agent-row active' : 'agent-row'}
+                className={cx('agent-row', agent.id === currentAgentId && 'active')}
                 title={agent.name}
                 onClick={() => props.onSelectAgent(agent.id)}
                 onKeyDown={(event) => { if (event.key === 'Enter') props.onSelectAgent(agent.id); }}
               >
-                <span className="agent-chip" aria-hidden="true">{agent.mark.slice(0, 2)}</span>
+                <AgentChip mark={agent.mark} />
                 <span className="agent-name">{agent.name}</span>
                 {(attentionByAgent[agent.id] ?? 0) > 0 && (
                   <span className="nav-badge agent-badge" aria-label={`${attentionByAgent[agent.id]} 个会话需要处理`}>{attentionByAgent[agent.id]}</span>
@@ -257,7 +247,7 @@ export function Sidebar(props: SidebarProps) {
       <div className="sidebar-footer">
         <button
           type="button"
-          className={systemView === 'usage' ? 'nav-row active' : 'nav-row'}
+          className={cx('nav-row', systemView === 'usage' && 'active')}
           aria-current={systemView === 'usage' ? 'page' : undefined}
           onClick={() => props.onOpenSystem('usage')}
           title="用量"
@@ -267,7 +257,7 @@ export function Sidebar(props: SidebarProps) {
         </button>
         <button
           type="button"
-          className={systemView === 'settings' ? 'nav-row active' : 'nav-row'}
+          className={cx('nav-row', systemView === 'settings' && 'active')}
           aria-current={systemView === 'settings' ? 'page' : undefined}
           onClick={() => props.onOpenSystem('settings')}
           title="设置"

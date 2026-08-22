@@ -56,6 +56,23 @@ export interface SessionSummary {
   attentionDetail?: string;
 }
 
+/** Payload of GET /api/v1/agents/:agentId/sessions. */
+export interface SessionListResponse {
+  items: SessionSummary[];
+  total: number;
+}
+
+/** Payload of GET /api/v1/inbox: sessions whose last recorded run errored or was aborted. */
+export interface InboxResponse {
+  items: SessionSummary[];
+  total: number;
+}
+
+/** Payload of PATCH /api/v1/agents/:agentId/sessions/:sessionId. */
+export interface RenameSessionRequest {
+  title: string;
+}
+
 export interface ChatRequest {
   agentId: string;
   sessionId?: string;
@@ -147,6 +164,12 @@ export interface PromptDocument extends PromptSummary {
   content: string;
 }
 
+/** Payload of GET /api/v1/skills; items come from listSkills over .pi/skills. */
+export interface SkillListResponse {
+  items: SkillSummary[];
+  total: number;
+}
+
 export interface WorkspaceResponse {
   agents: AgentSummary[];
   prompts: PromptSummary[];
@@ -233,6 +256,12 @@ export interface AgentTemplatesResponse {
 /** Payload of GET /api/v1/preferences; keys are namespaced (ui.*, thinking.<agentId>). */
 export interface PreferencesResponse {
   items: Record<string, unknown>;
+}
+
+/** Payload of PUT /api/v1/preferences; upserts one namespaced key. */
+export interface PreferenceUpdateRequest {
+  key: string;
+  value: unknown;
 }
 
 /** Every non-2xx API response uses this shape. */

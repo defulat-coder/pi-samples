@@ -8,6 +8,7 @@ import { Info } from '@phosphor-icons/react/dist/icons/Info';
 import { FolderOpen } from '@phosphor-icons/react/dist/icons/FolderOpen';
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix';
 import { fetchAgent, fetchAgentResources, savePreference } from '../lib/api.js';
+import { useAsyncData } from '../hooks/useAsyncData.js';
 import {
   DEFAULT_OPEN_SECTIONS,
   readThinkingPreference,
@@ -18,8 +19,9 @@ import {
   type ConfigSectionId,
   type ThinkingPreference,
 } from '../lib/configPanel.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { cx } from '../lib/cx.js';
+import { MOTION_EASE } from '../lib/motion.js';
+import { AgentChip } from './AgentChip.js';
 
 /** Fleet configure 面板的通栏折叠节：48px 头 + 高度动画内容区。 */
 function ConfigSection({ icon, title, open, onToggle, children }: {
@@ -34,7 +36,7 @@ function ConfigSection({ icon, title, open, onToggle, children }: {
       <button type="button" className="config-section-header" onClick={onToggle} aria-expanded={open}>
         {icon}
         <span className="config-section-title">{title}</span>
-        <CaretDown size={16} className={open ? 'config-section-chevron open' : 'config-section-chevron'} />
+        <CaretDown size={16} className={cx('config-section-chevron', open && 'open')} />
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -43,7 +45,7 @@ function ConfigSection({ icon, title, open, onToggle, children }: {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: motionEase }}
+            transition={{ duration: 0.2, ease: MOTION_EASE }}
           >
             <div className="config-section-inner">{children}</div>
           </motion.div>
@@ -58,7 +60,7 @@ function BasicSection({ agent, onUseSuggestion }: { agent: AgentDetail; onUseSug
     <>
       <div className="config-card">
         <div className="config-identity">
-          <span className="agent-chip medium" aria-hidden="true">{agent.mark.slice(0, 2)}</span>
+          <AgentChip mark={agent.mark} className="medium" />
           <span>
             <strong>{agent.name}</strong>
             <small>{agent.tagline}</small>
@@ -153,7 +155,7 @@ function RuntimeSection({ models, resources, thinking, onThinkingChange }: {
             <button
               type="button"
               key={level}
-              className={thinking === level ? 'capsule-option active' : 'capsule-option'}
+              className={cx('capsule-option', thinking === level && 'active')}
               aria-pressed={thinking === level}
               onClick={() => onThinkingChange(level)}
             >
@@ -173,27 +175,22 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
   onClose: () => void;
   onUseSuggestion: (text: string) => void;
 }) {
-  const [detail, setDetail] = useState<AgentDetail | null>(null);
-  const [resources, setResources] = useState<AgentResources | null>(null);
+  const detail = useAsyncData(() => fetchAgent(agentId), { onError: (cause) => setError(cause.message) });
+  const resources = useAsyncData(() => fetchAgentResources(agentId));
   const [error, setError] = useState('');
   const [openSections, setOpenSections] = useState<ConfigSectionId[]>([...DEFAULT_OPEN_SECTIONS]);
   const [thinking, setThinking] = useState<ThinkingPreference>(() => readThinkingPreference(agentId));
 
   useEffect(() => {
-    let stale = false;
-    setDetail(null);
-    setResources(null);
     setError('');
     setOpenSections([...DEFAULT_OPEN_SECTIONS]);
     setThinking(readThinkingPreference(agentId));
-    fetchAgent(agentId)
-      .then((agent) => { if (!stale) setDetail(agent); })
-      .catch((cause: Error) => { if (!stale) setError(cause.message); });
-    fetchAgentResources(agentId)
-      .then((payload) => { if (!stale) setResources(payload); })
-      .catch(() => { /* 资源清单失败不阻塞面板其余部分 */ });
-    return () => { stale = true; };
-  }, [agentId]);
+    detail.setData(null);
+    resources.setData(null);
+    void detail.reload();
+    void resources.reload();
+    // reload/setData 身份稳定，只需跟随 agentId 重拉。
+  }, [agentId, detail.reload, detail.setData, resources.reload, resources.setData]);
 
   const changeThinking = (level: ThinkingPreference) => {
     setThinking(level);
@@ -208,20 +205,20 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
       role="complementary"
       aria-label="Agent 配置"
       className="config-panel"
-      initial={{ x: 479 }}
+      initial={{ x: '100%' }}
       animate={{ x: 0 }}
-      exit={{ x: 479 }}
-      transition={{ duration: 0.25, ease: motionEase }}
+      exit={{ x: '100%' }}
+      transition={{ duration: 0.25, ease: MOTION_EASE }}
     >
       <div className="config-panel-header">
-        <span className="config-title">{detail ? detail.name : 'Agent 配置'}</span>
+        <span className="config-title">{detail.data ? detail.data.name : 'Agent 配置'}</span>
         <button type="button" className="icon-button" onClick={onClose} aria-label="关闭配置面板">
           <X size={16} />
         </button>
       </div>
       {error && <p className="config-panel-error" role="alert">{error}</p>}
-      {!error && !detail && <p className="config-panel-loading">正在读取配置…</p>}
-      {!error && detail && (
+      {!error && !detail.data && <p className="config-panel-loading">正在读取配置…</p>}
+      {!error && detail.data && (
         <div className="config-panel-body">
           <ConfigSection
             icon={<Info size={16} />}
@@ -229,7 +226,7 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
             open={openSections.includes('basic')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'basic'))}
           >
-            <BasicSection agent={detail} onUseSuggestion={onUseSuggestion} />
+            <BasicSection agent={detail.data} onUseSuggestion={onUseSuggestion} />
           </ConfigSection>
           <ConfigSection
             icon={<FolderOpen size={16} />}
@@ -237,7 +234,7 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
             open={openSections.includes('resources')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'resources'))}
           >
-            <ResourcesSection resources={resources} />
+            <ResourcesSection resources={resources.data} />
           </ConfigSection>
           <ConfigSection
             icon={<GearSix size={16} />}
@@ -245,7 +242,7 @@ export function ConfigPanel({ agentId, models, onClose, onUseSuggestion }: {
             open={openSections.includes('runtime')}
             onToggle={() => setOpenSections((prev) => toggleSection(prev, 'runtime'))}
           >
-            <RuntimeSection models={models} resources={resources} thinking={thinking} onThinkingChange={changeThinking} />
+            <RuntimeSection models={models} resources={resources.data} thinking={thinking} onThinkingChange={changeThinking} />
           </ConfigSection>
         </div>
       )}

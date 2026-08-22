@@ -1,27 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
-  ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
-import type { AgentThinkingLevel, ChatUsage } from '@pi-workbench/contracts';
+import type { ChatUsage } from '@pi-workbench/contracts';
 import { getAgent } from './agents.js';
-import { assertSessionAgentBinding, getPiSessionDir, PI_WORKBENCH_AGENT_ENTRY } from './session-store.js';
+import { getModelRuntime, getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, type PiThinkingLevel } from './model-config.js';
+import { assertSessionAgentBinding, getPiSessionDir, initializeSessionFile } from './session-store.js';
 
 export type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+export { getPiModelConfig, getPiProjectRoot, getPiThinkingLevel, listPiModels } from './model-config.js';
+export type { PiModelConfig, PiThinkingLevel } from './model-config.js';
 export * from './agents.js';
 export * from './db.js';
 export * from './session-store.js';
 export * from './templates.js';
 export * from './usage.js';
-
-export type PiThinkingLevel = AgentThinkingLevel;
-
-const THINKING_LEVELS: readonly PiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export interface PiAgentSessionOptions {
   cwd?: string;
@@ -35,17 +31,6 @@ export interface PiAgentSessionOptions {
   thinkingLevel?: PiThinkingLevel;
   /** Project extensions execute host code and stay opt-in for the Web gateway. */
   projectExtensions?: boolean;
-}
-
-export interface PiModelConfig {
-  provider?: string;
-  model?: string;
-}
-
-export interface PiModelStatus extends PiModelConfig {
-  enabled: boolean;
-  providerConfigured: boolean;
-  thinkingLevel: PiThinkingLevel;
 }
 
 export interface AgentTurnOptions {
@@ -72,65 +57,8 @@ export interface PiAgentSession {
   close: () => void;
 }
 
-export function getPiProjectRoot(): string {
-  const candidate = process.cwd();
-  for (const current of [candidate, resolve(candidate, '..'), resolve(candidate, '../..')]) {
-    if (existsSync(resolve(current, '.pi'))) return current;
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '../../..');
-}
-
-export function getPiModelConfig(overrides: { provider?: string; model?: string } = {}, cwd = getPiProjectRoot()): PiModelConfig {
-  let settings: { defaultProvider?: unknown; defaultModel?: unknown } = {};
-  try {
-    settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as typeof settings;
-  } catch {
-    // Environment variables and the kimi-coding default remain the contract.
-  }
-  const configuredProvider = typeof settings.defaultProvider === 'string' ? settings.defaultProvider.trim() : undefined;
-  const configuredModel = typeof settings.defaultModel === 'string' ? settings.defaultModel.trim() : undefined;
-  const provider = overrides.provider ?? process.env.PI_MODEL_PROVIDER?.trim() ?? configuredProvider ?? 'kimi-coding';
-  const model = overrides.model ?? process.env.PI_MODEL?.trim() ?? configuredModel ?? (provider === 'kimi-coding' ? 'kimi-for-coding' : undefined);
-  return { provider, model };
-}
-
-export function getPiThinkingLevel(level?: PiThinkingLevel, cwd = getPiProjectRoot()): PiThinkingLevel {
-  if (level) return level;
-  const configured = process.env.PI_THINKING_LEVEL;
-  if (configured && (THINKING_LEVELS as readonly string[]).includes(configured)) return configured as PiThinkingLevel;
-  try {
-    const settings = JSON.parse(readFileSync(resolve(cwd, '.pi/settings.json'), 'utf8')) as { defaultThinkingLevel?: unknown };
-    if (typeof settings.defaultThinkingLevel === 'string' && (THINKING_LEVELS as readonly string[]).includes(settings.defaultThinkingLevel)) return settings.defaultThinkingLevel as PiThinkingLevel;
-  } catch {
-    // Keep the no-thinking project default when settings are absent or invalid.
-  }
-  return 'off';
-}
-
 function projectExtensionsEnabled(explicit?: boolean): boolean {
   return explicit ?? process.env.PI_PROJECT_EXTENSIONS_ENABLED === 'true';
-}
-
-let modelRuntimePromise: Promise<ModelRuntime> | undefined;
-
-function getModelRuntime(): Promise<ModelRuntime> {
-  modelRuntimePromise ??= ModelRuntime.create({ allowModelNetwork: false });
-  return modelRuntimePromise;
-}
-
-/** Static provider catalog for the configured provider; used to render and validate the Web model picker. */
-export async function listPiModels(): Promise<Array<{ id: string; name: string }>> {
-  const { provider } = getPiModelConfig();
-  if (!provider) return [];
-  const runtime = await getModelRuntime();
-  return runtime.getModels(provider).map((model) => ({ id: model.id, name: model.name }));
-}
-
-export function getPiModelStatus(enabled = process.env.PI_AGENT_ENABLED === 'true'): PiModelStatus {
-  const config = getPiModelConfig();
-  const providerKeyEnv: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', google: 'GOOGLE_API_KEY', 'google-vertex': 'GOOGLE_API_KEY', 'kimi-coding': 'KIMI_API_KEY' };
-  const providerConfigured = config.provider ? Boolean(process.env[providerKeyEnv[config.provider] ?? '']) : false;
-  return { enabled, providerConfigured, thinkingLevel: getPiThinkingLevel(), ...config };
 }
 
 /**
@@ -166,15 +94,7 @@ export async function createPiAgentSession(options: PiAgentSessionOptions): Prom
       sessionManager = SessionManager.open(existing.path, sessionDir, cwd);
       assertSessionAgentBinding(sessionManager.getEntries(), agent.id);
     } else {
-      mkdirSync(sessionDir, { recursive: true });
-      const created = SessionManager.create(cwd, sessionDir, options.sessionId ? { id: options.sessionId } : undefined);
-      const file = created.getSessionFile();
-      const header = created.getHeader();
-      if (!file || !header) throw new Error('Pi session file could not be initialized');
-      // SessionManager only persists once the JSONL file carries its header.
-      if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
-      sessionManager = SessionManager.open(file, sessionDir, cwd);
-      sessionManager.appendCustomEntry(PI_WORKBENCH_AGENT_ENTRY, { agentId: agent.id });
+      sessionManager = initializeSessionFile({ cwd, sessionDir, agentId: agent.id, ...(options.sessionId ? { id: options.sessionId } : {}) }).manager;
     }
   }
 

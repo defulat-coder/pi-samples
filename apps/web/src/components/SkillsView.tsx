@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import type { PromptSummary, SkillSummary } from '@pi-workbench/contracts';
+import type { PromptSummary } from '@pi-workbench/contracts';
 import { FileText } from '@phosphor-icons/react/dist/icons/FileText';
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass';
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece';
 import { fetchSkills } from '../lib/api.js';
 import { filterSkillItems, mergeSkillItems } from '../lib/explore.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { useAsyncData } from '../hooks/useAsyncData.js';
+import { MOTION_EASE } from '../lib/motion.js';
 
 export type SkillsViewProps = {
   /** 提示词模板（.pi/prompts/*.md），来自工作区快照。 */
@@ -16,20 +16,13 @@ export type SkillsViewProps = {
 
 /** Skills 页（§11.6）：.pi/skills 技能 + .pi/prompts 提示词模板；技能目录为空时给空态。 */
 export function SkillsView({ prompts }: SkillsViewProps) {
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const skills = useAsyncData(fetchSkills);
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchSkills()
-      .then((items) => { if (!cancelled) setSkills(items); })
-      .catch(() => { /* 技能列表失败时只展示提示词模板。 */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
+  useEffect(() => { void skills.reload(); }, [skills.reload]);
 
-  const items = useMemo(() => filterSkillItems(mergeSkillItems(prompts, skills), query), [prompts, skills, query]);
+  const loading = !skills.loaded;
+  const items = useMemo(() => filterSkillItems(mergeSkillItems(prompts, skills.data ?? []), query), [prompts, skills.data, query]);
   const skillItems = items.filter((item) => item.kind === 'skill');
   const promptItems = items.filter((item) => item.kind === 'prompt');
 
@@ -59,7 +52,7 @@ export function SkillsView({ prompts }: SkillsViewProps) {
               className="skill-card"
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: motionEase, delay: index * 0.03 }}
+              transition={{ duration: 0.2, ease: MOTION_EASE, delay: index * 0.03 }}
             >
               <span className="skill-card-head">
                 <PuzzlePiece size={16} aria-hidden="true" />
@@ -88,7 +81,7 @@ export function SkillsView({ prompts }: SkillsViewProps) {
               className="skill-card"
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: motionEase, delay: index * 0.03 }}
+              transition={{ duration: 0.2, ease: MOTION_EASE, delay: index * 0.03 }}
             >
               <span className="skill-card-head">
                 <FileText size={16} aria-hidden="true" />

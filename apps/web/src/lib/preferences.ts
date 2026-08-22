@@ -1,3 +1,5 @@
+import { defaultStorage, type StorageLike } from './storage.js';
+
 /** 界面偏好：真实生效的本地设置，持久化在 localStorage。 */
 export interface UiPreferences {
   /** 消息紧凑模式：缩小会话消息的纵向间距，立即生效。 */
@@ -12,16 +14,6 @@ const PREFERENCE_KEYS: Record<keyof UiPreferences, string> = {
   compactMessages: 'pi-workbench.pref.compact-messages',
   sidebarCollapsed: 'pi-workbench.pref.sidebar-collapsed',
 };
-
-type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
-
-function defaultStorage(): StorageLike | undefined {
-  try {
-    return globalThis.localStorage;
-  } catch {
-    return undefined;
-  }
-}
 
 /** Reads all UI preferences; unknown or missing values fall back to the defaults. */
 export function readUiPreferences(storage: StorageLike | undefined = defaultStorage()): UiPreferences {

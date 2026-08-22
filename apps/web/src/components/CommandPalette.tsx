@@ -10,6 +10,7 @@ import {
   type PaletteGroup,
   type PaletteItem,
 } from '../lib/palette.js';
+import { cx } from '../lib/cx.js';
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -107,7 +108,7 @@ export function CommandPalette({ open, agents, sessionsByAgent, onAction, onClos
                     role="option"
                     aria-selected={active}
                     data-active={active}
-                    className={active ? 'palette-row active' : 'palette-row'}
+                    className={cx('palette-row', active && 'active')}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => run(item)}
                   >

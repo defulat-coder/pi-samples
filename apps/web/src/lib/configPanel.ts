@@ -1,4 +1,5 @@
 import type { AgentThinkingLevel } from '@pi-workbench/contracts';
+import { defaultStorage, type StorageLike } from './storage.js';
 
 export type ConfigSectionId = 'basic' | 'resources' | 'runtime';
 
@@ -15,16 +16,6 @@ export type ThinkingPreference = Extract<AgentThinkingLevel, 'off' | 'minimal'>;
 export const THINKING_PREFERENCE_OPTIONS: readonly ThinkingPreference[] = ['off', 'minimal'];
 
 const THINKING_KEY_PREFIX = 'pi-workbench.thinking.';
-
-type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
-
-function defaultStorage(): StorageLike | undefined {
-  try {
-    return globalThis.localStorage;
-  } catch {
-    return undefined;
-  }
-}
 
 /** Reads the per-agent default thinking level; anything unknown falls back to 'off'. */
 export function readThinkingPreference(agentId: string, storage: StorageLike | undefined = defaultStorage()): ThinkingPreference {

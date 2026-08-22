@@ -1,8 +1,8 @@
 import { motion } from 'motion/react';
 import type { AgentSummary } from '@pi-workbench/contracts';
 import { agentCardStats } from '../lib/explore.js';
-
-const motionEase = [0.23, 1, 0.32, 1] as const;
+import { MOTION_EASE } from '../lib/motion.js';
+import { AgentChip } from './AgentChip.js';
 
 export type ExploreAgentsProps = {
   agents: AgentSummary[];
@@ -29,11 +29,11 @@ export function ExploreAgents({ agents, onOpenChat }: ExploreAgentsProps) {
               className="agent-card"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: motionEase, delay: index * 0.04 }}
+              transition={{ duration: 0.25, ease: MOTION_EASE, delay: index * 0.04 }}
               onClick={() => onOpenChat(agent.id)}
             >
               <span className="agent-card-head">
-                <span className="agent-chip medium" aria-hidden="true">{agent.mark.slice(0, 2)}</span>
+                <AgentChip mark={agent.mark} className="medium" />
                 <span className="agent-card-title">
                   <strong>{agent.name}</strong>
                   <small>{agent.tagline}</small>

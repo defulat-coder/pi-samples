@@ -4,8 +4,8 @@ import Database from 'better-sqlite3';
  * SQLite projection for generic workbench data (usage events, UI preferences).
  * Pi-specific state — sessions, messages, agent definitions, settings — stays in
  * Pi's own files (.pi/sessions/*.jsonl, .pi/agents/*.md, .pi/settings.json) and is
- * never duplicated here. The default file lives next to the session dir at
- * .pi/workbench.db; tests open ':memory:' instead.
+ * never duplicated here. The API opens it at .pi/workbench.db under the project
+ * root; tests open ':memory:' instead.
  */
 export type WorkbenchDb = Database.Database;
 
@@ -38,10 +38,14 @@ export function openWorkbenchDb(path: string): WorkbenchDb {
 
 function migrate(db: WorkbenchDb): void {
   const version = db.pragma('user_version', { simple: true }) as number;
-  for (let index = version; index < MIGRATIONS.length; index += 1) {
-    db.exec(MIGRATIONS[index]!);
-    db.pragma(`user_version = ${index + 1}`);
-  }
+  if (version >= MIGRATIONS.length) return;
+  // All-or-nothing: a crash mid-migration must not leave a half-applied schema.
+  db.transaction(() => {
+    for (let index = version; index < MIGRATIONS.length; index += 1) {
+      db.exec(MIGRATIONS[index]!);
+      db.pragma(`user_version = ${index + 1}`);
+    }
+  })();
 }
 
 export interface UsageEventInput {

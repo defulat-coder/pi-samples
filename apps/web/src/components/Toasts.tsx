@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle';
+import { MOTION_EASE } from '../lib/motion.js';
 
 export type Toast = { id: number; text: string };
 
@@ -15,7 +16,7 @@ export function Toasts({ toasts }: { toasts: Toast[] }) {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+            transition={{ duration: 0.18, ease: MOTION_EASE }}
           >
             <WarningCircle size={14} weight="fill" aria-hidden="true" />
             {toast.text}

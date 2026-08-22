@@ -36,13 +36,6 @@ export function groupSessions(sessions: SessionSummary[], now: Date): SessionGro
     .map((key) => ({ key, label: labels[key], items: buckets[key] }));
 }
 
-/** Sidebar search: matches agents and sessions by name/title, case-insensitive. */
-export function matchesQuery(query: string, ...fields: Array<string | undefined>): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return fields.some((field) => field?.toLowerCase().includes(q));
-}
-
 /** Sessions whose last recorded run errored or was aborted. */
 export function filterAttention(sessions: SessionSummary[]): SessionSummary[] {
   return sessions.filter((session) => session.needsAttention);

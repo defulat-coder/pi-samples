@@ -6,6 +6,7 @@ import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
 import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { Warning } from '@phosphor-icons/react/dist/icons/Warning';
+import { cx } from '../lib/cx.js';
 import { filterAttention, groupSessions } from '../lib/sessions.js';
 
 export type SessionFilter = 'all' | 'attention';
@@ -42,7 +43,7 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
       else setDraft(session.title);
     };
     return (
-      <div className={active ? 'session-row active' : 'session-row'}>
+      <div className={cx('session-row', active && 'active')}>
         <input
           className="session-rename-input"
           value={draft}
@@ -63,7 +64,7 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
     <div
       role="button"
       tabIndex={0}
-      className={active ? 'session-row active' : 'session-row'}
+      className={cx('session-row', active && 'active')}
       onClick={onSelect}
       onKeyDown={(event) => { if (event.key === 'Enter') onSelect(); }}
       title={session.title}
@@ -124,7 +125,7 @@ export function InboxColumn(props: InboxColumnProps) {
           type="button"
           role="tab"
           aria-selected={filter === 'all'}
-          className={filter === 'all' ? 'session-tab active' : 'session-tab'}
+          className={cx('session-tab', filter === 'all' && 'active')}
           onClick={() => props.onFilterChange('all')}
         >
           全部
@@ -134,7 +135,7 @@ export function InboxColumn(props: InboxColumnProps) {
           type="button"
           role="tab"
           aria-selected={filter === 'attention'}
-          className={filter === 'attention' ? 'session-tab active' : 'session-tab'}
+          className={cx('session-tab', filter === 'attention' && 'active')}
           onClick={() => props.onFilterChange('attention')}
         >
           <Warning size={12} aria-hidden="true" />
