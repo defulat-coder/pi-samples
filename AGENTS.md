@@ -51,6 +51,16 @@
 - All Web animation work must prefer the installed `motion` dependency (`import { motion } from 'motion/react'`); do not add other JS animation libraries unless explicitly requested.
 - Follow the best practices in `docs/motion-animation.md` (composited properties only, `layout`/`AnimatePresence`, MotionValues for scroll, `reducedMotion`).
 
+## Fleet Visual Replication (CDP Workflow)
+
+- The Web UI replicates LangSmith Fleet. Never eyeball visual values from screenshots — measure the real page via ego-browser CDP (`getComputedStyle()` / `getBoundingClientRect()`), then apply the measured values.
+- `docs/research/fleet-cdp-reference-2026-08-21.md` is the authoritative token/structure reference; raw captures live in `.scratch/fleet-cdp/` (never commit `.scratch/`).
+- For any UI change against Fleet, run the loop: capture Fleet values via CDP → diff against local computed styles (also via CDP on `https://pi-workbench.localhost`) → fix → re-verify via CDP before reporting.
+- New Fleet measurements must be written back into the research doc (dated sections), and new component patterns into `DESIGN.md`.
+- CSS must use the token variables defined in `apps/web/src/styles.css` (`--bg-*`, `--text-*`, `--border-*`, `--radius-*`, `--space-*`, `--duration-*`, `--popover-shadow`); do not introduce variables that do not exist (e.g. shadcn-style `--foreground`/`--popover`). `--popover-shadow` is a `filter: drop-shadow(...)` group, never a `box-shadow`.
+- Skip Fleet features that have no local semantic (Integrations, billing/quota progress bars); note the deviation instead of forcing it.
+
+
 ## References
 
 | Need | Reference |
