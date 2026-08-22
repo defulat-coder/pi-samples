@@ -317,12 +317,13 @@ input, textarea { font: inherit; color: inherit; }
   border: 1px solid transparent; padding: var(--space-3) var(--space-4);
 }
 .usage-bar svg { flex: none; color: var(--brand-info-icon); }
-.usage-bar span { font-size: 13px; font-weight: 500; color: var(--text-primary); letter-spacing: -0.26px; }
+.usage-bar span { font-size: 13px; font-weight: 500; line-height: 15.6px; color: var(--text-primary); letter-spacing: -0.26px; }
 
 /* ===== 欢迎态 ===== */
 .welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); padding: 0 var(--space-4) var(--space-9); overflow-y: auto; }
 .welcome-head { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); text-align: center; }
-.welcome-title { margin: 0; font-size: 24px; line-height: 28.8px; letter-spacing: -0.96px; font-weight: 500; color: var(--text-primary); }
+/* Fleet 实测 askH1：24px/500、行高 32px、字距 normal */
+.welcome-title { margin: 0; font-size: 24px; line-height: 32px; letter-spacing: normal; font-weight: 500; color: var(--text-primary); }
 .welcome-tagline { margin: 0; font-size: 14px; color: var(--text-tertiary); }
 .welcome-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); max-width: 640px; }
 .suggestion-button {
