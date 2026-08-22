@@ -187,16 +187,17 @@ input, textarea { font: inherit; color: inherit; }
 }
 
 /* 会话过滤 All / Attention（§11.1/§11.2：圆角 3px、padding 2px 8px、13px/500/-0.26px） */
+/* Fleet 实测：分段容器透明底 + 1px #e2e8f0 边框 + 2px padding/gap，active tab 白底 */
 .session-tabs {
-  display: inline-flex; align-items: center; gap: var(--space-1);
+  display: inline-flex; align-items: center; gap: 2px;
   margin: var(--space-2) 10px 0; padding: 2px;
-  border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: transparent;
   width: fit-content;
 }
 .session-tab {
   display: inline-flex; align-items: center; gap: var(--space-1); height: 20px;
   border-radius: var(--radius-xs); padding: 2px var(--space-2);
-  font-size: 13px; font-weight: 500; letter-spacing: -0.26px; color: var(--text-secondary);
+  font-size: 13px; font-weight: 500; line-height: 15.6px; letter-spacing: -0.13px; color: var(--text-secondary);
   transition: background var(--duration-fast), color var(--duration-fast);
 }
 .session-tab:hover { background: var(--bg-secondary-hover); }
@@ -291,15 +292,21 @@ input, textarea { font: inherit; color: inherit; }
   transition: width var(--duration-normal) ease-in-out;
 }
 .inbox-column.collapsed { width: 44px; align-items: center; padding-top: var(--space-3); border-right-color: transparent; }
-.inbox-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-4) 0; }
+.inbox-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
 .inbox-column-header h3 {
   margin: 0; font-size: 16px; line-height: 19.2px; letter-spacing: -0.48px; font-weight: 600;
   color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.inbox-column .session-tabs { margin: var(--space-2) var(--space-4) 0; }
+.inbox-column .session-tabs { margin: var(--space-3) var(--space-4) var(--space-4); }
 .inbox-column-scroll {
   display: flex; flex: 1; flex-direction: column; gap: 2px;
-  overflow-y: auto; overflow-x: hidden; padding: var(--space-2) var(--space-2) var(--space-4);
+  overflow-y: auto; overflow-x: hidden; padding: 0 var(--space-2) var(--space-4);
+}
+/* 空态（Fleet 实测：居中、48px padding、32px 图标 + 14px 弱色文字） */
+.inbox-column-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2); padding: var(--space-8); color: var(--text-quaternary);
+  font-size: 14px; line-height: 16.1px;
 }
 
 /* ===== 用量条 ===== */

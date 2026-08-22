@@ -4,6 +4,7 @@ import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft';
 import { List } from '@phosphor-icons/react/dist/icons/List';
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple';
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash';
+import { Tray } from '@phosphor-icons/react/dist/icons/Tray';
 import { Warning } from '@phosphor-icons/react/dist/icons/Warning';
 import { filterAttention, groupSessions } from '../lib/sessions.js';
 
@@ -159,9 +160,10 @@ export function InboxColumn(props: InboxColumnProps) {
           </div>
         ))}
         {!filteredSessions.length && (
-          <p className="sidebar-empty-hint">
-            {filter === 'attention' ? '没有需要处理的会话' : '暂无会话，在右侧输入框开始'}
-          </p>
+          <div className="inbox-column-empty">
+            <Tray size={32} weight="light" aria-hidden="true" />
+            <span>{filter === 'attention' ? '没有需要处理的会话' : '暂无会话，在右侧输入框开始'}</span>
+          </div>
         )}
       </div>
     </aside>
