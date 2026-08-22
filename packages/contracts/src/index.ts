@@ -201,6 +201,13 @@ export interface ApprovalDecisionRequest {
   always?: boolean;
 }
 
+/**
+ * GET /api/v1/events 进程级 SSE 通道的帧 payload：帧为 `event: <type>` +
+ * `data: <本类型 JSON>`，心跳是每 25s 一行的 `:hb` 注释帧。审批请求出现即推送，
+ * 替代轮询延迟；approval.agentName 已按 agentId 映射为真实显示名。
+ */
+export type WorkbenchEvent = { type: 'approval'; approval: PendingApproval };
+
 /** Project resources visible to an agent plus its persisted run statistics. */
 export interface AgentResources {
   /** .pi/prompts templates merged into the project context. */

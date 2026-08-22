@@ -4,6 +4,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus';
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/icons/SlidersHorizontal';
 import { deleteSession, fetchInbox, fetchPreferences, fetchSessionMessages, fetchSessions, fetchSettings, fetchUsage, fetchWorkspace, renameSession, savePreference } from './lib/api.js';
+import { subscribeWorkbenchEvents } from './lib/events.js';
 import { cx } from './lib/cx.js';
 import { buildInboxResumeText, INBOX_CONTINUE_TEXT, type InboxResumeMode } from './lib/inboxResume.js';
 import { sortSessions } from './lib/sessions.js';
@@ -37,8 +38,8 @@ import { SettingsView } from './components/SettingsView.js';
 
 /** toast 自动消失时长。 */
 const TOAST_DURATION_MS = 4000;
-/** 收件箱轮询间隔：让 HITL 审批请求及时冒泡到收件箱与侧栏徽标。 */
-const INBOX_POLL_INTERVAL_MS = 15_000;
+/** 收件箱轮询兜底间隔：SSE（/api/v1/events）是实时主通道，轮询只在断连自愈时兜底。 */
+const INBOX_POLL_INTERVAL_MS = 60_000;
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null);
@@ -96,8 +97,14 @@ export default function App() {
   const { reload: reloadInbox } = inbox;
   const { reload: reloadSettings } = settings;
 
-  // 15s 轮询 attention 收件箱（仅页面可见时），reload 身份稳定，与手动/onTurnSettled 刷新共用同一条路径。
+  // 60s 轮询兜底（仅页面可见时）；reload 身份稳定，与手动/onTurnSettled/SSE 刷新共用同一条路径。
   useVisiblePolling(() => void reloadInbox(), INBOX_POLL_INTERVAL_MS);
+
+  // SSE 实时主通道：approval 事件即时刷新收件箱，徽标/收件箱列表/聊天审批横幅同一条数据通道。
+  useEffect(
+    () => subscribeWorkbenchEvents((event) => { if (event.type === 'approval') void reloadInbox(); }),
+    [reloadInbox],
+  );
 
   /** 每个 Agent 的未读待处理会话数（对齐 Fleet /threads/count?agent_id= 徽标语义），来自收件箱 attention 数据。 */
   const attentionByAgent = useMemo(() => {

@@ -86,7 +86,7 @@ export class ApprovalBridge {
   /** 监听根：.../permission-forwarding/sessions（其下每个子目录是一个 targetSessionId）。 */
   readonly sessionsDir: string;
   private readonly resolveAgentId?: (sessionId: string) => Promise<string | undefined>;
-  private readonly onPending?: (approval: PendingApproval) => void;
+  private readonly pendingListeners = new Set<(approval: PendingApproval) => void>();
   private readonly pollIntervalMs: number;
   private watcher: FSWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
@@ -97,8 +97,23 @@ export class ApprovalBridge {
     this.db = options.db;
     this.sessionsDir = getPermissionForwardingSessionsDir(options.cwd);
     this.resolveAgentId = options.resolveAgentId;
-    this.onPending = options.onPending;
+    if (options.onPending) this.pendingListeners.add(options.onPending);
     this.pollIntervalMs = options.pollIntervalMs ?? 2_000;
+  }
+
+  /** 追加 pending 监听器（如 API 层的 SSE 广播）；监听器异常不影响扫描与其他监听器。 */
+  addPendingListener(callback: (approval: PendingApproval) => void): void {
+    this.pendingListeners.add(callback);
+  }
+
+  private emitPending(approval: PendingApproval): void {
+    for (const listener of this.pendingListeners) {
+      try {
+        listener(approval);
+      } catch {
+        // 监听器故障（如 SSE 客户端集体断开）不应中断扫描。
+      }
+    }
   }
 
   /** 启动时全量扫一遍兜底，再挂 fs.watch + 低频轮询。 */
@@ -157,7 +172,7 @@ export class ApprovalBridge {
         });
         if (inserted) {
           const stored = getApproval(this.db, request.id);
-          if (stored) this.onPending?.(toPendingApproval(stored));
+          if (stored) this.emitPending(toPendingApproval(stored));
         }
       }
     }

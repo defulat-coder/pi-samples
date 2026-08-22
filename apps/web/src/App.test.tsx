@@ -1,12 +1,49 @@
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ApprovalRecord, InboxItem, PendingApproval, SessionSummary } from '@pi-workbench/contracts';
 import App from './App.js';
 
-/** App 级测试：全量 fetch 桩，聚焦「聊天视图内嵌审批横幅」的数据通路。 */
+/** App 级测试：全量 fetch 桩，聚焦「聊天视图内嵌审批横幅」与「SSE 审批推送」的数据通路。 */
 
 const originalFetch = globalThis.fetch;
+const originalEventSource = globalThis.EventSource;
+
+/** jsdom 没有 EventSource：构造时登记实例，测试手动 emit 触发 message 监听。 */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  readonly url: string;
+  closed = false;
+  private listeners = new Map<string, Array<(event: { data: string }) => void>>();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: { data: string }) => void) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  removeEventListener(type: string, listener: (event: { data: string }) => void) {
+    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(type: string, data: unknown) {
+    for (const listener of this.listeners.get(type) ?? []) listener({ data: JSON.stringify(data) });
+  }
+}
+
+beforeEach(() => {
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+});
 
 const AGENT = { id: 'agent-one', name: 'Nova', mark: 'No', tagline: '', description: '', suggestions: [] };
 
@@ -69,6 +106,7 @@ async function openSession(title: string) {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.EventSource = originalEventSource;
 });
 
 describe('App 聊天视图内嵌审批横幅', () => {
@@ -113,5 +151,40 @@ describe('App 聊天视图内嵌审批横幅', () => {
 
     await openSession('排查构建失败');
     assert.ok(await screen.findByRole('region', { name: '审批请求' }), '切回 s1 卡片应重新出现');
+  });
+});
+
+describe('App SSE 审批推送（/api/v1/events）', () => {
+  const inboxFetchCount = (calls: FetchCall[]) => calls.filter((call) => call.url.includes('/api/v1/inbox')).length;
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('挂载即订阅 approval 事件；收到事件触发收件箱重新拉取', async () => {
+    const calls = stubFetch();
+    render(<App />);
+
+    await waitFor(() => assert.ok(inboxFetchCount(calls) > 0, '挂载后应有首次收件箱拉取'));
+    const source = FakeEventSource.instances.at(-1);
+    assert.ok(source, '应创建 EventSource');
+    assert.equal(source.url, '/api/v1/events');
+    assert.equal(source.closed, false);
+
+    const before = inboxFetchCount(calls);
+    await act(async () => source.emit('approval', { type: 'approval', approval: APPROVAL }));
+    await waitFor(() => assert.ok(inboxFetchCount(calls) > before, 'approval 事件应触发收件箱重新拉取'));
+  });
+
+  it('卸载后退订并 close，之后的事件不再触发拉取', async () => {
+    const calls = stubFetch();
+    const view = render(<App />);
+
+    await waitFor(() => assert.ok(inboxFetchCount(calls) > 0));
+    const source = FakeEventSource.instances.at(-1)!;
+    view.unmount();
+    assert.equal(source.closed, true, '卸载应关闭 EventSource');
+
+    const before = inboxFetchCount(calls);
+    source.emit('approval', { type: 'approval', approval: APPROVAL });
+    await sleep(150);
+    assert.equal(inboxFetchCount(calls), before, '卸载后事件不应再触发拉取');
   });
 });

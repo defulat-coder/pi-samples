@@ -4,10 +4,11 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { AgentSessionStore, ApprovalBridge, getPiProjectRoot, openWorkbenchDb, type WorkbenchDb } from '@pi-workbench/pi-agent';
 import { loadConfig, type AppConfig } from './config.js';
-import type { AppContext } from './context.js';
+import { approvalAgentNames, displayAgentName, type AppContext } from './context.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerChatRoutes } from './routes/chat.js';
+import { registerEventRoutes, WorkbenchEventBus } from './routes/events.js';
 import { registerMetaRoutes } from './routes/meta.js';
 import { registerPreferenceRoutes } from './routes/preferences.js';
 import { registerSessionRoutes } from './routes/sessions.js';
@@ -21,12 +22,20 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   // Generic workbench data (usage events, preferences) lives in .pi/workbench.db;
   // Pi-specific state stays in Pi's own files.
   const db = dependencies.db ?? openWorkbenchDb(resolve(cwd, '.pi/workbench.db'));
+  const events = new WorkbenchEventBus();
   // 审批桥：监听扩展的转发文件树，把 pending 审批落进 SQLite。
   const approvalBridge =
     dependencies.approvalBridge ??
     new ApprovalBridge({ db, cwd, resolveAgentId: async (sessionId) => (await sessions.getSession(sessionId))?.agentId });
   approvalBridge.start();
-  const ctx: AppContext = { config, cwd, sessions, db, approvalBridge };
+  const ctx: AppContext = { config, cwd, sessions, db, approvalBridge, events };
+  // 审批请求出现即向 SSE 客户端广播（替代轮询延迟）；agentName 套用真实名映射。
+  approvalBridge.addPendingListener((approval) => {
+    events.broadcast({
+      type: 'approval',
+      approval: { ...approval, agentName: displayAgentName(approvalAgentNames(ctx), approval.agentId, approval.agentName) },
+    });
+  });
 
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ['req.headers.authorization', '*.password', '*.apiKey'] },
@@ -37,6 +46,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
   app.register(cors, { origin: config.WEB_ORIGIN });
   app.register(helmet, { contentSecurityPolicy: false });
   app.addHook('onClose', async () => {
+    events.close();
     approvalBridge.close();
     db.close();
   });
@@ -48,6 +58,7 @@ export function buildApp(config: AppConfig = loadConfig(), dependencies: AppDepe
     registerAgentRoutes(v1, ctx);
     registerSessionRoutes(v1, ctx);
     registerApprovalRoutes(v1, ctx);
+    registerEventRoutes(v1, ctx);
     registerPreferenceRoutes(v1, ctx);
     registerUsageRoutes(v1, ctx);
     registerChatRoutes(v1, ctx);

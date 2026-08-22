@@ -1,6 +1,7 @@
 import type { FastifyReply } from 'fastify';
 import { AgentSessionStore, ApprovalBridge, getAgent, loadAgents, SessionBindingError, type WorkbenchDb } from '@pi-workbench/pi-agent';
 import type { AppConfig } from './config.js';
+import type { WorkbenchEventBus } from './routes/events.js';
 
 /** Shared per-app dependencies handed to every route module. */
 export interface AppContext {
@@ -9,6 +10,7 @@ export interface AppContext {
   sessions: AgentSessionStore;
   db: WorkbenchDb;
   approvalBridge: ApprovalBridge;
+  events: WorkbenchEventBus;
 }
 
 export function agentOr404(ctx: AppContext, agentId: string, reply: FastifyReply) {
