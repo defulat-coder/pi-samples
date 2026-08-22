@@ -278,6 +278,10 @@ input, textarea { font: inherit; color: inherit; }
 .session-row .session-row-actions { display: none; align-items: center; gap: 2px; flex: none; }
 .session-row:hover .session-row-actions { display: inline-flex; }
 .session-row:hover .session-count { display: none; }
+/* 运行中指示：进行中的 turn 所在会话行显示脉冲点（对齐 Fleet busy 线程语义） */
+.session-row .session-busy { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); animation: session-busy-pulse 1.2s ease-in-out infinite; }
+@keyframes session-busy-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.75); } }
+.session-row:hover .session-busy { display: none; }
 .session-rename-input {
   flex: 1; min-width: 0; height: 20px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);
   padding: 0 6px; font-size: 12px; outline: none;

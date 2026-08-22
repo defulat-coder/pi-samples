@@ -18,6 +18,8 @@ export type InboxColumnProps = {
   title: string;
   sessions: SessionSummary[];
   currentSessionId: string | null;
+  /** 有进行中 turn 的会话 id；该会话行显示运行中脉冲点。 */
+  runningSessionId?: string | null;
   filter: SessionFilter;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -27,9 +29,10 @@ export type InboxColumnProps = {
   onFilterChange: (filter: SessionFilter) => void;
 };
 
-function SessionRow({ session, active, onSelect, onRename, onDelete }: {
+function SessionRow({ session, active, running, onSelect, onRename, onDelete }: {
   session: SessionSummary;
   active: boolean;
+  running?: boolean;
   onSelect: () => void;
   onRename: (title: string) => void;
   onDelete: () => void;
@@ -74,6 +77,7 @@ function SessionRow({ session, active, onSelect, onRename, onDelete }: {
       title={session.title}
     >
       <span className="session-title">{session.title}</span>
+      {running && <span className="session-busy" role="status" aria-label="运行中" title="运行中" />}
       <span className="session-count">{session.questionCount} 问</span>
       <span className="session-row-actions">
         <button
@@ -158,6 +162,7 @@ export function InboxColumn(props: InboxColumnProps) {
                   key={session.id}
                   session={session}
                   active={session.id === currentSessionId}
+                  running={session.id === props.runningSessionId}
                   onSelect={() => props.onSelectSession(session.id)}
                   onRename={(title) => props.onRenameSession(session.id, title)}
                   onDelete={() => props.onDeleteSession(session.id)}

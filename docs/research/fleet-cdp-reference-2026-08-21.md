@@ -446,3 +446,48 @@ agent 运行中 placeholder 变为 "Send a message to queue it up..."，发送�
 | 状态药丸（Needs sign in 等） | **做（语义替换）** | 本地无第三方授权语义，药丸显示 `运行出错` / `已中断` |
 | 侧边栏未读计数徽标 | **做** | |
 | 中断卡片（Authenticate + Resume）、任务进度条 | **跳过** | 依赖 Fleet 的集成授权与任务系统，本地无对应语义；右栏直接显示会话与错误/中断提示 |
+
+### 数据来源（第五轮抓取，网络层 + React fiber 实证）
+
+- **接口**：`POST https://eu.api.smith.langchain.com/v1/fleet/threads/search`，请求体：
+  ```json
+  {
+    "metadata": { "ls_user_id": "…", "is_test_run": false, "graph_id": "deep_agent" },
+    "limit": 50, "offset": 0,
+    "status": "interrupted",          // Needs Attention = 两次搜索合并："interrupted" + "error"
+    "sort_by": "state_updated_at", "sort_order": "desc",
+    "select": ["thread_id","created_at","updated_at","metadata","status","interrupts","state_updated_at"]
+  }
+  ```
+- **徽标计数**：`GET /v1/fleet/threads/count`（全局）与 `?agent_id=…`（侧边栏每个 agent 的徽标各发一次）。
+- **thread 对象**（fiber 实测）：
+  ```json
+  {
+    "id": "…", "status": "interrupted", "title": "Run the daily brief workflow…",
+    "updatedAt": "…", "hasInterrupts": true, "hasGeneratedTitle": false,
+    "metadata": {
+      "agent_name": "Executive Assistant", "assistant_id": "…",
+      "first_message_preview": "…",      // 行内预览文本来自 metadata
+      "read_status": true,               // 已读/未读存服务端 thread metadata
+      "source": "trigger"                // 定时任务（Schedules）触发的自主运行
+    },
+    "interrupts": { "<runId>": [{ "id": "…", "value": {
+      "type": "auth_required",           // → 行内 "Needs sign in" 药丸 + Authenticate 卡片
+      "provider": "google-langsmith-prod", "scopes": ["…"], "tool": "gmail_read_emails",
+      "message": "…"
+    } }] }
+  }
+  ```
+- **核心结论**：收件箱 = **thread 状态机的投影**——agent 自主运行（`source: "trigger"` 定时任务 / 手动运行）中状态变为 `interrupted`（需人工：授权、批准）或 `error` 的 thread 进入队列；用户处理（Resume / 读完）后状态回落即出队。已读与计数都是服务端 thread 级状态，前端只是两路 search（interrupted+error）合并渲染。
+- **数据层架构**：请求从 Web Worker 发出（页面主线程 hook 抓不到），骨架屏 → 异步填充。
+- **存疑**：Completed tab 的确切过滤条件未抓到（登录态中断过）；按状态回落（`idle`）+ 本地标记的组合推断。
+
+### 本地映射更新
+
+| Fleet 机制 | 本地对应 | 状态 |
+| --- | --- | --- |
+| status=interrupted/error 两次 search 合并 | Pi JSONL 最后 assistant 消息 stopReason=aborted/error | 已有 |
+| metadata.read_status | SQLite `inbox_state.read_at` | 已有 |
+| `/threads/count?agent_id=` 每 agent 徽标 | 侧边栏 MY AGENTS 徽标 = 该 agent **未读**待处理数（由 attention 数修正为未读数） | 本次补齐 |
+| `source: "trigger"` 自主运行入箱 | 本地无定时任务语义 | 跳过 |
+| busy（运行中）状态指示 | InboxColumn 会话行显示进行中标记（chat 控制器持有 running session） | 本次补齐 |

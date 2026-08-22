@@ -91,10 +91,12 @@ export default function App() {
   const { reload: reloadInbox } = inbox;
   const { reload: reloadSettings } = settings;
 
-  /** 每个 Agent 的待处理会话数，来自收件箱（attention tab）数据。 */
+  /** 每个 Agent 的未读待处理会话数（对齐 Fleet /threads/count?agent_id= 徽标语义），来自收件箱 attention 数据。 */
   const attentionByAgent = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const item of inbox.data?.items ?? []) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
+    for (const item of inbox.data?.items ?? []) {
+      if (!item.read) map[item.agentId] = (map[item.agentId] ?? 0) + 1;
+    }
     return map;
   }, [inbox.data]);
 
@@ -331,6 +333,7 @@ export default function App() {
             title={currentAgent.name}
             sessions={sessions}
             currentSessionId={chat.currentSessionId}
+            runningSessionId={chat.liveTurn ? chat.currentSessionId : null}
             filter={sessionFilter}
             collapsed={inboxColumnCollapsed}
             onToggleCollapsed={() => setInboxColumnCollapsed((value) => !value)}
